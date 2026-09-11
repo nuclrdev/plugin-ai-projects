@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "version": "${project.version}",
+  "platformSdkVersion": "${platform.sdk.version}",
+	"plugins": [
+		{
+			"class": "dev.nuclr.plugin.core.ai.projects.ui.panel.AiProjectsFilePanelPlugin",
+			"type": "FilePanel",
+			"id": "dev.nuclr.plugin.core.ai.projects.panel",
+			"name": "AI Projects",
+			"version": "${project.version}",
+			"description": "Lists AI projects - their harness, agents, status and last-opened time - and opens a project's persistent agent desktop.",
+			"author": "Nuclr Development Team",
+			"license": "Apache-2.0",
+			"website": "https://nuclr.dev",
+			"pageUrl": "https://github.com/nuclrdev/plugin-ai-projects",
+			"docUrl": "https://github.com/nuclrdev/plugin-ai-projects",
+			"developer": "Official",
+			"singleton": false
+		},
+		{
+			"class": "dev.nuclr.plugin.core.ai.projects.ui.quickview.AiProjectQuickViewPlugin",
+			"type": "QuickView",
+			"id": "dev.nuclr.plugin.core.ai.projects.quickview",
+			"name": "AI Project Summary",
+			"version": "${project.version}",
+			"description": "Ctrl+Q on a project row: its harness, model, agents and last session, without opening it.",
+			"author": "Nuclr Development Team",
+			"license": "Apache-2.0",
+			"website": "https://nuclr.dev",
+			"pageUrl": "https://github.com/nuclrdev/plugin-ai-projects",
+			"docUrl": "https://github.com/nuclrdev/plugin-ai-projects",
+			"developer": "Official",
+			"singleton": true,
+			"priority": 50
+		},
+		{
+			"class": "dev.nuclr.plugin.core.ai.projects.ui.screen.AiProjectScreenPlugin",
+			"type": "Fullscreen",
+			"id": "dev.nuclr.plugin.core.ai.projects.screen",
+			"name": "AI Project Desktop",
+			"version": "${project.version}",
+			"description": "The persistent agent desktop for one AI project: an internal frame per agent, a project sidebar, and the resolved harness and context.",
+			"author": "Nuclr Development Team",
+			"license": "Apache-2.0",
+			"website": "https://nuclr.dev",
+			"pageUrl": "https://github.com/nuclrdev/plugin-ai-projects",
+			"docUrl": "https://github.com/nuclrdev/plugin-ai-projects",
+			"developer": "Official",
+			"singleton": false,
+			"role": "Editor"
+		}
+	]
+}

@@ -1,0 +1,82 @@
+package dev.nuclr.plugin.core.ai.projects.harness;
+
+import java.nio.file.Path;
+
+/**
+ * One thing an agent receives, as it will actually receive it.
+ *
+ * @param kind      what sort of thing this is
+ * @param label     its name, as the agent sees it
+ * @param detail    the resolved value: a path, a command line, a variable value
+ * @param source    which level contributed it
+ * @param path      the file it resolves to, or {@code null} when it is not a file
+ * @param available whether that file exists; a missing instruction is worth seeing
+ */
+public record ContextItem(Kind kind, String label, String detail, Provenance source, Path path, boolean available) {
+
+	/** The categories the resolved-context view groups by. */
+	public enum Kind {
+
+		/** Instruction document, from the harness or from a context spec. */
+		INSTRUCTION("Instructions"),
+
+		/** Skill document from the project's skills directory. */
+		SKILL("Skills"),
+
+		/** A file whose content is injected into the agent's context. */
+		INJECTED_FILE("Injected files"),
+
+		/** An MCP server or tool provider definition. */
+		MCP_TOOL("MCP / tools"),
+
+		/** An environment variable set on the agent process. */
+		ENVIRONMENT("Environment"),
+
+		/** A permission the harness runs with. */
+		PERMISSION("Permissions"),
+
+		/** A root the agent is allowed to touch. */
+		ALLOWED_ROOT("Allowed roots"),
+
+		/** A free-form context variable. */
+		VARIABLE("Context variables");
+
+		private final String groupLabel;
+
+		Kind(String groupLabel) {
+			this.groupLabel = groupLabel;
+		}
+
+		/** Heading for this category in the resolved-context view. */
+		public String groupLabel() {
+			return groupLabel;
+		}
+	}
+
+	/**
+	 * A file-backed item.
+	 *
+	 * @param kind   the category
+	 * @param label  display name
+	 * @param path   the resolved file, possibly missing
+	 * @param source contributing level
+	 * @return the item
+	 */
+	public static ContextItem file(Kind kind, String label, Path path, Provenance source) {
+		var exists = path != null && java.nio.file.Files.isRegularFile(path);
+		return new ContextItem(kind, label, path == null ? "" : path.toString(), source, path, exists);
+	}
+
+	/**
+	 * A value-backed item.
+	 *
+	 * @param kind   the category
+	 * @param label  display name
+	 * @param detail the value
+	 * @param source contributing level
+	 * @return the item
+	 */
+	public static ContextItem value(Kind kind, String label, String detail, Provenance source) {
+		return new ContextItem(kind, label, detail == null ? "" : detail, source, null, true);
+	}
+}
