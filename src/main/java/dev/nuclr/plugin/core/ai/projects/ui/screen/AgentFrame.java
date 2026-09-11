@@ -1,6 +1,10 @@
 package dev.nuclr.plugin.core.ai.projects.ui.screen;
 
+import java.awt.AlphaComposite;
 import java.awt.BorderLayout;
+import java.awt.Dimension;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.beans.PropertyVetoException;
@@ -11,6 +15,7 @@ import javax.swing.JInternalFrame;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.JSlider;
 import javax.swing.event.InternalFrameAdapter;
 import javax.swing.event.InternalFrameEvent;
 
@@ -46,9 +51,13 @@ public final class AgentFrame extends JInternalFrame {
 	private final JButton restart = new JButton("Restart");
 	private final JButton send = new JButton("Send...");
 
+	private final JSlider opacitySlider = new JSlider(
+			WindowState.MIN_OPACITY, WindowState.MAX_OPACITY, WindowState.MAX_OPACITY);
+
 	private String agentName;
 	private boolean attention;
 	private String attentionReason;
+	private int opacity = WindowState.MAX_OPACITY;
 
 	/** The per-window commands, implemented by the desktop. */
 	public interface AgentFrameActions {
@@ -95,6 +104,14 @@ public final class AgentFrame extends JInternalFrame {
 		/** Grow or shrink the agent's text. */
 		void zoom(String agentId, int steps);
 
+		/**
+		 * The window's opacity changed and should be remembered.
+		 *
+		 * @param agentId the agent
+		 * @param opacity the new percentage
+		 */
+		void opacityChanged(String agentId, int opacity);
+
 		/** The frame moved, resized or changed display state. */
 		void windowGeometryChanged(String agentId);
 
@@ -126,6 +143,7 @@ public final class AgentFrame extends JInternalFrame {
 		getContentPane().add(window.component(), BorderLayout.CENTER);
 
 		installContextMenu();
+		installOpacityGesture(window);
 
 		addInternalFrameListener(new InternalFrameAdapter() {
 
@@ -196,13 +214,38 @@ public final class AgentFrame extends JInternalFrame {
 		bar.add(button(Glyphs.rich(Glyphs.CONTEXT, "Context"),
 				"Show everything this agent receives, after inheritance",
 				() -> actions.showResolvedContext(agentId)));
-		bar.add(button(Glyphs.rich(Glyphs.MORE, "More"), "Everything else this window can do", null));
-
 		// "More" opens the same menu as a right-click, so nothing is reachable only by
-		// a gesture the user has to guess at.
-		var more = (JButton) bar.getComponent(bar.getComponentCount() - 1);
+		// a gesture the user has to guess at. Held by reference rather than fished out
+		// of the bar by position, which breaks the moment anything is added after it.
+		var more = button(Glyphs.rich(Glyphs.MORE, "More"), "Everything else this window can do", null);
 		more.addActionListener(event -> menu().show(more, 0, more.getHeight()));
+
+		bar.add(more);
+		bar.add(opacitySlider());
 		return bar;
+	}
+
+	/**
+	 * The opacity slider.
+	 *
+	 * <p>On the frame's own toolbar rather than in its title bar: the title bar is
+	 * about twenty pixels tall and its text is painted rather than laid out, so a
+	 * control there would have to fight the look and feel's layout and would still
+	 * overlap a long title.
+	 */
+	private JSlider opacitySlider() {
+		opacitySlider.setPreferredSize(new Dimension(78, opacitySlider.getPreferredSize().height));
+		opacitySlider.setToolTipText("Window opacity: 100%  (Ctrl+wheel over the window)");
+		opacitySlider.setFocusable(false);
+		opacitySlider.addChangeListener(event -> {
+			setFrameOpacity(opacitySlider.getValue());
+			// Only once the drag settles: persisting every intermediate pixel would
+			// write the desktop file dozens of times per gesture.
+			if (!opacitySlider.getValueIsAdjusting()) {
+				actions.opacityChanged(agentId, opacity);
+			}
+		});
+		return opacitySlider;
 	}
 
 	private static JButton button(String label, String tip, Runnable action) {
@@ -278,6 +321,17 @@ public final class AgentFrame extends JInternalFrame {
 		menu.add(item(Glyphs.rich(Glyphs.RESET, "Reset text size"),
 				() -> actions.zoom(agentId, 0), window.canZoom()));
 		menu.addSeparator();
+		var opacityMenu = new javax.swing.JMenu(Glyphs.rich(Glyphs.BACKGROUND, "Opacity"));
+		for (var preset : new int[] { 100, 90, 75, 60, 45 }) {
+			var item = new javax.swing.JRadioButtonMenuItem(preset + "%", opacity == preset);
+			item.addActionListener(chosen -> {
+				setFrameOpacity(preset);
+				actions.opacityChanged(agentId, preset);
+			});
+			opacityMenu.add(item);
+		}
+		menu.add(opacityMenu);
+		menu.addSeparator();
 		menu.add(item(Glyphs.rich(Glyphs.DELETE, "Delete agent..."), () -> actions.deleteAgent(agentId)));
 		return menu;
 	}
@@ -291,6 +345,97 @@ public final class AgentFrame extends JInternalFrame {
 		menuItem.setEnabled(enabled);
 		menuItem.addActionListener(event -> action.run());
 		return menuItem;
+	}
+
+	/**
+	 * Paint the whole frame - chrome, toolbar and agent window alike - through one
+	 * alpha composite.
+	 *
+	 * <p>{@code Window.setOpacity} is no use here: an internal frame is a
+	 * lightweight component, not a window. Compositing in {@code paint} is the
+	 * equivalent, and because {@code super.paint} draws the children into the same
+	 * graphics they are faded with it rather than punching solid holes through it.
+	 */
+	@Override
+	public void paint(Graphics graphics) {
+		if (opacity >= WindowState.MAX_OPACITY) {
+			super.paint(graphics);
+			return;
+		}
+		var canvas = (Graphics2D) graphics.create();
+		try {
+			canvas.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, opacity / 100f));
+			super.paint(canvas);
+		} finally {
+			canvas.dispose();
+		}
+	}
+
+	/**
+	 * Set how solid this window is.
+	 *
+	 * <p>Below fully solid the frame stops being opaque, which is what tells
+	 * Swing's repaint manager that whatever is behind has to be painted first.
+	 * Without it the desktop is never redrawn under the frame and the translucency
+	 * smears whatever was there when it was last opaque.
+	 *
+	 * @param percentage how solid, clamped to the usable range
+	 */
+	public void setFrameOpacity(int percentage) {
+
+		var next = WindowState.clampOpacity(percentage);
+		if (next == opacity) {
+			return;
+		}
+		opacity = next;
+		setOpaque(next >= WindowState.MAX_OPACITY);
+
+		if (opacitySlider.getValue() != next) {
+			opacitySlider.setValue(next);
+		}
+		opacitySlider.setToolTipText("Window opacity: " + next + "%  (Ctrl+wheel over the window)");
+
+		var parent = getParent();
+		if (parent != null) {
+			parent.repaint(getX(), getY(), getWidth(), getHeight());
+		}
+		repaint();
+	}
+
+	/** How solid this window currently is, as a percentage. */
+	public int frameOpacity() {
+		return opacity;
+	}
+
+	/** Step the opacity, for the Ctrl+wheel gesture. */
+	private void nudgeOpacity(int steps) {
+		var next = WindowState.clampOpacity(opacity + steps * 5);
+		if (next != opacity) {
+			setFrameOpacity(next);
+			actions.opacityChanged(agentId, next);
+		}
+	}
+
+	/**
+	 * Ctrl+wheel changes opacity, anywhere the event reaches this frame.
+	 *
+	 * <p>Attached to the frame and to the agent's own component, because a
+	 * terminal that handles the wheel for scrolling would otherwise swallow it
+	 * before it ever bubbled out. The slider and the menu remain the paths that
+	 * always work.
+	 */
+	private void installOpacityGesture(AgentWindow window) {
+		java.awt.event.MouseWheelListener listener = event -> {
+			if (!event.isControlDown()) {
+				return;
+			}
+			event.consume();
+			nudgeOpacity(-event.getWheelRotation());
+		};
+		addMouseWheelListener(listener);
+		if (window.component() != null) {
+			window.component().addMouseWheelListener(listener);
+		}
 	}
 
 	/** The agent this frame belongs to. */
@@ -371,6 +516,7 @@ public final class AgentFrame extends JInternalFrame {
 	 */
 	public void applyState(WindowState state) {
 		setBounds(state.getX(), state.getY(), Math.max(240, state.getWidth()), Math.max(160, state.getHeight()));
+		setFrameOpacity(state.safeOpacity());
 		try {
 			if (state.isMaximized()) {
 				setMaximum(true);
@@ -398,6 +544,7 @@ public final class AgentFrame extends JInternalFrame {
 		state.setMaximized(isMaximum());
 		state.setMinimized(isIcon());
 		state.setOpen(true);
+		state.setOpacity(opacity);
 		if (!isMaximum() && !isIcon()) {
 			var bounds = getBounds();
 			if (bounds.width > 0 && bounds.height > 0) {

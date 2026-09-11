@@ -41,7 +41,7 @@ public final class EffectDesktopPane extends JDesktopPane {
 		setOpaque(true);
 		setBackground(new Color(5, 8, 30));
 		backgroundCanvas.setBackground(getBackground());
-		animationTimer = new Timer(FRAME_DELAY_MILLIS, event -> backgroundCanvas.repaint());
+		animationTimer = new Timer(FRAME_DELAY_MILLIS, event -> animate());
 		animationTimer.setCoalesce(true);
 		animationTimer.stop();
 		add(backgroundCanvas, JLayeredPane.DEFAULT_LAYER, 0);
@@ -96,6 +96,25 @@ public final class EffectDesktopPane extends JDesktopPane {
 	public void doLayout() {
 		super.doLayout();
 		backgroundCanvas.setBounds(0, 0, getWidth(), getHeight());
+	}
+
+	/**
+	 * One animation tick.
+	 *
+	 * <p>Normally only the background layer is repainted, which is the whole point
+	 * of having it as its own component. A translucent frame is the exception: the
+	 * moving background shows through it, so it has to be composited again or it
+	 * freezes over a backdrop that is still moving. Repainting a non-opaque child
+	 * pulls the layer beneath it along, so this stays limited to the frames that
+	 * actually need it.
+	 */
+	private void animate() {
+		backgroundCanvas.repaint();
+		for (var frame : getAllFrames()) {
+			if (!frame.isOpaque() && frame.isVisible()) {
+				frame.repaint();
+			}
+		}
 	}
 
 	private void updateAnimationState() {

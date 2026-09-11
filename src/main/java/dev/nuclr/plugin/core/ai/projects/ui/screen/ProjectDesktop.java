@@ -738,6 +738,15 @@ public final class ProjectDesktop extends JPanel
 	}
 
 	@Override
+	public void opacityChanged(String agentId, int opacity) {
+		if (closed) {
+			return;
+		}
+		store.desktop().windowOrCreate(agentId).setOpacity(opacity);
+		store.markDesktopDirty();
+	}
+
+	@Override
 	public void windowGeometryChanged(String agentId) {
 		var frame = frames.get(agentId);
 		if (frame == null || closed) {

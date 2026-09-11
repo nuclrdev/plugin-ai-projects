@@ -43,6 +43,10 @@ class DesktopBackgroundEffectTest {
 			assertNotNull(pane.effectId());
 			pane.setEffect("starfield");
 			assertEquals("starfield", pane.effectId());
+			pane.setEffect("matrix-rain");
+			assertEquals("matrix-rain", pane.effectId());
+			pane.setEffect("steampunk-engine");
+			assertEquals("steampunk-engine", pane.effectId());
 			pane.setEffect("does-not-exist");
 			assertEquals(DesktopBackgroundEffects.NONE, pane.effectId());
 		} finally {
@@ -56,6 +60,8 @@ class DesktopBackgroundEffectTest {
 		var ids = DesktopBackgroundEffects.builtIn().stream().map(DesktopBackgroundEffect::id).toList();
 		assertEquals(ids.stream().distinct().count(), ids.size());
 		assertTrue(ids.contains("neon-network"));
+		assertTrue(ids.contains("matrix-rain"));
+		assertTrue(ids.contains("steampunk-engine"));
 		assertTrue(ids.contains("starfield"));
 	}
 }
