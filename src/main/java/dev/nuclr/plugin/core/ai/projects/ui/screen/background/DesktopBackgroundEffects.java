@@ -22,7 +22,7 @@ public final class DesktopBackgroundEffects {
 
 	/** A fresh set of effect instances for one desktop. */
 	public static List<DesktopBackgroundEffect> builtIn() {
-		return List.of(new NoneEffect(), new NeonNetworkEffect(), new SynthwaveEffect(), new StarfieldEffect());
+		return List.of(new NoneEffect(), new NeonNetworkEffect(), new StarfieldEffect());
 	}
 
 	private static final class NoneEffect implements DesktopBackgroundEffect {
@@ -343,68 +343,6 @@ public final class DesktopBackgroundEffects {
 		private record Projection(Node node, double x, double y, double depth, double size, Color color) {}
 
 		private record Link(int first, int second) {}
-	}
-
-	/** A perspective wireframe and striped sun, inspired by 1980s arcade covers. */
-	private static final class SynthwaveEffect implements DesktopBackgroundEffect {
-
-		@Override
-		public String id() {
-			return "synthwave";
-		}
-
-		@Override
-		public String displayName() {
-			return "Synthwave Grid";
-		}
-
-		@Override
-		public String description() {
-			return "Retro sunset, scanlines and a moving magenta perspective grid.";
-		}
-
-		@Override
-		public void paint(Graphics2D graphics, int width, int height, long elapsedMillis) {
-			if (width <= 0 || height <= 0) return;
-			var g = (Graphics2D) graphics.create();
-			try {
-				g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-				g.setPaint(new GradientPaint(0, 0, new Color(6, 8, 36), 0, height,
-						new Color(46, 3, 63)));
-				g.fillRect(0, 0, width, height);
-
-				var horizon = (int) (height * 0.58);
-				var sunRadius = Math.max(70, Math.min(width, height) * 0.20);
-				var sunX = width * 0.68;
-				var sunY = horizon - sunRadius / 2.0;
-				g.setPaint(new GradientPaint(0, (float) (sunY - sunRadius), new Color(255, 218, 64),
-						0, (float) (sunY + sunRadius), new Color(255, 56, 170)));
-				g.fill(new Ellipse2D.Double(sunX - sunRadius, sunY - sunRadius, sunRadius * 2, sunRadius * 2));
-				g.setColor(new Color(18, 5, 46, 180));
-				for (var y = sunY - 2; y < sunY + sunRadius; y += 13) {
-					g.fillRect((int) (sunX - sunRadius), (int) y, (int) (sunRadius * 2), 5);
-				}
-
-				g.setColor(new Color(248, 53, 197, 155));
-				g.setStroke(new BasicStroke(1.2f));
-				var shift = (elapsedMillis / 120.0) % 1.0;
-				for (var i = 0; i < 20; i++) {
-					var t = Math.min(1.0, (i + shift) / 20.0);
-					var y = horizon + (height - horizon) * t * t;
-					g.drawLine(0, (int) y, width, (int) y);
-				}
-				for (var x = -width; x <= width * 2; x += 58) {
-					g.drawLine(width / 2, horizon, x, height);
-				}
-
-				g.setColor(new Color(255, 115, 220, 16));
-				for (var y = 0; y < height; y += 4) {
-					g.drawLine(0, y, width, y);
-				}
-			} finally {
-				g.dispose();
-			}
-		}
 	}
 
 	/** A deep-space field with coloured stars flying gently toward the viewer. */

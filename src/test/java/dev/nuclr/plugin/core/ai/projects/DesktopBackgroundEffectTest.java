@@ -41,8 +41,8 @@ class DesktopBackgroundEffectTest {
 		try {
 			assertEquals(DesktopBackgroundEffects.NONE, pane.effects().getFirst().id());
 			assertNotNull(pane.effectId());
-			pane.setEffect("synthwave");
-			assertEquals("synthwave", pane.effectId());
+			pane.setEffect("starfield");
+			assertEquals("starfield", pane.effectId());
 			pane.setEffect("does-not-exist");
 			assertEquals(DesktopBackgroundEffects.NONE, pane.effectId());
 		} finally {
@@ -56,7 +56,6 @@ class DesktopBackgroundEffectTest {
 		var ids = DesktopBackgroundEffects.builtIn().stream().map(DesktopBackgroundEffect::id).toList();
 		assertEquals(ids.stream().distinct().count(), ids.size());
 		assertTrue(ids.contains("neon-network"));
-		assertTrue(ids.contains("synthwave"));
 		assertTrue(ids.contains("starfield"));
 	}
 }

@@ -118,6 +118,10 @@ public final class ProjectDesktop extends JPanel
 		this.onCloseRequested = onCloseRequested;
 		this.desktopPane = new EffectDesktopPane(DesktopBackgroundEffects.builtIn(),
 				store.desktop().getBackgroundEffect());
+		if (!desktopPane.effectId().equals(store.desktop().getBackgroundEffect())) {
+			store.desktop().setBackgroundEffect(desktopPane.effectId());
+			store.markDesktopDirty();
+		}
 		this.notifier = new AttentionNotifier(eventBus, this);
 		this.sidebar = new ProjectSidebar(store, this, store.desktop().getExpandedSections());
 
