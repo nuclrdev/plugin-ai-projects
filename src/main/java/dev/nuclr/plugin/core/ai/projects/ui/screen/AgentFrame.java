@@ -12,6 +12,7 @@ import java.beans.PropertyVetoException;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JInternalFrame;
+import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -199,29 +200,37 @@ public final class AgentFrame extends JInternalFrame {
 		bar.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
 
 		startStop.addActionListener(event -> actions.toggleRun(agentId));
-		restart.setText(Glyphs.rich(Glyphs.RESTART, "Restart"));
+		Glyphs.decorate(restart, Glyphs.RESTART, "Restart");
 		restart.setToolTipText("Stop the agent and start it again");
 		restart.addActionListener(event -> actions.restart(agentId));
-		send.setText(Glyphs.rich(Glyphs.SEND, "Send..."));
+		Glyphs.decorate(send, Glyphs.SEND, "Send...");
 		send.setToolTipText("Send an instruction to the running agent");
 		send.addActionListener(event -> actions.sendInstruction(agentId));
 
 		bar.add(startStop);
 		bar.add(restart);
 		bar.add(send);
-		bar.add(button(Glyphs.rich(Glyphs.FOLDER, "Folder"), "Open the agent's working directory",
+		bar.add(button(Glyphs.FOLDER, "Folder", "Open the agent's working directory",
 				() -> actions.openWorkingDirectory(agentId)));
-		bar.add(button(Glyphs.rich(Glyphs.CONTEXT, "Context"),
+		bar.add(button(Glyphs.CONTEXT, "Context",
 				"Show everything this agent receives, after inheritance",
 				() -> actions.showResolvedContext(agentId)));
 		// "More" opens the same menu as a right-click, so nothing is reachable only by
 		// a gesture the user has to guess at. Held by reference rather than fished out
 		// of the bar by position, which breaks the moment anything is added after it.
-		var more = button(Glyphs.rich(Glyphs.MORE, "More"), "Everything else this window can do", null);
+		var more = button(Glyphs.MORE, "More", "Everything else this window can do", null);
 		more.addActionListener(event -> menu().show(more, 0, more.getHeight()));
 
 		bar.add(more);
-		bar.add(opacitySlider());
+		// A bare slider does not say what it fades, so a half-moon sits beside it, the
+		// two in one panel so the toolbar's wrapping never separates them.
+		var opacityIcon = new JLabel(Glyphs.icon(Glyphs.OPACITY));
+		opacityIcon.setToolTipText("Window opacity (Ctrl+wheel over the window)");
+		var opacityControl = new JPanel(new BorderLayout(2, 0));
+		opacityControl.setOpaque(false);
+		opacityControl.add(opacityIcon, BorderLayout.WEST);
+		opacityControl.add(opacitySlider(), BorderLayout.CENTER);
+		bar.add(opacityControl);
 		return bar;
 	}
 
@@ -248,8 +257,8 @@ public final class AgentFrame extends JInternalFrame {
 		return opacitySlider;
 	}
 
-	private static JButton button(String label, String tip, Runnable action) {
-		var button = new JButton(label);
+	private static JButton button(String glyph, String label, String tip, Runnable action) {
+		var button = Glyphs.decorate(new JButton(), glyph, label);
 		button.setToolTipText(tip);
 		if (action != null) {
 			button.addActionListener(event -> action.run());
@@ -292,36 +301,36 @@ public final class AgentFrame extends JInternalFrame {
 		var menu = new JPopupMenu(agentName);
 		var live = window.status().isLive();
 
-		menu.add(item(Glyphs.rich(live ? Glyphs.STOP : Glyphs.START, live ? "Stop" : "Start"),
+		menu.add(item(live ? Glyphs.STOP : Glyphs.START, live ? "Stop" : "Start",
 				() -> actions.toggleRun(agentId)));
-		menu.add(item(Glyphs.rich(Glyphs.RESTART, "Restart"), () -> actions.restart(agentId)));
-		menu.add(item(Glyphs.rich(Glyphs.SEND, "Send instruction..."),
+		menu.add(item(Glyphs.RESTART, "Restart", () -> actions.restart(agentId)));
+		menu.add(item(Glyphs.SEND, "Send instruction...",
 				() -> actions.sendInstruction(agentId), window.canSendInstruction()));
 		menu.addSeparator();
-		menu.add(item(Glyphs.rich(Glyphs.DUPLICATE, "Duplicate"), () -> actions.duplicate(agentId)));
-		menu.add(item(Glyphs.rich(Glyphs.EDIT, "Edit agent..."), () -> actions.editAgent(agentId)));
-		menu.add(item(Glyphs.rich(Glyphs.CONTEXT, "Resolved context..."),
+		menu.add(item(Glyphs.DUPLICATE, "Duplicate", () -> actions.duplicate(agentId)));
+		menu.add(item(Glyphs.EDIT, "Edit agent...", () -> actions.editAgent(agentId)));
+		menu.add(item(Glyphs.CONTEXT, "Resolved context...",
 				() -> actions.showResolvedContext(agentId)));
-		menu.add(item(Glyphs.rich(Glyphs.HARNESS, "Harness..."), () -> actions.showHarness(agentId)));
-		menu.add(item(Glyphs.rich(Glyphs.FOLDER, "Open working directory"),
+		menu.add(item(Glyphs.HARNESS, "Harness...", () -> actions.showHarness(agentId)));
+		menu.add(item(Glyphs.FOLDER, "Open working directory",
 				() -> actions.openWorkingDirectory(agentId)));
 		menu.addSeparator();
-		menu.add(item(Glyphs.rich(Glyphs.COPY, "Copy all output"), () -> actions.copyOutput(agentId)));
-		menu.add(item(Glyphs.rich(Glyphs.TRANSCRIPT, "Open transcript file"),
+		menu.add(item(Glyphs.COPY, "Copy all output", () -> actions.copyOutput(agentId)));
+		menu.add(item(Glyphs.TRANSCRIPT, "Open transcript file",
 				() -> actions.openTranscript(agentId)));
-		menu.add(item(Glyphs.rich(Glyphs.CLEAR, "Clear screen"),
+		menu.add(item(Glyphs.CLEAR, "Clear screen",
 				() -> actions.clearScreen(agentId), window.canClear()));
-		menu.add(item(Glyphs.rich(Glyphs.DELETE, "Clear transcript..."),
+		menu.add(item(Glyphs.DELETE, "Clear transcript...",
 				() -> actions.clearTranscript(agentId)));
 		menu.addSeparator();
-		menu.add(item(Glyphs.rich(Glyphs.ZOOM, "Larger text"),
+		menu.add(item(Glyphs.ZOOM, "Larger text",
 				() -> actions.zoom(agentId, 1), window.canZoom()));
-		menu.add(item(Glyphs.rich(Glyphs.ZOOM, "Smaller text"),
+		menu.add(item(Glyphs.ZOOM, "Smaller text",
 				() -> actions.zoom(agentId, -1), window.canZoom()));
-		menu.add(item(Glyphs.rich(Glyphs.RESET, "Reset text size"),
+		menu.add(item(Glyphs.RESET, "Reset text size",
 				() -> actions.zoom(agentId, 0), window.canZoom()));
 		menu.addSeparator();
-		var opacityMenu = new javax.swing.JMenu(Glyphs.rich(Glyphs.BACKGROUND, "Opacity"));
+		var opacityMenu = Glyphs.decorate(new javax.swing.JMenu(), Glyphs.OPACITY, "Opacity");
 		for (var preset : new int[] { 100, 90, 75, 60, 45 }) {
 			var item = new javax.swing.JRadioButtonMenuItem(preset + "%", opacity == preset);
 			item.addActionListener(chosen -> {
@@ -332,16 +341,16 @@ public final class AgentFrame extends JInternalFrame {
 		}
 		menu.add(opacityMenu);
 		menu.addSeparator();
-		menu.add(item(Glyphs.rich(Glyphs.DELETE, "Delete agent..."), () -> actions.deleteAgent(agentId)));
+		menu.add(item(Glyphs.DELETE, "Delete agent...", () -> actions.deleteAgent(agentId)));
 		return menu;
 	}
 
-	private static JMenuItem item(String label, Runnable action) {
-		return item(label, action, true);
+	private static JMenuItem item(String glyph, String label, Runnable action) {
+		return item(glyph, label, action, true);
 	}
 
-	private static JMenuItem item(String label, Runnable action, boolean enabled) {
-		var menuItem = new JMenuItem(label);
+	private static JMenuItem item(String glyph, String label, Runnable action, boolean enabled) {
+		var menuItem = Glyphs.decorate(new JMenuItem(), glyph, label);
 		menuItem.setEnabled(enabled);
 		menuItem.addActionListener(event -> action.run());
 		return menuItem;
@@ -464,15 +473,14 @@ public final class AgentFrame extends JInternalFrame {
 	 */
 	public void refreshStatus() {
 		var status = window.status();
-		setFrameIcon(new StatusIcon(status, attention));
-		// A frame's title bar is painted by the look and feel, which does not render
-		// HTML, so this is the plain form and takes the stand-in when the theme font
-		// cannot draw the emoji.
-		setTitle(Glyphs.label(attention ? Glyphs.ATTENTION : Glyphs.forStatus(status),
-				agentName + "  -  " + status.label()));
+		// The status glyph is the frame icon - the place a title bar keeps its
+		// picture, and the one a minimised frame still shows - so the title itself
+		// is just the words.
+		setFrameIcon(Glyphs.icon(Glyphs.statusGlyph(status, attention)));
+		setTitle(agentName + "  -  " + status.label());
 		setToolTipText(attention && attentionReason != null ? attentionReason : window.sessionSummary());
-		startStop.setText(Glyphs.rich(status.isLive() ? Glyphs.STOP : Glyphs.START,
-				status.isLive() ? "Stop" : "Start"));
+		Glyphs.decorate(startStop, status.isLive() ? Glyphs.STOP : Glyphs.START,
+				status.isLive() ? "Stop" : "Start");
 		startStop.setToolTipText(status.isLive() ? "Terminate the agent process" : "Start the agent");
 		restart.setEnabled(true);
 		send.setEnabled(window.canSendInstruction());

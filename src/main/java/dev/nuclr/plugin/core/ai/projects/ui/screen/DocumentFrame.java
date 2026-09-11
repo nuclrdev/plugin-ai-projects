@@ -114,14 +114,14 @@ public final class DocumentFrame extends JInternalFrame {
 		bar.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
 		save.setEnabled(false);
 		save.setMnemonic(KeyEvent.VK_S);
-		save.setText(Glyphs.rich(Glyphs.SAVE, "Save"));
+		Glyphs.decorate(save, Glyphs.SAVE, "Save");
 		save.setToolTipText("Save (Ctrl+S)");
 		save.addActionListener(event -> save());
 		if (!readOnly) {
 			bar.add(save);
-			bar.add(action(Glyphs.rich(Glyphs.UNDO, "Undo"), "Undo (Ctrl+Z)", this::undo));
-			bar.add(action(Glyphs.rich(Glyphs.REDO, "Redo"), "Redo (Ctrl+Y)", this::redo));
-			bar.add(action(Glyphs.rich(Glyphs.RELOAD, "Reload"),
+			bar.add(action(Glyphs.UNDO, "Undo", "Undo (Ctrl+Z)", this::undo));
+			bar.add(action(Glyphs.REDO, "Redo", "Redo (Ctrl+Y)", this::redo));
+			bar.add(action(Glyphs.RELOAD, "Reload",
 					"Discard edits and re-read the file from disk", this::reload));
 		}
 		bar.add(javax.swing.Box.createHorizontalGlue());
@@ -135,6 +135,7 @@ public final class DocumentFrame extends JInternalFrame {
 		// DISPOSE_ON_CLOSE, not DO_NOTHING_ON_CLOSE: the close button has to actually
 		// call setClosed(true), because that is what fires the vetoable change the
 		// listener below uses to hold the frame open over unsaved edits.
+		setFrameIcon(Glyphs.icon(Glyphs.INSTRUCTION));
 		setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 		getContentPane().setLayout(new BorderLayout());
 		getContentPane().add(bar, BorderLayout.NORTH);
@@ -206,8 +207,8 @@ public final class DocumentFrame extends JInternalFrame {
 		});
 	}
 
-	private static JButton action(String label, String tip, Runnable work) {
-		var button = new JButton(label);
+	private static JButton action(String glyph, String label, String tip, Runnable work) {
+		var button = Glyphs.decorate(new JButton(), glyph, label);
 		button.setToolTipText(tip);
 		button.addActionListener(event -> work.run());
 		return button;
@@ -274,9 +275,8 @@ public final class DocumentFrame extends JInternalFrame {
 	}
 
 	private void refreshStatusLabel() {
-		statusLabel.setText(dirty
-				? Glyphs.rich(Glyphs.MISSING, "unsaved changes")
-				: Glyphs.rich(Glyphs.FINISHED, "saved"));
+		Glyphs.decorate(statusLabel, dirty ? Glyphs.MISSING : Glyphs.FINISHED,
+				dirty ? "unsaved changes" : "saved");
 	}
 
 	/**

@@ -208,7 +208,7 @@ public final class ProjectSidebar extends JPanel {
 			}
 		});
 
-		var collapse = new JButton(Glyphs.sidebar(Glyphs.SIDEBAR, "Fold"));
+		var collapse = Glyphs.decorate(new JButton(), Glyphs.SIDEBAR, "Fold");
 		collapse.setToolTipText("Fold or unfold every section");
 		collapse.addActionListener(event -> toggleAllSections());
 
@@ -327,7 +327,7 @@ public final class ProjectSidebar extends JPanel {
 		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.EDIT, "Edit project context..."),
 				() -> actions.editContext(null)));
 		for (var item : resolved.items()) {
-			entries.add(new SidebarEntry(item.label(),
+			entries.add(new SidebarEntry(Glyphs.sidebar(Glyphs.forContextKind(item.kind()), item.label()),
 					item.kind().groupLabel() + " - " + item.source().label()
 							+ (item.path() != null && !item.available() ? " - missing" : ""),
 					null, item.path(), null, false, null));
@@ -387,7 +387,7 @@ public final class ProjectSidebar extends JPanel {
 					entries.add(SidebarEntry.file(Glyphs.sidebar(Glyphs.ROOT, root), "allowed root", path));
 				}
 			} catch (RuntimeException e) {
-				entries.add(SidebarEntry.text(root, "allowed root - not a valid path"));
+				entries.add(SidebarEntry.text(Glyphs.sidebar(Glyphs.MISSING, root), "allowed root - not a valid path"));
 			}
 		}
 		entries.add(SidebarEntry.file(
@@ -470,22 +470,22 @@ public final class ProjectSidebar extends JPanel {
 		if (entry.agentId() != null) {
 			var agentId = entry.agentId();
 			var live = entry.status() != null && entry.status().isLive();
-			menu.add(item(Glyphs.rich(Glyphs.FOCUS, "Focus"), () -> actions.focusAgent(agentId)));
-			menu.add(item(Glyphs.rich(live ? Glyphs.STOP : Glyphs.START, live ? "Stop" : "Start"),
+			menu.add(item(Glyphs.FOCUS, "Focus", () -> actions.focusAgent(agentId)));
+			menu.add(item(live ? Glyphs.STOP : Glyphs.START, live ? "Stop" : "Start",
 					() -> actions.toggleRun(agentId)));
-			menu.add(item(Glyphs.rich(Glyphs.RESTART, "Restart"), () -> actions.restart(agentId)));
-			menu.add(item(Glyphs.rich(Glyphs.SEND, "Send instruction..."),
+			menu.add(item(Glyphs.RESTART, "Restart", () -> actions.restart(agentId)));
+			menu.add(item(Glyphs.SEND, "Send instruction...",
 					() -> actions.sendInstruction(agentId)));
 			menu.addSeparator();
-			menu.add(item(Glyphs.rich(Glyphs.DUPLICATE, "Duplicate"), () -> actions.duplicate(agentId)));
-			menu.add(item(Glyphs.rich(Glyphs.TEMPLATE, "Save as template..."),
+			menu.add(item(Glyphs.DUPLICATE, "Duplicate", () -> actions.duplicate(agentId)));
+			menu.add(item(Glyphs.TEMPLATE, "Save as template...",
 					() -> actions.saveAsTemplate(agentId)));
-			menu.add(item(Glyphs.rich(Glyphs.CONTEXT, "Resolved context..."),
+			menu.add(item(Glyphs.CONTEXT, "Resolved context...",
 					() -> actions.showResolvedContext(agentId)));
-			menu.add(item(Glyphs.rich(Glyphs.HARNESS, "Harness..."), () -> actions.showHarness(agentId)));
-			menu.add(item(Glyphs.rich(Glyphs.EDIT, "Edit..."), () -> actions.editAgent(agentId)));
+			menu.add(item(Glyphs.HARNESS, "Harness...", () -> actions.showHarness(agentId)));
+			menu.add(item(Glyphs.EDIT, "Edit...", () -> actions.editAgent(agentId)));
 			menu.addSeparator();
-			menu.add(item(Glyphs.rich(Glyphs.DELETE, "Delete agent..."),
+			menu.add(item(Glyphs.DELETE, "Delete agent...",
 					() -> actions.deleteAgent(agentId)));
 			return menu;
 		}
@@ -493,18 +493,18 @@ public final class ProjectSidebar extends JPanel {
 		if (entry.path() != null) {
 			var path = entry.path();
 			if (Files.isDirectory(path)) {
-				menu.add(item(Glyphs.rich(Glyphs.TERMINAL, "Open terminal here"),
+				menu.add(item(Glyphs.TERMINAL, "Open terminal here",
 						() -> actions.newTerminal(path)));
-				menu.add(item(Glyphs.rich(Glyphs.FOLDER, "Open in file manager"),
+				menu.add(item(Glyphs.FOLDER, "Open in file manager",
 						() -> actions.openFolder(path)));
-				menu.add(item(Glyphs.rich(Glyphs.PROJECT, "Show in Commander panel"),
+				menu.add(item(Glyphs.PROJECT, "Show in Commander panel",
 						() -> actions.revealInCommander(path)));
 				return menu;
 			}
-			menu.add(item(Glyphs.rich(Glyphs.INSTRUCTION, "Open"), () -> actions.openDocument(path)));
+			menu.add(item(Glyphs.INSTRUCTION, "Open", () -> actions.openDocument(path)));
 			var parent = path.getParent();
 			if (parent != null) {
-				menu.add(item(Glyphs.rich(Glyphs.FOLDER, "Open containing folder"),
+				menu.add(item(Glyphs.FOLDER, "Open containing folder",
 						() -> actions.openFolder(parent)));
 			}
 			// Renaming or deleting the project definition from here would leave the open
@@ -512,31 +512,31 @@ public final class ProjectSidebar extends JPanel {
 			var isDefinition = path.equals(store.paths().projectFile());
 			if (!isDefinition) {
 				menu.addSeparator();
-				menu.add(item(Glyphs.rich(Glyphs.RENAME, "Rename..."), () -> actions.renameDocument(path)));
-				menu.add(item(Glyphs.rich(Glyphs.DELETE, "Delete..."), () -> actions.deleteDocument(path)));
+				menu.add(item(Glyphs.RENAME, "Rename...", () -> actions.renameDocument(path)));
+				menu.add(item(Glyphs.DELETE, "Delete...", () -> actions.deleteDocument(path)));
 			}
 			return menu;
 		}
 
 		if (SECTION_AGENTS.equals(section)) {
-			menu.add(item(Glyphs.rich(Glyphs.NEW, "New agent..."), () -> actions.newAgent(null)));
+			menu.add(item(Glyphs.NEW, "New agent...", () -> actions.newAgent(null)));
 			return menu;
 		}
 		if (SECTION_HARNESS.equals(section)) {
-			menu.add(item(Glyphs.rich(Glyphs.EDIT, "Edit project harness..."),
+			menu.add(item(Glyphs.EDIT, "Edit project harness...",
 					() -> actions.editHarness(null)));
 			return menu;
 		}
 		if (SECTION_CONTEXT.equals(section)) {
-			menu.add(item(Glyphs.rich(Glyphs.EDIT, "Edit project context..."),
+			menu.add(item(Glyphs.EDIT, "Edit project context...",
 					() -> actions.editContext(null)));
 			return menu;
 		}
 		return null;
 	}
 
-	private static JMenuItem item(String label, Runnable action) {
-		var menuItem = new JMenuItem(label);
+	private static JMenuItem item(String glyph, String label, Runnable action) {
+		var menuItem = Glyphs.decorate(new JMenuItem(), glyph, label);
 		menuItem.addActionListener(event -> action.run());
 		return menuItem;
 	}
@@ -568,7 +568,7 @@ public final class ProjectSidebar extends JPanel {
 		return expanded;
 	}
 
-	/** Renders one entry: status dot, label, and a dimmed detail suffix. */
+	/** Renders one entry: its glyph or status in the icon slot, the label, and a dimmed detail suffix. */
 	private static final class EntryRenderer extends DefaultListCellRenderer {
 
 		private static final long serialVersionUID = 1L;
@@ -582,13 +582,15 @@ public final class ProjectSidebar extends JPanel {
 				return label;
 			}
 
-			label.setIcon(entry.status() == null ? null : new StatusIcon(entry.status(), entry.attention()));
-
 			var halves = Glyphs.splitSidebar(entry.label());
-			var picture = halves[0].isEmpty() ? "" : Glyphs.span(halves[0]) + " ";
+			// On an agent row the status outranks the entry's own glyph: whether it is
+			// running is what the eye scans the list for.
+			Glyphs.decorate(label, entry.status() != null
+					? Glyphs.statusGlyph(entry.status(), entry.attention())
+					: halves[0], null);
 			var detail = entry.detail() == null || entry.detail().isBlank() ? ""
 					: "  <font color='#888888'>" + escape(entry.detail()) + "</font>";
-			label.setText("<html>" + picture + escape(halves[1]) + detail + "</html>");
+			label.setText("<html>" + escape(halves[1]) + detail + "</html>");
 			label.setToolTipText(entry.path() == null ? entry.detail() : entry.path().toString());
 			if (entry.action() != null) {
 				label.setFont(label.getFont().deriveFont(Font.ITALIC));

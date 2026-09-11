@@ -1,10 +1,14 @@
 package dev.nuclr.plugin.core.ai.projects.ui;
 
+import java.awt.Color;
 import java.awt.Font;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import javax.swing.AbstractButton;
+import javax.swing.JLabel;
 import javax.swing.UIManager;
 
 import dev.nuclr.plugin.core.ai.projects.harness.ContextItem;
@@ -20,15 +24,18 @@ import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
  * rectangles on exactly the machines this plugin is built for.
  *
  * <p>So two things happen here. Every glyph is declared with a plainer stand-in
- * and is only chosen when something on the machine can draw it; and for this
- * plugin's own widgets {@link #rich} wraps it in an HTML span naming a font that
- * can, so the picture comes from the emoji font while the words keep the
- * theme's.
+ * and is only chosen when something on the machine can draw it; and on this
+ * plugin's own widgets it is not text at all. {@link #decorate} puts it in the
+ * icon slot of a button, menu item or label as a {@link GlyphIcon} drawn from
+ * whichever font has it, so the words beside it stay plain, in the theme's font,
+ * and the picture sits where a picture is expected.
  *
  * <p>Strings that leave for the host - file-panel column values, function-key
- * labels - go through {@link #label} and stay plain text, falling back to the
- * stand-in. How the host draws its own widgets is the host's business, and
- * handing it markup it might render literally is not worth the risk.
+ * labels, context-menu entries - go through {@link #label} and stay plain text,
+ * falling back to the stand-in. The host builds those widgets itself, so there
+ * is no icon slot to reach, and handing it markup it might render literally is
+ * not worth the risk. {@link #span} serves HTML documents such as the quick
+ * view, which have no icon slot either.
  *
  * <p>The choice can be forced with {@code -Dnuclr.ai.glyphs=emoji} or
  * {@code =symbols} when the automatic answer is wrong for a particular setup.
@@ -146,6 +153,8 @@ public final class Glyphs {
 	public static final String SIDEBAR = pick("☰", "|");
 	/** The animated desktop background. */
 	public static final String BACKGROUND = pick("🎨", "▦");
+	/** Window opacity. */
+	public static final String OPACITY = pick("\uD83C\uDF13", "\u25D0");
 	/** Close. */
 	public static final String CLOSE = pick("✖️", "✖");
 	/** Delete. */
@@ -173,7 +182,221 @@ public final class Glyphs {
 	/** Something missing or wrong. */
 	public static final String MISSING = pick("⚠️", "⚠");
 
+	// The icon form's colours. Where an emoji's own colour carries meaning -
+	// status, a destructive command, a folder - the icon keeps one; everything
+	// else follows the component's foreground, so a toolbar is not a box of
+	// crayons. Mid-tones, so they read on the dark theme and the light one.
+	private static final Color GREEN = new Color(0x4C, 0xAF, 0x50);
+	private static final Color BLUE = new Color(0x42, 0xA5, 0xF5);
+	private static final Color SKY = new Color(0x64, 0xB5, 0xF6);
+	private static final Color AMBER = new Color(0xFF, 0xB3, 0x00);
+	private static final Color ORANGE = new Color(0xFB, 0x8C, 0x00);
+	private static final Color RED = new Color(0xE5, 0x39, 0x35);
+	private static final Color GOLD = new Color(0xE0, 0xA5, 0x26);
+	private static final Color PURPLE = new Color(0xAB, 0x47, 0xBC);
+	private static final Color PINK = new Color(0xEC, 0x40, 0x7A);
+	private static final Color TEAL = new Color(0x26, 0xA6, 0x9A);
+	private static final Color SLATE = new Color(0x78, 0x90, 0x9C);
+	private static final Color GREY = new Color(0x88, 0x88, 0x88);
+
+	/**
+	 * Each glyph's tint; one not listed follows the component's foreground.
+	 * Declared after the glyphs, which it reads.
+	 */
+	private static final Map<String, Color> TINTS = tints();
+
+	private static final Map<String, GlyphIcon> ICONS = new ConcurrentHashMap<>();
+
 	private Glyphs() {
+	}
+
+	private static Map<String, Color> tints() {
+		// Keyed by the glyph, so two constants sharing one - the open folder is both
+		// FOLDER and ROOT - share a colour too.
+		var tints = new HashMap<String, Color>();
+		tints.put(STOPPED, GREY);
+		tints.put(FINISHED, SLATE);
+		tints.put(STARTING, SKY);
+		tints.put(RUNNING, GREEN);
+		tints.put(WAITING, AMBER);
+		tints.put(FAILED, RED);
+		tints.put(ATTENTION, ORANGE);
+		tints.put(MISSING, AMBER);
+		tints.put(AGENT, SKY);
+		tints.put(PROJECT, GOLD);
+		tints.put(ROOT, GOLD);
+		tints.put(FOLDER, GOLD);
+		tints.put(SKILL, PURPLE);
+		tints.put(CONTEXT, GOLD);
+		tints.put(TEMPLATE, GOLD);
+		tints.put(ENVIRONMENT, GREEN);
+		tints.put(NEW, GREEN);
+		tints.put(START, GREEN);
+		tints.put(STOP, RED);
+		tints.put(RESTART, BLUE);
+		tints.put(REFRESH, BLUE);
+		tints.put(RELOAD, BLUE);
+		tints.put(RESET, BLUE);
+		tints.put(SEND, BLUE);
+		tints.put(SAVE, BLUE);
+		tints.put(BROADCAST, TEAL);
+		tints.put(EDIT, ORANGE);
+		tints.put(RENAME, ORANGE);
+		tints.put(FOCUS, RED);
+		tints.put(CLEAR, PURPLE);
+		tints.put(BACKGROUND, PINK);
+		tints.put(OPACITY, SKY);
+		tints.put(DELETE, RED);
+		tints.put(CLOSE, RED);
+		return Map.copyOf(tints);
+	}
+
+	/**
+	 * The glyph an agent wears: its status, or the flag when it is asking the
+	 * user for a decision, which outranks any status.
+	 *
+	 * @param status    the status, possibly {@code null}
+	 * @param attention whether the agent is waiting on the user
+	 * @return the glyph
+	 */
+	public static String statusGlyph(AgentStatus status, boolean attention) {
+		return attention ? ATTENTION : forStatus(status);
+	}
+
+	/**
+	 * The side of the square a glyph icon is drawn in: somewhat larger than the
+	 * interface font, the way a 16-pixel icon sits beside 12-point text, and
+	 * following it when the theme's font is scaled.
+	 *
+	 * @return the size in pixels
+	 */
+	public static int iconSize() {
+		return Math.max(14, Math.round(uiFont().getSize2D() * 4f / 3f));
+	}
+
+	/**
+	 * A glyph as an icon, at the size that suits the interface font.
+	 *
+	 * @param glyph the glyph, possibly {@code null}
+	 * @return the icon, or {@code null} when there is no glyph
+	 */
+	public static GlyphIcon icon(String glyph) {
+		return icon(glyph, iconSize());
+	}
+
+	/**
+	 * Glyphs whose icon is traced from a different character. Declared after the
+	 * glyphs, which it reads; see {@link #iconForm}.
+	 */
+	private static final Map<String, String> ICON_FORMS = iconForms();
+
+	private static Map<String, String> iconForms() {
+		var forms = new HashMap<String, String>();
+		// The coloured circles' monochrome outlines stand for their colour with
+		// hatching - stripes for blue, cross-hatch for green, dots for yellow - which
+		// at sixteen pixels is noise. The icon has a real colour, so a plain dot says it.
+		var dot = "●";
+		forms.put(RUNNING, dot);
+		forms.put(STARTING, dot);
+		forms.put(WAITING, dot);
+		forms.put(FAILED, dot);
+		forms.put(STOPPED, "○");
+		// The emoji pencil lies flat and reads as a dash; the card-index box is a blob.
+		forms.put(EDIT, "✎");
+		forms.put(WINDOWS, "🗔");
+		return Map.copyOf(forms);
+	}
+
+	/**
+	 * The character a glyph's icon is traced from: usually the glyph itself, but
+	 * for a few emoji whose one-colour outline does not survive being small, a
+	 * plainer shape that does. Text keeps the glyph; only the icon changes.
+	 *
+	 * @param glyph the glyph
+	 * @return what its icon draws
+	 */
+	public static String iconForm(String glyph) {
+		return glyph == null ? null : ICON_FORMS.getOrDefault(glyph, glyph);
+	}
+
+	/**
+	 * A glyph as an icon.
+	 *
+	 * <p>Traced from its {@link #iconForm}, from whichever font has it; failing
+	 * that from the glyph itself, and failing that from its plain stand-in, so it
+	 * is never a box. Icons are immutable and cached.
+	 *
+	 * @param glyph the glyph, possibly {@code null}
+	 * @param size  the side of the square, in pixels
+	 * @return the icon, or {@code null} when there is no glyph
+	 */
+	public static GlyphIcon icon(String glyph, int size) {
+		if (glyph == null || glyph.isEmpty()) {
+			return null;
+		}
+		return ICONS.computeIfAbsent(glyph + SIDEBAR_SEPARATOR + size, key -> {
+			// Coloured by what the glyph means, whichever character ends up drawing it.
+			var tint = TINTS.get(glyph);
+			var form = iconForm(glyph);
+			var icon = new GlyphIcon(form, iconFont(form), size, tint);
+			if (icon.isBlank() && !form.equals(glyph)) {
+				icon = new GlyphIcon(glyph, iconFont(glyph), size, tint);
+			}
+			var fallback = FALLBACKS.getOrDefault(glyph, glyph);
+			if (icon.isBlank() && !fallback.equals(glyph)) {
+				// Nothing here has the glyph, or the font claiming it holds only a colour
+				// bitmap that Java2D cannot trace: the stand-in beats an empty square.
+				icon = new GlyphIcon(fallback, iconFont(fallback), size, tint);
+			}
+			return icon;
+		});
+	}
+
+	/**
+	 * Give a button, menu item or menu its words and, in its icon slot, a glyph.
+	 *
+	 * <p>The disabled icon is set alongside, faded, because a look and feel will
+	 * only fade an {@code ImageIcon} for itself; FlatLaf shows a disabled menu
+	 * item with any other icon as no icon at all.
+	 *
+	 * @param <T>    the kind of button
+	 * @param button the button
+	 * @param glyph  the glyph; {@code null} or empty removes the icon
+	 * @param text   the words, as plain text
+	 * @return the same button, for chaining
+	 */
+	public static <T extends AbstractButton> T decorate(T button, String glyph, String text) {
+		var icon = icon(glyph);
+		button.setText(text == null ? "" : text);
+		button.setIcon(icon);
+		button.setDisabledIcon(icon == null ? null : icon.disabled());
+		return button;
+	}
+
+	/**
+	 * Give a label its words and, in its icon slot, a glyph.
+	 *
+	 * @param label the label, which may be a renderer
+	 * @param glyph the glyph; {@code null} or empty removes the icon
+	 * @param text  the words; plain text, or HTML the caller has escaped
+	 * @return the same label, for chaining
+	 */
+	public static JLabel decorate(JLabel label, String glyph, String text) {
+		var icon = icon(glyph);
+		label.setText(text == null ? "" : text);
+		label.setIcon(icon);
+		label.setDisabledIcon(icon == null ? null : icon.disabled());
+		return label;
+	}
+
+	/** A font that can draw a glyph, preferring the interface font; {@code null} when none can. */
+	private static Font iconFont(String glyph) {
+		var ui = uiFont();
+		if (drawable(ui, glyph)) {
+			return ui;
+		}
+		var family = emojiFamily(glyph);
+		return family == null ? null : new Font(family, Font.PLAIN, ui.getSize());
 	}
 
 	/**
@@ -243,9 +466,8 @@ public final class Glyphs {
 	 * A glyph and a label for the sidebar, which assembles its own HTML.
 	 *
 	 * <p>The halves are joined by {@link #SIDEBAR_SEPARATOR} rather than rendered
-	 * here, so the sidebar's renderer can put the glyph in its own span and escape
-	 * the words - it has a dimmed detail suffix to add as well, and nesting one
-	 * HTML document inside another does not work.
+	 * here, so the sidebar's renderer can put the glyph in the icon slot and the
+	 * words, escaped, into HTML with the dimmed detail suffix it adds.
 	 *
 	 * @param glyph the glyph
 	 * @param text  the label
@@ -272,26 +494,6 @@ public final class Glyphs {
 		return at < 0
 				? new String[] { "", label }
 				: new String[] { label.substring(0, at), label.substring(at + SIDEBAR_SEPARATOR.length()) };
-	}
-
-	/**
-	 * A glyph and a label for one of this plugin's own widgets, as HTML.
-	 *
-	 * <p>The glyph goes in a span naming a font that can draw it whenever the
-	 * interface font cannot, which is the normal case for emoji under Segoe UI.
-	 * The words inherit the component's own font, so a button here still matches
-	 * every other button in Commander.
-	 *
-	 * @param glyph the glyph
-	 * @param text  the label
-	 * @return HTML for a Swing label, button, menu item or table cell
-	 */
-	public static String rich(String glyph, String text) {
-		var body = text == null ? "" : escape(text);
-		if (glyph == null || glyph.isEmpty()) {
-			return body.isEmpty() ? "" : "<html>" + body + "</html>";
-		}
-		return "<html>" + span(glyph) + (body.isEmpty() ? "" : " " + body) + "</html>";
 	}
 
 	/**

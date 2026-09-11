@@ -29,6 +29,7 @@ import com.pty4j.PtyProcessBuilder;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
+import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -67,7 +68,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 	private final JPanel root = new JPanel(new BorderLayout());
 	private final JTextArea transcriptView = new JTextArea();
 	private final JLabel banner = new JLabel();
-	private final JButton startButton = new JButton("Start");
+	private final JButton startButton = Glyphs.decorate(new JButton(), Glyphs.START, "Start");
 	private final JPanel stoppedView = new JPanel(new BorderLayout());
 	private final StringBuilder recentOutput = new StringBuilder();
 	private final Timer statusTimer;

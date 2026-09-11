@@ -3,6 +3,7 @@ package dev.nuclr.plugin.core.ai.projects.ui.screen;
 import java.awt.BorderLayout;
 import java.awt.Desktop;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -94,7 +95,7 @@ public final class ProjectDesktop extends JPanel
 	private final AttentionNotifier notifier;
 	private final JSplitPane split;
 	private final ProjectSidebar sidebar;
-	private final JLabel statusBar = new JLabel();
+	private final JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
 	private final Runnable onCloseRequested;
 
 	private boolean closed;
@@ -165,36 +166,36 @@ public final class ProjectDesktop extends JPanel
 		bar.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
 
 		bar.add(newAgentButton());
-		bar.add(button(Glyphs.rich(Glyphs.START, "Start all"),
+		bar.add(button(Glyphs.START, "Start all",
 				"Start every agent that is not running", this::startAll));
-		bar.add(button(Glyphs.rich(Glyphs.STOP, "Stop all"),
+		bar.add(button(Glyphs.STOP, "Stop all",
 				"Terminate every running agent", this::stopAll));
 		bar.add(windowsButton());
 		bar.add(backgroundButton());
 		bar.add(terminalButton());
-		bar.add(button(Glyphs.rich(Glyphs.TILE, "Tile"),
+		bar.add(button(Glyphs.TILE, "Tile",
 				"Arrange the windows in a grid (Ctrl+Shift+G)", this::tile));
-		bar.add(button(Glyphs.rich(Glyphs.CASCADE, "Cascade"),
+		bar.add(button(Glyphs.CASCADE, "Cascade",
 				"Stack the windows from the top left (Ctrl+Shift+D)", this::cascade));
-		bar.add(button(Glyphs.rich(Glyphs.SAVE, "Save layout"),
+		bar.add(button(Glyphs.SAVE, "Save layout",
 				"Write the current window layout now (Ctrl+Shift+S)", this::saveLayout));
-		bar.add(button(Glyphs.rich(Glyphs.RESET, "Reset layout"),
+		bar.add(button(Glyphs.RESET, "Reset layout",
 				"Discard the saved layout and cascade afresh", this::resetLayout));
-		bar.add(button(Glyphs.rich(Glyphs.BROADCAST, "Broadcast..."),
+		bar.add(button(Glyphs.BROADCAST, "Broadcast...",
 				"Send one instruction to several agents (Ctrl+Shift+B)", this::broadcast));
-		bar.add(button(Glyphs.rich(Glyphs.CONTEXT, "Context..."),
+		bar.add(button(Glyphs.CONTEXT, "Context...",
 				"Show and edit the project's shared context", () -> showResolvedContext(null)));
-		bar.add(button(Glyphs.rich(Glyphs.HARNESS, "Harness..."),
+		bar.add(button(Glyphs.HARNESS, "Harness...",
 				"Show and edit the project harness", () -> showHarness(null)));
-		bar.add(button(Glyphs.rich(Glyphs.SIDEBAR, "Sidebar"),
+		bar.add(button(Glyphs.SIDEBAR, "Sidebar",
 				"Show or hide the project sidebar (Ctrl+Shift+K)", this::toggleSidebar));
-		bar.add(button(Glyphs.rich(Glyphs.CLOSE, "Close project"),
+		bar.add(button(Glyphs.CLOSE, "Close project",
 				"Close this project and stop its agents", this::requestClose));
 		return bar;
 	}
 
-	private static JButton button(String label, String tip, Runnable action) {
-		var button = new JButton(label);
+	private static JButton button(String glyph, String label, String tip, Runnable action) {
+		var button = Glyphs.decorate(new JButton(), glyph, label);
 		button.setToolTipText(tip);
 		button.addActionListener(event -> action.run());
 		return button;
@@ -210,12 +211,12 @@ public final class ProjectDesktop extends JPanel
 	 */
 	private JButton newAgentButton() {
 
-		var button = new JButton(Glyphs.rich(Glyphs.NEW, "New agent"));
+		var button = Glyphs.decorate(new JButton(), Glyphs.NEW, "New agent");
 		button.setToolTipText("Add an agent to this project (Ctrl+Shift+N)");
 		button.addActionListener(event -> {
 			var menu = new JPopupMenu();
 			for (var template : store.project().getTemplates()) {
-				var item = new JMenuItem(Glyphs.rich(Glyphs.TEMPLATE, template.displayName()));
+				var item = Glyphs.decorate(new JMenuItem(), Glyphs.TEMPLATE, template.displayName());
 				item.setToolTipText(template.getDescription());
 				item.addActionListener(chosen -> newAgent(template.getId()));
 				menu.add(item);
@@ -223,10 +224,10 @@ public final class ProjectDesktop extends JPanel
 			if (menu.getComponentCount() > 0) {
 				menu.addSeparator();
 			}
-			var custom = new JMenuItem(Glyphs.rich(Glyphs.AGENT, "Custom..."));
+			var custom = Glyphs.decorate(new JMenuItem(), Glyphs.AGENT, "Custom...");
 			custom.addActionListener(chosen -> newAgent(null));
 			menu.add(custom);
-			var terminal = new JMenuItem(Glyphs.rich(Glyphs.TERMINAL, "Terminal in the project folder"));
+			var terminal = Glyphs.decorate(new JMenuItem(), Glyphs.TERMINAL, "Terminal in the project folder");
 			terminal.addActionListener(chosen -> newTerminal(store.paths().root()));
 			menu.add(terminal);
 			menu.show(button, 0, button.getHeight());
@@ -244,7 +245,7 @@ public final class ProjectDesktop extends JPanel
 	 * but wanting a terminal should not cost a form.
 	 */
 	private JButton terminalButton() {
-		var button = new JButton(Glyphs.rich(Glyphs.TERMINAL, "Terminal"));
+		var button = Glyphs.decorate(new JButton(), Glyphs.TERMINAL, "Terminal");
 		button.setToolTipText("Open a plain shell in " + store.paths().root() + " (Ctrl+O)");
 		button.addActionListener(event -> newTerminal(store.paths().root()));
 		return button;
@@ -347,7 +348,7 @@ public final class ProjectDesktop extends JPanel
 	 */
 	private JButton windowsButton() {
 
-		var button = new JButton(Glyphs.rich(Glyphs.WINDOWS, "Windows"));
+		var button = Glyphs.decorate(new JButton(), Glyphs.WINDOWS, "Windows");
 		button.setToolTipText("Every agent window, minimised or not");
 		button.addActionListener(event -> {
 			var menu = new JPopupMenu();
@@ -357,18 +358,17 @@ public final class ProjectDesktop extends JPanel
 				menu.add(empty);
 			}
 			for (var frame : frames.values()) {
-				var item = new JMenuItem(Glyphs.rich(
-						frame.hasAttention() ? Glyphs.ATTENTION : Glyphs.forStatus(frame.window().status()),
+				var item = Glyphs.decorate(new JMenuItem(),
+						Glyphs.statusGlyph(frame.window().status(), frame.hasAttention()),
 						frame.agentName()
 								+ (frame.isIcon() ? "  (minimised)" : "")
-								+ "  -  " + frame.window().status().label()));
-				item.setIcon(new StatusIcon(frame.window().status(), frame.hasAttention()));
+								+ "  -  " + frame.window().status().label());
 				item.addActionListener(chosen -> focusAgent(frame.agentId()));
 				menu.add(item);
 			}
 			menu.addSeparator();
-			menu.add(menuItem(Glyphs.rich(Glyphs.CASCADE, "Minimise all (Ctrl+Shift+M)"), this::minimiseAll));
-			menu.add(menuItem(Glyphs.rich(Glyphs.TILE, "Restore all"), this::restoreAll));
+			menu.add(menuItem(Glyphs.CASCADE, "Minimise all (Ctrl+Shift+M)", this::minimiseAll));
+			menu.add(menuItem(Glyphs.TILE, "Restore all", this::restoreAll));
 			menu.show(button, 0, button.getHeight());
 		});
 		return button;
@@ -376,7 +376,7 @@ public final class ProjectDesktop extends JPanel
 
 	/** Choose and persist the animated desktop background. */
 	private JButton backgroundButton() {
-		var button = new JButton(Glyphs.rich(Glyphs.BACKGROUND, "Background"));
+		var button = Glyphs.decorate(new JButton(), Glyphs.BACKGROUND, "Background");
 		button.setToolTipText("Choose the project desktop background effect");
 		button.addActionListener(event -> {
 			var menu = new JPopupMenu();
@@ -399,8 +399,8 @@ public final class ProjectDesktop extends JPanel
 		store.markDesktopDirty();
 	}
 
-	private static JMenuItem menuItem(String label, Runnable action) {
-		var item = new JMenuItem(label);
+	private static JMenuItem menuItem(String glyph, String label, Runnable action) {
+		var item = Glyphs.decorate(new JMenuItem(), glyph, label);
 		item.addActionListener(event -> action.run());
 		return item;
 	}
@@ -634,11 +634,11 @@ public final class ProjectDesktop extends JPanel
 		var panel = new ResolvedContextPanel(this::openDocument);
 		panel.show(label, ContextResolver.resolve(store.project(), agent, store.paths()));
 
-		var edit = button(Glyphs.rich(Glyphs.EDIT,
-				agent == null ? "Edit project context..." : "Edit agent context..."),
+		var edit = button(Glyphs.EDIT,
+				agent == null ? "Edit project context..." : "Edit agent context...",
 				"Change the instructions, skills and files this level contributes",
 				() -> editContext(agentId));
-		showUtilityFrame(Glyphs.label(Glyphs.CONTEXT, "Resolved context - " + label),
+		showUtilityFrame(Glyphs.CONTEXT, "Resolved context - " + label,
 				panel, edit, new Dimension(840, 540));
 	}
 
@@ -650,11 +650,11 @@ public final class ProjectDesktop extends JPanel
 		var panel = new HarnessPanel();
 		panel.show(label, HarnessResolver.resolve(store.project(), agent));
 
-		var edit = button(Glyphs.rich(Glyphs.EDIT,
-				agent == null ? "Edit project harness..." : "Edit agent overrides..."),
+		var edit = button(Glyphs.EDIT,
+				agent == null ? "Edit project harness..." : "Edit agent overrides...",
 				"Change the executable, model, environment, permissions, tools and roots",
 				() -> editHarness(agentId));
-		showUtilityFrame(Glyphs.label(Glyphs.HARNESS, "Harness - " + label),
+		showUtilityFrame(Glyphs.HARNESS, "Harness - " + label,
 				panel, edit, new Dimension(780, 500));
 	}
 
@@ -1380,29 +1380,22 @@ public final class ProjectDesktop extends JPanel
 		var waiting = countStatus(AgentStatus.WAITING_INPUT);
 		var failed = countStatus(AgentStatus.FAILED);
 
-		var separator = "&nbsp;&nbsp; · &nbsp;&nbsp;";
-		var text = new StringBuilder("<html>");
-		text.append(Glyphs.span(Glyphs.AGENT)).append(' ').append(defined)
-				.append(defined == 1 ? " agent" : " agents");
-		text.append(separator).append(Glyphs.span(Glyphs.WINDOWS)).append(' ')
-				.append(frames.size()).append(" open");
-		text.append(separator).append(Glyphs.span(Glyphs.RUNNING)).append(' ')
-				.append(running).append(" running");
+		var parts = new ArrayList<JLabel>();
+		parts.add(statusPart(Glyphs.AGENT, defined + (defined == 1 ? " agent" : " agents")));
+		parts.add(statusPart(Glyphs.WINDOWS, frames.size() + " open"));
+		parts.add(statusPart(Glyphs.RUNNING, running + " running"));
 		if (waiting > 0) {
-			text.append(separator).append(Glyphs.span(Glyphs.WAITING)).append(' ')
-					.append(waiting).append(" waiting");
+			parts.add(statusPart(Glyphs.WAITING, waiting + " waiting"));
 		}
 		if (failed > 0) {
-			text.append(separator).append(Glyphs.span(Glyphs.FAILED)).append(' ')
-					.append(failed).append(" failed");
+			parts.add(statusPart(Glyphs.FAILED, failed + " failed"));
 		}
 		if (!attention.isEmpty()) {
-			text.append("&nbsp;&nbsp;&nbsp;&nbsp;").append(Glyphs.span(Glyphs.ATTENTION)).append(' ')
-					.append(attention.size() == 1
-							? "an agent is asking for a decision"
-							: attention.size() + " agents are asking for a decision");
+			parts.add(statusPart(Glyphs.ATTENTION, attention.size() == 1
+					? "an agent is asking for a decision"
+					: attention.size() + " agents are asking for a decision"));
 		}
-		statusBar.setText(text.append("</html>").toString());
+		showStatus(parts);
 		statusBar.setToolTipText("<html>"
 				+ Glyphs.span(Glyphs.RUNNING) + " running &nbsp;&nbsp; "
 				+ Glyphs.span(Glyphs.STARTING) + " starting &nbsp;&nbsp; "
@@ -1435,9 +1428,24 @@ public final class ProjectDesktop extends JPanel
 		return frames.values().stream().filter(frame -> frame.window().status() == status).count();
 	}
 
+	/** Replace what the status bar shows. */
+	private void showStatus(List<JLabel> parts) {
+		statusBar.removeAll();
+		parts.forEach(statusBar::add);
+		statusBar.revalidate();
+		statusBar.repaint();
+	}
+
+	/** One figure in the status bar, its glyph in the icon slot. */
+	private static JLabel statusPart(String glyph, String text) {
+		var part = Glyphs.decorate(new JLabel(), glyph, text);
+		part.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 18));
+		return part;
+	}
+
 	/** A brief confirmation in the status bar, for actions with no other visible result. */
 	private void flash(String message) {
-		statusBar.setText("<html>" + message + "</html>");
+		showStatus(List.of(new JLabel(message)));
 		var timer = new javax.swing.Timer(2200, event -> refreshStatusBar());
 		timer.setRepeats(false);
 		timer.start();
@@ -1519,9 +1527,10 @@ public final class ProjectDesktop extends JPanel
 		frame.setLocation(40 + offset, 40 + offset);
 	}
 
-	private void showUtilityFrame(String title, JPanel content, JButton action, Dimension size) {
+	private void showUtilityFrame(String glyph, String title, JPanel content, JButton action, Dimension size) {
 
 		var frame = new JInternalFrame(title, true, true, true, true);
+		frame.setFrameIcon(Glyphs.icon(glyph));
 		frame.setDefaultCloseOperation(JInternalFrame.DISPOSE_ON_CLOSE);
 		frame.getContentPane().setLayout(new BorderLayout());
 		frame.getContentPane().add(content, BorderLayout.CENTER);

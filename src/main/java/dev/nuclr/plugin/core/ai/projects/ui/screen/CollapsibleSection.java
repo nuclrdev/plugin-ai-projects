@@ -12,6 +12,8 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.UIManager;
 
+import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
+
 /**
  * One foldable block in the project sidebar: a clickable header and a body that
  * shows or hides.
@@ -26,7 +28,9 @@ public final class CollapsibleSection extends JPanel {
 	private static final long serialVersionUID = 1L;
 
 	private final String key;
-	private final JLabel header = new JLabel();
+	private final JPanel header = new JPanel(new BorderLayout(6, 0));
+	private final JLabel fold = new JLabel();
+	private final JLabel caption = new JLabel();
 	private final JPanel body = new JPanel(new BorderLayout());
 	private final Runnable onToggle;
 
@@ -51,7 +55,10 @@ public final class CollapsibleSection extends JPanel {
 		this.expanded = expanded;
 		this.onToggle = onToggle;
 
-		header.setFont(header.getFont().deriveFont(Font.BOLD));
+		fold.setFont(fold.getFont().deriveFont(Font.BOLD));
+		caption.setFont(caption.getFont().deriveFont(Font.BOLD));
+		header.add(fold, BorderLayout.WEST);
+		header.add(caption, BorderLayout.CENTER);
 		header.setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
 		header.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 		header.setOpaque(true);
@@ -123,6 +130,10 @@ public final class CollapsibleSection extends JPanel {
 
 	private void refreshHeader() {
 		var arrow = expanded ? "▾" : "▸";
-		header.setText(arrow + "  " + title + (badge.isBlank() ? "" : "   " + badge));
+		fold.setText(arrow);
+		// The fold arrow leads, as it does everywhere; the section's glyph sits in the
+		// caption's icon slot after it.
+		var halves = Glyphs.splitSidebar(title);
+		Glyphs.decorate(caption, halves[0], halves[1] + (badge.isBlank() ? "" : "   " + badge));
 	}
 }

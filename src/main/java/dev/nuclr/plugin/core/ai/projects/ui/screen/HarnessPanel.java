@@ -12,6 +12,8 @@ import javax.swing.JTable;
 import javax.swing.table.AbstractTableModel;
 
 import dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness;
+import dev.nuclr.plugin.core.ai.projects.ui.GlyphCellRenderer;
+import dev.nuclr.plugin.core.ai.projects.ui.GlyphText;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 
 /**
@@ -36,6 +38,7 @@ public final class HarnessPanel extends JPanel {
 		super(new BorderLayout());
 		heading.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
 		var table = new JTable(model);
+		table.setDefaultRenderer(Object.class, new GlyphCellRenderer());
 		table.setFillsViewportHeight(true);
 		table.setRowHeight(Math.max(table.getRowHeight(), 20));
 		add(heading, BorderLayout.NORTH);
@@ -49,7 +52,8 @@ public final class HarnessPanel extends JPanel {
 	 * @param harness the resolved harness
 	 */
 	public void show(String label, EffectiveHarness harness) {
-		heading.setText("<html>" + Glyphs.span(Glyphs.HARNESS) + " <b>" + escape(label) + "</b> &mdash; "
+		heading.setIcon(Glyphs.icon(Glyphs.HARNESS));
+		heading.setText("<html><b>" + escape(label) + "</b> &mdash; "
 				+ escape(harness.displayCommandLine().isBlank() ? "no executable configured"
 						: harness.displayCommandLine())
 				+ "</html>");
@@ -59,36 +63,36 @@ public final class HarnessPanel extends JPanel {
 	private static List<Row> rows(EffectiveHarness harness) {
 
 		var rows = new ArrayList<Row>();
-		rows.add(new Row(Glyphs.rich(Glyphs.START, "Executable"), text(harness.executable()),
+		rows.add(new Row(new GlyphText(Glyphs.START, "Executable"), text(harness.executable()),
 				harness.source(EffectiveHarness.EXECUTABLE).label()));
-		rows.add(new Row(Glyphs.rich(Glyphs.MORE, "Startup args"), String.join(" ", harness.startupArgs()),
+		rows.add(new Row(new GlyphText(Glyphs.MORE, "Startup args"), String.join(" ", harness.startupArgs()),
 				harness.source(EffectiveHarness.STARTUP_ARGS).label()));
-		rows.add(new Row(Glyphs.rich(Glyphs.TOOL, "Provider"), text(harness.provider()),
+		rows.add(new Row(new GlyphText(Glyphs.TOOL, "Provider"), text(harness.provider()),
 				harness.source(EffectiveHarness.PROVIDER).label()));
-		rows.add(new Row(Glyphs.rich(Glyphs.SKILL, "Model"), text(harness.model()),
+		rows.add(new Row(new GlyphText(Glyphs.SKILL, "Model"), text(harness.model()),
 				harness.source(EffectiveHarness.MODEL).label()));
 
 		var environmentSource = harness.source(EffectiveHarness.ENV).label();
 		for (var entry : harness.env().entrySet()) {
-			rows.add(new Row(Glyphs.rich(Glyphs.ENVIRONMENT, entry.getKey()), entry.getValue(),
+			rows.add(new Row(new GlyphText(Glyphs.ENVIRONMENT, entry.getKey()), entry.getValue(),
 					environmentSource));
 		}
 		var permissionSource = harness.source(EffectiveHarness.PERMISSIONS).label();
 		for (var permission : harness.permissions()) {
-			rows.add(new Row(Glyphs.rich(Glyphs.PERMISSION, "Permission"), permission, permissionSource));
+			rows.add(new Row(new GlyphText(Glyphs.PERMISSION, "Permission"), permission, permissionSource));
 		}
 		var serverSource = harness.source(EffectiveHarness.MCP_SERVERS).label();
 		for (var server : harness.mcpServers()) {
-			rows.add(new Row(Glyphs.rich(server.isEnabled() ? Glyphs.TOOL : Glyphs.STOPPED, server.getName()),
+			rows.add(new Row(new GlyphText(server.isEnabled() ? Glyphs.TOOL : Glyphs.STOPPED, server.getName()),
 					server.displayCommandLine() + (server.isEnabled() ? "" : "   (disabled)"), serverSource));
 		}
 		var rootSource = harness.source(EffectiveHarness.ALLOWED_ROOTS).label();
 		for (var root : harness.allowedRoots()) {
-			rows.add(new Row(Glyphs.rich(Glyphs.ROOT, "Allowed root"), root, rootSource));
+			rows.add(new Row(new GlyphText(Glyphs.ROOT, "Allowed root"), root, rootSource));
 		}
 		var instructionSource = harness.source(EffectiveHarness.SHARED_INSTRUCTIONS).label();
 		for (var instruction : harness.sharedInstructions()) {
-			rows.add(new Row(Glyphs.rich(Glyphs.INSTRUCTION, "Shared instruction"), instruction,
+			rows.add(new Row(new GlyphText(Glyphs.INSTRUCTION, "Shared instruction"), instruction,
 					instructionSource));
 		}
 		return rows;
@@ -102,7 +106,7 @@ public final class HarnessPanel extends JPanel {
 		return text == null ? "" : text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
 	}
 
-	private record Row(String field, String value, String source) {
+	private record Row(GlyphText field, String value, String source) {
 	}
 
 	private static final class HarnessTableModel extends AbstractTableModel {

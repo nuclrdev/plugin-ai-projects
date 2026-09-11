@@ -16,10 +16,11 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.table.AbstractTableModel;
-import javax.swing.table.DefaultTableCellRenderer;
 
 import dev.nuclr.plugin.core.ai.projects.harness.ContextItem;
 import dev.nuclr.plugin.core.ai.projects.harness.ResolvedContext;
+import dev.nuclr.plugin.core.ai.projects.ui.GlyphCellRenderer;
+import dev.nuclr.plugin.core.ai.projects.ui.GlyphText;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 
 /**
@@ -82,11 +83,13 @@ public final class ResolvedContextPanel extends JPanel {
 	public void show(String label, ResolvedContext context) {
 		model.setItems(context.items());
 		var missing = context.missing().size();
-		var text = new StringBuilder("<html>").append(Glyphs.span(Glyphs.CONTEXT)).append(" <b>")
+		// The icon slot says whether anything is wrong before the sentence does.
+		summary.setIcon(Glyphs.icon(missing > 0 ? Glyphs.MISSING : Glyphs.CONTEXT));
+		var text = new StringBuilder("<html><b>")
 				.append(escape(label)).append("</b> receives ")
 				.append(context.size()).append(context.size() == 1 ? " item" : " items");
 		if (missing > 0) {
-			text.append(" &mdash; ").append(Glyphs.span(Glyphs.MISSING)).append(" <b>").append(missing)
+			text.append(" &mdash; <b>").append(missing)
 					.append(" missing file").append(missing == 1 ? "" : "s").append("</b>");
 		}
 		summary.setText(text.append("</html>").toString());
@@ -104,7 +107,7 @@ public final class ResolvedContextPanel extends JPanel {
 	}
 
 	/** Grey out rows whose file is missing, so a broken reference reads as broken. */
-	private final class MissingAwareRenderer extends DefaultTableCellRenderer {
+	private final class MissingAwareRenderer extends GlyphCellRenderer {
 
 		private static final long serialVersionUID = 1L;
 
@@ -158,12 +161,12 @@ public final class ResolvedContextPanel extends JPanel {
 		public Object getValueAt(int row, int column) {
 			var item = items.get(row);
 			return switch (column) {
-				case 0 -> Glyphs.rich(Glyphs.forContextKind(item.kind()), item.kind().groupLabel());
+				case 0 -> new GlyphText(Glyphs.forContextKind(item.kind()), item.kind().groupLabel());
 				case 1 -> item.label();
 				case 2 -> item.source().label();
 				case 3 -> item.detail();
 				default -> item.path() == null ? ""
-						: Glyphs.rich(item.available() ? Glyphs.FINISHED : Glyphs.MISSING,
+						: new GlyphText(item.available() ? Glyphs.FINISHED : Glyphs.MISSING,
 							item.available() ? "" : "missing");
 			};
 		}

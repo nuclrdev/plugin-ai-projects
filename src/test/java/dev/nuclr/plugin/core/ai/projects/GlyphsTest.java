@@ -23,9 +23,10 @@ import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
  * <p>Java2D draws a character its font lacks as an empty rectangle rather than
  * falling back to another font, and the theme font Commander uses on Windows
  * contains none of these emoji. So the interesting cases here are the ones where
- * the interface font <em>cannot</em> draw the glyph: the plugin's own widgets
- * should still get the picture, through a font named in HTML, while anything
- * handed to the host falls back to a plain symbol.
+ * the interface font <em>cannot</em> draw the glyph: HTML such as the quick view
+ * should still get the picture, through a font it names, while anything handed
+ * to the host falls back to a plain symbol. The icon form, which the plugin's
+ * own widgets use, is covered by {@link GlyphIconTest}.
  */
 class GlyphsTest {
 
@@ -81,7 +82,7 @@ class GlyphsTest {
 		assertEquals(Glyphs.pick(ROBOT, "◆"), Glyphs.pick(ROBOT, "◆"));
 	}
 
-	// ------------------------------------------------------------- own widgets
+	// -------------------------------------------------------------------- html
 
 	@Test
 	void aThemeFontWithNoEmojiStillGetsEmojiThroughANamedFont() {
@@ -102,20 +103,6 @@ class GlyphsTest {
 	void aFontThatCanDrawTheGlyphIsLeftAlone() {
 		UIManager.put("Label.font", new Font(Font.SANS_SERIF, Font.PLAIN, 12));
 		assertEquals("◆", Glyphs.span("◆"));
-	}
-
-	@Test
-	void aRichLabelIsHtmlWithTheWordsEscaped() {
-		var html = Glyphs.rich(ROBOT, "A & B <agent>");
-		assertTrue(html.startsWith("<html>"), html);
-		assertTrue(html.endsWith("</html>"), html);
-		assertTrue(html.contains("A &amp; B &lt;agent&gt;"), html);
-	}
-
-	@Test
-	void aRichLabelWithNoGlyphIsStillJustTheWords() {
-		assertEquals("", Glyphs.rich(null, null));
-		assertTrue(Glyphs.rich(null, "Agents").contains("Agents"));
 	}
 
 	// ------------------------------------------------------- host-facing text
@@ -212,7 +199,7 @@ class GlyphsTest {
 				Glyphs.RESET, Glyphs.TILE, Glyphs.CASCADE, Glyphs.WINDOWS, Glyphs.SIDEBAR, Glyphs.CLOSE,
 				Glyphs.DELETE, Glyphs.EDIT, Glyphs.RENAME, Glyphs.REFRESH, Glyphs.FOCUS, Glyphs.COPY,
 				Glyphs.CLEAR, Glyphs.ZOOM, Glyphs.MORE, Glyphs.TEMPLATE, Glyphs.TRANSCRIPT,
-				Glyphs.MISSING }) {
+				Glyphs.MISSING, Glyphs.BACKGROUND, Glyphs.OPACITY }) {
 
 			assertNotNull(glyph);
 			assertFalse(glyph.isBlank());
