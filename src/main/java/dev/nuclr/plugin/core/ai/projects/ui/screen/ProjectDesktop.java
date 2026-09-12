@@ -84,6 +84,17 @@ public final class ProjectDesktop extends JPanel
 
 	private static final long serialVersionUID = 1L;
 
+	/**
+	 * How long status changes are gathered before the sidebar and status bar catch up.
+	 *
+	 * <p>A busy desktop reports constantly - each agent flips between running and
+	 * waiting whenever it pauses at a prompt - and every report used to redraw the
+	 * sidebar, rebuild the status bar and tell the file panel, which re-read every
+	 * project's definition from disk. None of that is worth doing more than a few
+	 * times a second, and doing it once for a burst is invisible to the user.
+	 */
+	private static final int LIVE_REFRESH_DELAY_MILLIS = 120;
+
 	private final ProjectStore store;
 	private final AgentWindowRegistry registry;
 	private final NuclrEventBus eventBus;
@@ -97,6 +108,7 @@ public final class ProjectDesktop extends JPanel
 	private final ProjectSidebar sidebar;
 	private final JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
 	private final Runnable onCloseRequested;
+	private final javax.swing.Timer liveRefresh;
 
 	private boolean closed;
 
@@ -144,6 +156,9 @@ public final class ProjectDesktop extends JPanel
 		if (store.desktop().isSidebarCollapsed()) {
 			applySidebarCollapsed(true);
 		}
+
+		liveRefresh = new javax.swing.Timer(LIVE_REFRESH_DELAY_MILLIS, event -> refreshLiveNow());
+		liveRefresh.setRepeats(false);
 
 		installShortcuts();
 
@@ -767,18 +782,16 @@ public final class ProjectDesktop extends JPanel
 		if (!closed) {
 			store.desktop().windowOrCreate(agentId).setOpen(false);
 			store.markDesktopDirty();
-			refreshSidebar();
-			refreshStatusBar();
-			publishActivity(true);
+			// Closing a window changes which agents have live state, not what the project
+			// defines, so the sections that read the disk do not need rebuilding.
+			refreshLive();
 		}
 	}
 
 	@Override
 	public void windowActivated(String agentId) {
 		if (attention.remove(agentId)) {
-			refreshSidebar();
-			refreshStatusBar();
-			publishActivity(true);
+			refreshLive();
 		}
 	}
 
@@ -1312,11 +1325,11 @@ public final class ProjectDesktop extends JPanel
 		SwingUtilities.invokeLater(() -> {
 			var frame = frames.get(agentId);
 			if (frame != null) {
+				// The window's own title bar is the one thing worth updating immediately;
+				// it is cheap, and it is what the user is looking at.
 				frame.refreshStatus();
 			}
-			refreshSidebar();
-			refreshStatusBar();
-			publishActivity(true);
+			refreshLive();
 		});
 	}
 
@@ -1330,10 +1343,30 @@ public final class ProjectDesktop extends JPanel
 				// The frame's own flag is only visible to someone looking at the desktop.
 				notifier.raise(frame.agentName());
 			}
-			refreshSidebar();
-			refreshStatusBar();
-			publishActivity(true);
+			refreshLive();
 		});
+	}
+
+	/**
+	 * Note that the live view is out of date, and catch it up shortly.
+	 *
+	 * <p>Restarting the timer rather than scheduling another means a burst of status
+	 * changes - starting or stopping every agent at once, say - costs one refresh.
+	 */
+	private void refreshLive() {
+		if (!closed) {
+			liveRefresh.restart();
+		}
+	}
+
+	/** What a status or attention change actually has to redraw. */
+	private void refreshLiveNow() {
+		if (closed) {
+			return;
+		}
+		sidebar.refreshStatuses(agentStatuses(), Set.copyOf(attention));
+		refreshStatusBar();
+		publishActivity(true);
 	}
 
 	@Override
@@ -1361,9 +1394,13 @@ public final class ProjectDesktop extends JPanel
 	}
 
 	private void refreshSidebar() {
+		sidebar.refresh(agentStatuses(), Set.copyOf(attention));
+	}
+
+	private Map<String, AgentStatus> agentStatuses() {
 		var statuses = new HashMap<String, AgentStatus>();
 		frames.forEach((agentId, frame) -> statuses.put(agentId, frame.window().status()));
-		sidebar.refresh(statuses, Set.copyOf(attention));
+		return statuses;
 	}
 
 	/**
@@ -1635,6 +1672,7 @@ public final class ProjectDesktop extends JPanel
 		}
 		captureAllGeometry();
 		closed = true;
+		liveRefresh.stop();
 
 		for (var frame : List.copyOf(frames.values())) {
 			frame.captureInto(store.desktop().windowOrCreate(frame.agentId()));

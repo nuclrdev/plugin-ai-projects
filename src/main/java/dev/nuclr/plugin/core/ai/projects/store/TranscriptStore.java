@@ -10,6 +10,12 @@ import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Terminal transcripts, kept per agent and deliberately kept across restarts.
@@ -23,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * worth reading. Trimming happens on write, so a long-running agent cannot fill
  * a disk overnight.
  */
-public final class TranscriptStore {
+public final class TranscriptStore implements AutoCloseable {
 
 	/** Largest transcript kept per agent, in bytes. */
 	public static final long MAX_BYTES = 2L * 1024 * 1024;
@@ -31,8 +37,22 @@ public final class TranscriptStore {
 	/** How much is trimmed back to once the cap is passed. */
 	private static final long TRIM_TO_BYTES = 1024 * 1024;
 
+	/** How long a reader waits for queued writes before giving up on them. */
+	private static final long FLUSH_TIMEOUT_SECONDS = 5;
+
 	private final ProjectPaths paths;
 	private final Map<String, Object> locks = new ConcurrentHashMap<>();
+
+	/**
+	 * Writes happen here rather than on the caller's thread.
+	 *
+	 * <p>The caller is the event dispatch thread: a terminal window drains its buffer
+	 * from the status timer, once a second per agent, and a file append - plus the
+	 * occasional megabyte trim - is not something to do while the UI waits. One thread
+	 * rather than a pool because a transcript is a log: the order of appends is the
+	 * whole point.
+	 */
+	private final ExecutorService writer;
 
 	/**
 	 * Create a store over a project's transcript directory.
@@ -41,10 +61,18 @@ public final class TranscriptStore {
 	 */
 	public TranscriptStore(ProjectPaths paths) {
 		this.paths = paths;
+		this.writer = Executors.newSingleThreadExecutor(runnable -> {
+			var thread = new Thread(runnable, "nuclr-ai-transcripts");
+			thread.setDaemon(true);
+			return thread;
+		});
 	}
 
 	/**
 	 * Append output produced by an agent.
+	 *
+	 * <p>Queued, not written here. {@link #tail(String, int)} and {@link #flush()}
+	 * wait for the queue, so a reader never sees a transcript that stops short.
 	 *
 	 * @param agentId the agent
 	 * @param text    the text to append; ignored when blank
@@ -53,6 +81,15 @@ public final class TranscriptStore {
 		if (agentId == null || text == null || text.isEmpty()) {
 			return;
 		}
+		try {
+			writer.execute(() -> appendNow(agentId, text));
+		} catch (RejectedExecutionException e) {
+			// The store is closing. Writing it here is the last chance the text has.
+			appendNow(agentId, text);
+		}
+	}
+
+	private void appendNow(String agentId, String text) {
 		synchronized (lock(agentId)) {
 			var file = paths.transcriptFile(agentId);
 			try {
@@ -90,6 +127,9 @@ public final class TranscriptStore {
 		if (agentId == null || maxChars <= 0) {
 			return "";
 		}
+		// Appends are queued, so a read has to catch up with them or it would show a
+		// transcript that stops a second short of the end.
+		flush();
 		synchronized (lock(agentId)) {
 			var file = paths.transcriptFile(agentId);
 			if (!Files.isRegularFile(file)) {
@@ -119,6 +159,9 @@ public final class TranscriptStore {
 	 * @return the path, whether or not anything has been written to it yet
 	 */
 	public Path fileFor(String agentId) {
+		// Handing out the path is an invitation to read it - the desktop opens it in an
+		// external editor - so queued appends have to be on disk first.
+		flush();
 		return paths.transcriptFile(agentId);
 	}
 
@@ -131,12 +174,53 @@ public final class TranscriptStore {
 		if (agentId == null) {
 			return;
 		}
+		// Through the queue, so a delete cannot overtake appends that came before it,
+		// then waited for, so the caller can rely on the file being gone.
+		try {
+			writer.execute(() -> deleteNow(agentId));
+			flush();
+		} catch (RejectedExecutionException e) {
+			deleteNow(agentId);
+		}
+	}
+
+	private void deleteNow(String agentId) {
 		synchronized (lock(agentId)) {
 			try {
 				Files.deleteIfExists(paths.transcriptFile(agentId));
 			} catch (IOException e) {
 				return;
 			}
+		}
+	}
+
+	/**
+	 * Wait for every queued write to reach the disk.
+	 *
+	 * <p>Called before anything reads a transcript back, and by {@link #close()}.
+	 */
+	public void flush() {
+		try {
+			writer.submit(() -> {
+			}).get(FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		} catch (ExecutionException | TimeoutException | RejectedExecutionException e) {
+			// A transcript is a convenience; a reader that cannot wait shows what is there.
+		}
+	}
+
+	/** Stop the writer, after letting what is queued finish. */
+	@Override
+	public void close() {
+		writer.shutdown();
+		try {
+			if (!writer.awaitTermination(FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+				writer.shutdownNow();
+			}
+		} catch (InterruptedException e) {
+			writer.shutdownNow();
+			Thread.currentThread().interrupt();
 		}
 	}
 

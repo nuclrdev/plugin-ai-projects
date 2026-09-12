@@ -344,5 +344,8 @@ public final class ProjectStore implements AutoCloseable {
 			Thread.currentThread().interrupt();
 		}
 		flush();
+		// After the last flush: a closing transcript writer still drains what is queued,
+		// and the session records above may have been written from the same shutdown.
+		transcripts.close();
 	}
 }

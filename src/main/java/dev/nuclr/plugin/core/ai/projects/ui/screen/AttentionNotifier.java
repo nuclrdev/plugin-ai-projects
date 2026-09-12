@@ -34,6 +34,7 @@ public final class AttentionNotifier {
 
 	private String baseTitle = "";
 	private boolean marked;
+	private String lastTitle;
 
 	/**
 	 * Create a notifier for one project desktop.
@@ -100,9 +101,12 @@ public final class AttentionNotifier {
 	}
 
 	private void setTitle(String title) {
-		if (eventBus == null) {
+		if (eventBus == null || title.equals(lastTitle)) {
+			// The status bar refreshes this on every change, and the title is usually the
+			// same one; an unchanged title is not worth a trip through the event bus.
 			return;
 		}
+		lastTitle = title;
 		// The host owns the title and may have it pinned by a setting, in which case it
 		// ignores this. That is the right outcome: a user who asked for a fixed title
 		// has said they do not want it changing underneath them.

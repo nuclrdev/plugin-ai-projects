@@ -73,6 +73,35 @@ class TranscriptStoreTest {
 	}
 
 	@Test
+	void appendsAreWrittenOffTheCallersThreadButAreVisibleToEveryReader() {
+
+		// The point of queueing: a terminal window drains its buffer from a Swing timer,
+		// so the write must not happen on the caller's thread - and must still be there
+		// the moment anything asks for it.
+		transcripts.append("a1", "first ");
+		transcripts.append("a1", "second");
+
+		assertEquals("first second", transcripts.tail("a1", 500));
+		assertTrue(Files.isRegularFile(transcripts.fileFor("a1")),
+				"handing out the path should flush what is queued");
+	}
+
+	@Test
+	void appendsKeepTheirOrderThroughTheQueue() {
+
+		for (var index = 0; index < 200; index++) {
+			transcripts.append("a1", index + ",");
+		}
+
+		var written = transcripts.tail("a1", 100_000);
+		var expected = new StringBuilder();
+		for (var index = 0; index < 200; index++) {
+			expected.append(index).append(',');
+		}
+		assertEquals(expected.toString(), written);
+	}
+
+	@Test
 	void aLongRunningAgentCannotFillTheDisk() throws IOException {
 
 		var chunk = "x".repeat(64 * 1024);
@@ -80,6 +109,9 @@ class TranscriptStoreTest {
 			transcripts.append("a1", chunk);
 		}
 
+		// This reads the file directly rather than through the store, so it has to wait
+		// for the queued writes itself; every accessor on the store already does.
+		transcripts.flush();
 		var size = Files.size(paths.transcriptFile("a1"));
 		assertTrue(size <= TranscriptStore.MAX_BYTES,
 				"transcript grew to " + size + " bytes, past the " + TranscriptStore.MAX_BYTES + " cap");

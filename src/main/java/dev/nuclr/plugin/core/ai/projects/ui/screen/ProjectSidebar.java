@@ -279,6 +279,11 @@ public final class ProjectSidebar extends JPanel {
 	/**
 	 * Rebuild every section from the project as it stands.
 	 *
+	 * <p>Reads the filesystem: the context section resolves every document reference
+	 * and the instruction and skill sections list their directories. Call it when the
+	 * project definition or its documents change - not when an agent's status does,
+	 * which {@link #refreshStatuses(Map, Set)} covers without touching the disk.
+	 *
 	 * @param statuses  each agent's current status, by agent id
 	 * @param attention agent ids currently flagged as needing the user
 	 */
@@ -292,6 +297,25 @@ public final class ProjectSidebar extends JPanel {
 		refreshHarness();
 		refreshFiles();
 		applyFilter();
+		revalidate();
+		repaint();
+	}
+
+	/**
+	 * Update only the agent rows, for a status or attention change.
+	 *
+	 * <p>An agent that goes quiet at a prompt and then prints again flips between
+	 * {@code RUNNING} and {@code WAITING_INPUT}, and with several agents that happens
+	 * continuously. Rebuilding all six sections for it meant listing two directories
+	 * and resolving every context reference - a realpath syscall apiece - on the event
+	 * dispatch thread, for a change that can only affect one section.
+	 *
+	 * @param statuses  each agent's current status, by agent id
+	 * @param attention agent ids currently flagged as needing the user
+	 */
+	public void refreshStatuses(Map<String, AgentStatus> statuses, Set<String> attention) {
+		refreshAgents(statuses, attention);
+		applyFilter(SECTION_AGENTS);
 		revalidate();
 		repaint();
 	}
@@ -422,27 +446,35 @@ public final class ProjectSidebar extends JPanel {
 	 * something because the search found nothing is the opposite of helpful.
 	 */
 	private void applyFilter() {
-
-		var needle = filter.getText() == null ? "" : filter.getText().trim().toLowerCase(Locale.ROOT);
-
-		allEntries.forEach((section, entries) -> {
-			var model = models.get(section);
-			model.clear();
-			var matches = 0;
-			for (var entry : entries) {
-				if (needle.isEmpty() || entry.action() != null || matches(entry, needle)) {
-					model.addElement(entry);
-					if (entry.action() == null) {
-						matches++;
-					}
-				}
-			}
-			sections.get(section).setBadge(needle.isEmpty()
-					? badges.getOrDefault(section, "")
-					: String.valueOf(matches));
-		});
+		for (var section : allEntries.keySet()) {
+			applyFilter(section);
+		}
 		revalidate();
 		repaint();
+	}
+
+	/** Re-filter one section, so a status change does not re-list the other five. */
+	private void applyFilter(String section) {
+
+		var entries = allEntries.get(section);
+		var model = models.get(section);
+		if (entries == null || model == null) {
+			return;
+		}
+		var needle = filter.getText() == null ? "" : filter.getText().trim().toLowerCase(Locale.ROOT);
+		model.clear();
+		var matches = 0;
+		for (var entry : entries) {
+			if (needle.isEmpty() || entry.action() != null || matches(entry, needle)) {
+				model.addElement(entry);
+				if (entry.action() == null) {
+					matches++;
+				}
+			}
+		}
+		sections.get(section).setBadge(needle.isEmpty()
+				? badges.getOrDefault(section, "")
+				: String.valueOf(matches));
 	}
 
 	private static boolean matches(SidebarEntry entry, String needle) {

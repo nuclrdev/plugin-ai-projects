@@ -72,6 +72,28 @@ class AiProjectScreenPluginTest {
 		});
 	}
 
+	/**
+	 * Wait for the desktop's coalesced live refresh to land.
+	 *
+	 * <p>Status changes no longer redraw the sidebar and report to the file panel one
+	 * at a time; they are gathered for a moment first, so a burst costs one refresh.
+	 * A test asserting on what the panel was told therefore has to wait for that
+	 * timer rather than only for the event queue.
+	 */
+	private static void awaitLiveRefresh(java.util.function.BooleanSupplier landed)
+			throws InterruptedException, InvocationTargetException {
+
+		var deadline = System.currentTimeMillis() + 5_000;
+		while (System.currentTimeMillis() < deadline) {
+			drainEdt();
+			if (landed.getAsBoolean()) {
+				return;
+			}
+			Thread.sleep(20);
+		}
+		drainEdt();
+	}
+
 	private ProjectEntry register(String name, int agents) throws IOException {
 
 		var root = Files.createDirectories(workspace.resolve(name));
@@ -279,7 +301,9 @@ class AiProjectScreenPluginTest {
 
 		onEdt(() -> plugin.openResource(resourceFor(entry), new java.util.concurrent.atomic.AtomicBoolean()));
 		onEdt(() -> plugin.act(null, AiProjectEvents.SCREEN_START_ALL, List.of(), null, new HashMap<>(), null));
-		drainEdt();
+		awaitLiveRefresh(() -> Integer.valueOf(1).equals(
+				context.bus().of(AiProjectEvents.ACTIVITY).getLast().payload()
+						.get(AiProjectEvents.ACTIVITY_FAILED)));
 
 		var latest = context.bus().of(AiProjectEvents.ACTIVITY).getLast().payload();
 		assertEquals(1, latest.get(AiProjectEvents.ACTIVITY_FAILED));

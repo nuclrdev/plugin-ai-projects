@@ -39,6 +39,15 @@ final class AetherworksEffect implements DesktopBackgroundEffect {
 	private static final BasicStroke LOCAL_GEAR_EDGE = new BasicStroke(0.018f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
 	private static final BasicStroke LOCAL_GEAR_INNER = new BasicStroke(0.010f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
 
+	/**
+	 * The atmosphere underneath and the finish over the top are pure function of the
+	 * desktop's size: five full-screen gradient fills and a line every fifth row,
+	 * every frame, for two pictures that never changed.
+	 */
+	private static final Scanlines SCANLINES = new Scanlines(new Color(231, 203, 144, 7), 5);
+
+	private final CachedLayer atmosphereLayer = new CachedLayer(true, 1);
+	private final CachedLayer vignetteLayer = new CachedLayer(false, 1);
 	private final Random random = new Random(0xAE7E_1987L);
 	private final List<Mote> motes = new ArrayList<>();
 	private final Path2D.Double gear = new Path2D.Double();
@@ -77,6 +86,8 @@ final class AetherworksEffect implements DesktopBackgroundEffect {
 		motes.clear();
 		lastElapsed = -1;
 		backdrop = null;
+		atmosphereLayer.discard();
+		vignetteLayer.discard();
 	}
 
 	@Override
@@ -84,10 +95,11 @@ final class AetherworksEffect implements DesktopBackgroundEffect {
 		if (width <= 0 || height <= 0) return;
 		var g = (Graphics2D) graphics.create();
 		try {
+			// RENDER_QUALITY buys gradient and image resampling quality, which is now paid
+			// for once per size inside the cached layers rather than once a frame.
 			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-			g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
 			ensurePaints(width, height);
-			drawAtmosphere(g, width, height);
+			atmosphereLayer.paint(g, width, height, this::paintAtmosphere);
 			drawArchitecture(g, width, height, elapsedMillis);
 			drawEdgeMachinery(g, width, height, elapsedMillis);
 			drawOrrery(g, width, height, elapsedMillis);
@@ -121,7 +133,8 @@ final class AetherworksEffect implements DesktopBackgroundEffect {
 						new Color(25, 125, 116, 40), new Color(0, 0, 0, 0) });
 	}
 
-	private void drawAtmosphere(Graphics2D g, int width, int height) {
+	private void paintAtmosphere(Graphics2D g, int width, int height) {
+		ensurePaints(width, height);
 		g.setPaint(backdrop);
 		g.fillRect(0, 0, width, height);
 		g.setPaint(warmAtmosphere);
@@ -341,11 +354,15 @@ final class AetherworksEffect implements DesktopBackgroundEffect {
 	}
 
 	private void drawFinish(Graphics2D g, int width, int height) {
+		vignetteLayer.paint(g, width, height, this::paintFinish);
+	}
+
+	/** The vignette and the banding are both fixed, so they share one cached layer. */
+	private void paintFinish(Graphics2D g, int width, int height) {
+		ensurePaints(width, height);
 		g.setPaint(vignette);
 		g.fillRect(0, 0, width, height);
-		g.setStroke(HAIRLINE);
-		g.setColor(new Color(231, 203, 144, 7));
-		for (var y = 1; y < height; y += 5) g.drawLine(0, y, width, y);
+		SCANLINES.paint(g, width, height);
 	}
 
 	private static Color alpha(Color color, float opacity) {

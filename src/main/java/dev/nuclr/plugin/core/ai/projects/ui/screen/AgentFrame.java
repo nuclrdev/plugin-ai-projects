@@ -406,9 +406,13 @@ public final class AgentFrame extends JInternalFrame {
 
 		var parent = getParent();
 		if (parent != null) {
+			// Repainting the parent over this frame's bounds already repaints the frame,
+			// and has to: below full opacity the frame is not opaque, so whatever is
+			// behind it must be drawn first. A second repaint() here only overlapped it.
 			parent.repaint(getX(), getY(), getWidth(), getHeight());
+		} else {
+			repaint();
 		}
-		repaint();
 	}
 
 	/** How solid this window currently is, as a percentage. */

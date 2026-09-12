@@ -65,9 +65,31 @@ public final class DesktopBackgroundEffects {
 		private static final BasicStroke LINK_MID_STROKE = new BasicStroke(2.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
 		private static final BasicStroke LINK_CORE_STROKE = new BasicStroke(0.65f);
 
+		/** The backdrop and the vignette never change; only what is between them moves. */
+		private static final Scanlines SCANLINES = new Scanlines(new Color(160, 225, 255, 12), 4);
+
+		/**
+		 * Node tints quantised onto a wheel. The hue is a continuous function of index
+		 * and time, so every node used to mean an HSB conversion and a {@link Color}
+		 * allocation per frame; at this resolution a step is invisible and the wheel is
+		 * built once.
+		 */
+		private static final Color[] NODE_HUES = nodeHues();
+
+		private static Color[] nodeHues() {
+			var wheel = new Color[512];
+			for (var step = 0; step < wheel.length; step++) {
+				wheel[step] = Color.getHSBColor(step / (float) wheel.length, 0.83f, 1f);
+			}
+			return wheel;
+		}
+
+		private final CachedLayer backdropLayer = new CachedLayer(true, 1);
+		private final CachedLayer vignetteLayer = new CachedLayer(false, 1);
 		private final java.util.Random random = new java.util.Random(0x80E0_1985L);
 		private final List<Node> nodes = new java.util.ArrayList<>();
 		private final List<Link> links = new java.util.ArrayList<>();
+		private Projection[] projections = new Projection[0];
 		private final Ellipse2D.Double shape = new Ellipse2D.Double();
 		private final Line2D.Double line = new Line2D.Double();
 		private final Path2D.Double filament = new Path2D.Double();
@@ -104,6 +126,8 @@ public final class DesktopBackgroundEffects {
 			backgroundPaint = null;
 			atmospherePaint = null;
 			vignettePaint = null;
+			backdropLayer.discard();
+			vignetteLayer.discard();
 		}
 
 		@Override
@@ -113,9 +137,10 @@ public final class DesktopBackgroundEffects {
 			}
 			var g = (Graphics2D) graphics.create();
 			try {
-				g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+				// RENDER_QUALITY buys gradient and image resampling quality, which is now
+				// paid for once per size inside the cached layers rather than once a frame.
 				g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-				drawBackdrop(g, width, height);
+				backdropLayer.paint(g, width, height, this::paintBackdrop);
 				ensureNodes();
 				advance(elapsedMillis);
 				var projected = project(width, height, elapsedMillis);
@@ -126,7 +151,9 @@ public final class DesktopBackgroundEffects {
 				drawFilaments(g, width, height, elapsedMillis);
 				drawLinks(g, projected, elapsedMillis);
 				drawNodes(g, projected, elapsedMillis);
-				drawVignette(g, width, height);
+				// The banding is part of the finish, so it is baked into that layer rather
+				// than tiled over the top: a fill of the whole desktop cost 8ms a frame.
+				vignetteLayer.paint(g, width, height, this::paintFinish);
 			} finally {
 				g.dispose();
 			}
@@ -155,14 +182,28 @@ public final class DesktopBackgroundEffects {
 			}
 		}
 
-		private List<Projection> project(int width, int height, long elapsedMillis) {
+		/**
+		 * Project every node for this frame into a buffer that is reused.
+		 *
+		 * <p>A list of records plus a {@link Color} per node per frame was a few thousand
+		 * short-lived objects a second, for a fixed set of nodes whose projected values
+		 * are overwritten on the next frame anyway.
+		 *
+		 * @return the buffer; only the first {@code nodes.size()} entries are valid
+		 */
+		private Projection[] project(int width, int height, long elapsedMillis) {
 			var angle = elapsedMillis * 0.000035;
 			var cos = Math.cos(angle);
 			var sin = Math.sin(angle);
 			var focal = Math.min(width, height) * 0.68;
 			var cx = width / 2.0;
 			var cy = height / 2.0;
-			var projected = new java.util.ArrayList<Projection>(nodes.size());
+			if (projections.length < nodes.size()) {
+				projections = new Projection[nodes.size()];
+				for (var slot = 0; slot < projections.length; slot++) {
+					projections[slot] = new Projection();
+				}
+			}
 			for (var index = 0; index < nodes.size(); index++) {
 				var node = nodes.get(index);
 				var x = node.x * cos - (node.z - 0.9) * sin * 0.36;
@@ -173,12 +214,19 @@ public final class DesktopBackgroundEffects {
 				var py = cy + y * scale * 0.82;
 				var size = Math.clamp(1.2 + (1.7 - z) * 2.7, 1.2, 6.5);
 				var hue = (float) (0.52 + 0.34 * ((index / (double) nodes.size() + elapsedMillis / 28_000.0) % 1.0));
-				projected.add(new Projection(node, px, py, z, size, Color.getHSBColor(hue, 0.83f, 1f)));
+				var projection = projections[index];
+				projection.node = node;
+				projection.x = px;
+				projection.y = py;
+				projection.depth = z;
+				projection.size = size;
+				projection.color = NODE_HUES[Math.floorMod(
+						Math.round(hue * NODE_HUES.length), NODE_HUES.length)];
 			}
-			return projected;
+			return projections;
 		}
 
-		private void drawBackdrop(Graphics2D g, int width, int height) {
+		private void paintBackdrop(Graphics2D g, int width, int height) {
 			ensurePaints(width, height);
 			g.setPaint(backgroundPaint);
 			g.fillRect(0, 0, width, height);
@@ -241,14 +289,15 @@ public final class DesktopBackgroundEffects {
 			}
 		}
 
-		private void rebuildLinks(List<Projection> projected, long elapsedMillis) {
+		private void rebuildLinks(Projection[] projected, long elapsedMillis) {
 			links.clear();
-			for (var i = 0; i < projected.size(); i++) {
-				var first = projected.get(i);
+			var count = nodes.size();
+			for (var i = 0; i < count; i++) {
+				var first = projected[i];
 				var nearestIndices = new int[] { -1, -1, -1 };
 				var nearestDistances = new double[] { Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE };
-				for (var j = i + 1; j < projected.size(); j++) {
-					var second = projected.get(j);
+				for (var j = i + 1; j < count; j++) {
+					var second = projected[j];
 					var dx = first.node.x - second.node.x;
 					var dy = first.node.y - second.node.y;
 					var dz = first.depth - second.depth;
@@ -272,11 +321,11 @@ public final class DesktopBackgroundEffects {
 			lastLinkRefresh = elapsedMillis;
 		}
 
-		private void drawLinks(Graphics2D g, List<Projection> projected, long elapsedMillis) {
+		private void drawLinks(Graphics2D g, Projection[] projected, long elapsedMillis) {
 			for (var linkIndex = 0; linkIndex < links.size(); linkIndex++) {
 				var link = links.get(linkIndex);
-				var first = projected.get(link.first);
-				var second = projected.get(link.second);
+				var first = projected[link.first];
+				var second = projected[link.second];
 				var dx = first.node.x - second.node.x;
 				var dy = first.node.y - second.node.y;
 				var dz = first.depth - second.depth;
@@ -288,8 +337,9 @@ public final class DesktopBackgroundEffects {
 			}
 		}
 
-		private void drawNodes(Graphics2D g, List<Projection> projected, long elapsedMillis) {
-			for (var projection : projected) {
+		private void drawNodes(Graphics2D g, Projection[] projected, long elapsedMillis) {
+			for (var index = 0; index < nodes.size(); index++) {
+				var projection = projected[index];
 				var alpha = (float) Math.clamp(0.22 + (1.55 - projection.depth) * 0.52, 0.18, 0.9);
 				var radius = projection.size * 3.8;
 				g.setColor(alpha(projection.color, alpha * 0.10f));
@@ -306,11 +356,11 @@ public final class DesktopBackgroundEffects {
 			}
 		}
 
-		private void drawVignette(Graphics2D g, int width, int height) {
+		private void paintFinish(Graphics2D g, int width, int height) {
+			ensurePaints(width, height);
 			g.setPaint(vignettePaint);
 			g.fillRect(0, 0, width, height);
-			g.setColor(new Color(160, 225, 255, 12));
-			for (var y = 0; y < height; y += 4) g.drawLine(0, y, width, y);
+			SCANLINES.paint(g, width, height);
 		}
 
 		private void drawGlowLine(Graphics2D g, double x1, double y1, double x2, double y2,
@@ -343,7 +393,15 @@ public final class DesktopBackgroundEffects {
 			}
 		}
 
-		private record Projection(Node node, double x, double y, double depth, double size, Color color) {}
+		/** Mutable on purpose: one instance per node, rewritten in place every frame. */
+		private static final class Projection {
+			private Node node;
+			private double x;
+			private double y;
+			private double depth;
+			private double size;
+			private Color color;
+		}
 
 		private record Link(int first, int second) {}
 	}
@@ -364,6 +422,24 @@ public final class DesktopBackgroundEffects {
 		};
 		private static final Color[][] TRAIL_COLORS = createTrailColors();
 		private static final Font[] FONTS = createFonts();
+
+		/**
+		 * One pattern per colour rotation. The banding shifts colour every 420ms and
+		 * otherwise never changes, so three tiled fills stand in for a loop that drew a
+		 * line every fourth row of the desktop on every frame.
+		 */
+		private static final Scanlines[] SCANLINES = createScanlines();
+
+		private static Scanlines[] createScanlines() {
+			var patterns = new Scanlines[SCANLINE_COLORS.length];
+			for (var phase = 0; phase < patterns.length; phase++) {
+				patterns[phase] = new Scanlines(SCANLINE_COLORS, 4, phase);
+			}
+			return patterns;
+		}
+
+		private final CachedLayer backdropLayer = new CachedLayer(true, 1);
+		private final CachedLayer vignetteLayer = new CachedLayer(false, 1);
 
 		private final java.util.Random random = new java.util.Random(0xC0DE_1984L);
 		private final List<GlyphColumn> columns = new java.util.ArrayList<>();
@@ -400,6 +476,8 @@ public final class DesktopBackgroundEffects {
 			backgroundPaint = null;
 			atmospherePaint = null;
 			vignettePaint = null;
+			backdropLayer.discard();
+			vignetteLayer.discard();
 		}
 
 		@Override
@@ -409,7 +487,7 @@ public final class DesktopBackgroundEffects {
 			try {
 				g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 				g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-				drawBackdrop(g, width, height);
+				backdropLayer.paint(g, width, height, this::paintBackdrop);
 				ensureColumns(width, height);
 				advance(elapsedMillis, height);
 				drawDataBursts(g, width, height, elapsedMillis);
@@ -420,7 +498,7 @@ public final class DesktopBackgroundEffects {
 			}
 		}
 
-		private void drawBackdrop(Graphics2D g, int width, int height) {
+		private void paintBackdrop(Graphics2D g, int width, int height) {
 			ensurePaints(width, height);
 			g.setPaint(backgroundPaint);
 			g.fillRect(0, 0, width, height);
@@ -530,13 +608,15 @@ public final class DesktopBackgroundEffects {
 		}
 
 		private void drawFinish(Graphics2D g, int width, int height, long elapsedMillis) {
+			vignetteLayer.paint(g, width, height, this::paintVignette);
+			g.setComposite(AlphaComposite.SrcOver);
+			SCANLINES[(int) Math.floorMod(elapsedMillis / 420, SCANLINES.length)].paint(g, width, height);
+		}
+
+		private void paintVignette(Graphics2D g, int width, int height) {
+			ensurePaints(width, height);
 			g.setPaint(vignettePaint);
 			g.fillRect(0, 0, width, height);
-			g.setComposite(AlphaComposite.SrcOver);
-			for (var y = 0; y < height; y += 4) {
-				g.setColor(SCANLINE_COLORS[(int) ((y / 4 + elapsedMillis / 420) % SCANLINE_COLORS.length)]);
-				g.drawLine(0, y, width, y);
-			}
 		}
 
 		private void fillGlyphs(char[] glyphs) {
