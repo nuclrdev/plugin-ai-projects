@@ -59,8 +59,18 @@ public final class TerminalAgentWindow implements AgentWindow {
 	/** How much recent output is kept for prompt detection. */
 	private static final int RECENT_OUTPUT_LIMIT = 4_000;
 
-	/** How much of the transcript is shown when a stopped session is restored. */
+	/** How much of the transcript is handed over for copying or reading elsewhere. */
 	private static final int TRANSCRIPT_TAIL_CHARS = 200_000;
+
+	/**
+	 * How much of the transcript the stopped view shows.
+	 *
+	 * <p>Less than is copied. Every transition to a stopped state re-reads this and
+	 * pushes it through {@link JTextArea#setText}, which rebuilds and re-lays out the
+	 * whole document; a fifth of the text is still more scrollback than anyone reads in
+	 * a window, and the full record is one click away in the transcript file.
+	 */
+	private static final int VIEW_TAIL_CHARS = 40_000;
 
 	private final AgentWindowContext context;
 	private final AgentCli cli;
@@ -116,7 +126,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 		transcriptView.setEditable(false);
 		transcriptView.setLineWrap(false);
 		transcriptView.setFont(scaledMonospaced());
-		transcriptView.setText(context.transcripts().tail(context.agentId(), TRANSCRIPT_TAIL_CHARS));
+		transcriptView.setText(context.transcripts().tail(context.agentId(), VIEW_TAIL_CHARS));
 		transcriptView.setCaretPosition(transcriptView.getDocument().getLength());
 
 		banner.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
@@ -428,8 +438,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 		flushTranscript();
 		banner.setText("<html><b>" + escape(message) + "</b></html>");
 		startButton.setEnabled(!status.isLive());
-		transcriptView.setText(context.transcripts().tail(context.agentId(), TRANSCRIPT_TAIL_CHARS));
-		transcriptView.setCaretPosition(transcriptView.getDocument().getLength());
+		showTranscript(context.transcripts().tail(context.agentId(), VIEW_TAIL_CHARS));
 		if (root.getComponentCount() != 1 || root.getComponent(0) != stoppedView) {
 			disposeTerminal();
 			root.removeAll();
@@ -437,6 +446,21 @@ public final class TerminalAgentWindow implements AgentWindow {
 			root.revalidate();
 			root.repaint();
 		}
+	}
+
+	/**
+	 * Put text in the transcript view, skipping the work when it is already there.
+	 *
+	 * <p>Several transitions call {@link #showStopped(String)} in a row - a failure
+	 * sets the status, shows the message and reports the session - and re-laying out
+	 * tens of thousands of characters each time is work for no visible change.
+	 */
+	private void showTranscript(String text) {
+		if (text.equals(transcriptView.getText())) {
+			return;
+		}
+		transcriptView.setText(text);
+		transcriptView.setCaretPosition(transcriptView.getDocument().getLength());
 	}
 
 	@Override
@@ -830,11 +854,18 @@ public final class TerminalAgentWindow implements AgentWindow {
 				: "Not applied by the terminal CLI: " + String.join(", ", unsupported);
 	}
 
-	/** The transcript font at the current zoom step. */
+	/**
+	 * The transcript font at the current zoom step.
+	 *
+	 * <p>The same family the live terminal uses, and for the same reason: the
+	 * stopped view replays what the agent printed, banner and progress bars
+	 * included, so a font that cannot draw block glyphs at cell width garbles the
+	 * restored transcript exactly as it would garble the terminal.
+	 */
 	private Font scaledMonospaced() {
 		var base = javax.swing.UIManager.getFont("TextArea.font");
 		var size = (base == null ? 12 : base.getSize()) + fontScale;
-		return new Font(Font.MONOSPACED, Font.PLAIN, Math.max(7, size));
+		return new Font(TerminalTheme.monospacedFamily(), Font.PLAIN, Math.max(7, size));
 	}
 
 	private static String escape(String text) {
