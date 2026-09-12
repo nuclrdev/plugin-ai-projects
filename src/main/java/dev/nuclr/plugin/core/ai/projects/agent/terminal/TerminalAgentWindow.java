@@ -169,6 +169,15 @@ public final class TerminalAgentWindow implements AgentWindow {
 		return text.toString();
 	}
 
+	/** What a window says after the user stopped it, as opposed to after it died. */
+	private static String describeRequestedStop(String commandLine) {
+		var text = new StringBuilder("Session stopped on request");
+		if (commandLine != null && !commandLine.isBlank()) {
+			text.append(" - ").append(commandLine);
+		}
+		return text.toString();
+	}
+
 	@Override
 	public JComponent component() {
 		return root;
@@ -367,20 +376,33 @@ public final class TerminalAgentWindow implements AgentWindow {
 			return;
 		}
 
+		// A process the user asked to stop was killed, so it exits with a failure
+		// status it did not choose. Reporting that as FAILED - and interrupting the
+		// user about it - would be wrong twice over: "Stop" is not a fault, and the
+		// attention flag exists for things nobody asked for.
+		var requested = stopRequested;
+		stopRequested = false;
+		var ended = requested ? AgentStatus.STOPPED
+				: exitCode == 0 ? AgentStatus.FINISHED : AgentStatus.FAILED;
+
 		flushTranscript();
 		var session = context.session();
 		session.setEndedAt(Instant.now());
 		session.setExitCode(exitCode);
-		session.setStatus(exitCode == 0 ? AgentStatus.FINISHED : AgentStatus.FAILED);
+		session.setPid(0);
+		session.setStatus(ended);
 		context.host().sessionUpdated(context.agentId());
 
-		context.transcripts().appendNote(context.agentId(), "exited with status " + exitCode);
+		context.transcripts().appendNote(context.agentId(), requested
+				? "stopped on request (exit status " + exitCode + ")"
+				: "exited with status " + exitCode);
 
 		process = null;
 		connector = null;
-		summary = describeLastRun(exitCode, session.displayCommandLine());
-		setStatus(exitCode == 0 ? AgentStatus.FINISHED : AgentStatus.FAILED);
-		if (exitCode != 0 && !restartPending) {
+		summary = requested ? describeRequestedStop(session.displayCommandLine())
+				: describeLastRun(exitCode, session.displayCommandLine());
+		setStatus(ended);
+		if (ended == AgentStatus.FAILED && !restartPending) {
 			raiseAttention("Exited with status " + exitCode);
 		}
 		showStopped(summary);
@@ -755,15 +777,28 @@ public final class TerminalAgentWindow implements AgentWindow {
 	 * The agent's environment: this process's, plus the harness's, plus the
 	 * variables the plugin adds. {@code TERM} is forced because a pty with no
 	 * {@code TERM} makes most CLIs fall back to their dumbest output mode.
+	 *
+	 * <p>Blank names are dropped. A harness is a file, and a hand-edited or
+	 * mistyped {@code =value} line names no variable at all - handing that to the
+	 * process builder is at best ignored and at worst refused, and either way the
+	 * agent would fail to start for a reason nothing on screen explains.
 	 */
 	private java.util.Map<String, String> environment(
 			dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness harness) {
 
 		var environment = new LinkedHashMap<>(System.getenv());
-		environment.putAll(harness.env());
-		environment.putAll(context.commanderVariables());
+		putNamed(environment, harness.env());
+		putNamed(environment, context.commanderVariables());
 		environment.put("TERM", environment.getOrDefault("TERM", "xterm-256color"));
 		return environment;
+	}
+
+	private static void putNamed(java.util.Map<String, String> target, java.util.Map<String, String> source) {
+		source.forEach((name, value) -> {
+			if (name != null && !name.isBlank() && value != null) {
+				target.put(name, value);
+			}
+		});
 	}
 
 	/** Describe configuration that has no portable terminal/CLI mapping yet. */

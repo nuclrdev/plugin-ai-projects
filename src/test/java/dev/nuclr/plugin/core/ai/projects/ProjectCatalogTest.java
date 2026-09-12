@@ -176,6 +176,24 @@ class ProjectCatalogTest {
 	}
 
 	@Test
+	void aRowWhoseRootIsNotAPathOnThisPlatformIsDroppedRatherThanBreakingTheList() throws IOException {
+
+		var good = create("alpha");
+		catalog.register(good);
+
+		// A root that cannot become a Path - here a NUL byte, but in practice a Windows
+		// path read on Linux - used to throw out of the middle of the panel's listing.
+		var rows = new ArrayList<Map<String, Object>>();
+		rows.add(Map.of("id", "broken", "name", "broken", "root", "a\0b",
+				"storageMode", ProjectStorageMode.PROJECT_LOCAL.name()));
+		rows.add(good.toMap());
+		context.settings().set(ProjectCatalog.NAMESPACE, "projects", rows);
+
+		assertEquals(List.of(good.id()), catalog.entries().stream().map(ProjectEntry::id).toList());
+		assertTrue(catalog.find("broken").isEmpty());
+	}
+
+	@Test
 	void commanderPrivatePathsLiveUnderTheCommanderHome() {
 
 		var entry = new ProjectEntry("id", "name", workspace.toString(), ProjectStorageMode.COMMANDER_PRIVATE);

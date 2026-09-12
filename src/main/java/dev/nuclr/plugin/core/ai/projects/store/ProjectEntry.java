@@ -56,12 +56,30 @@ public record ProjectEntry(String id, String name, String root, ProjectStorageMo
 		}
 		var id = text(map.get("id"));
 		var root = text(map.get("root"));
-		if (id == null || root == null) {
+		if (id == null || root == null || !isUsablePath(root)) {
 			return null;
 		}
 		var name = text(map.get("name"));
 		return new ProjectEntry(id, name == null ? id : name, root,
 				ProjectStorageMode.parse(text(map.get("storageMode"))));
+	}
+
+	/**
+	 * Whether a stored root can be turned into a {@link Path} on this platform.
+	 *
+	 * <p>Checked here, where untrusted text becomes an entry, because every caller
+	 * reaches the root through {@link #rootPath()} - and a row carrying, say, a
+	 * Windows path on Linux would otherwise throw out of the middle of the panel's
+	 * listing and empty it, which is exactly what dropping bad rows is meant to
+	 * prevent.
+	 */
+	private static boolean isUsablePath(String root) {
+		try {
+			Path.of(root);
+			return true;
+		} catch (RuntimeException e) {
+			return false;
+		}
 	}
 
 	private static String text(Object value) {

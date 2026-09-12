@@ -102,6 +102,18 @@ class EditorAndQuickViewTest {
 	}
 
 	@Test
+	void aLineThatNamesNoVariableIsDroppedRatherThanBecomingABlankName() throws Exception {
+		var editors = new ListEditor[1];
+		onEdt(() -> {
+			editors[0] = new ListEditor(null, 4, null);
+			editors[0].setValues(List.of("=orphaned", "  =also orphaned", "REAL=value"));
+		});
+		// A blank name is not a variable, and handing one to the process builder makes
+		// an agent fail to start for a reason nothing on screen explains.
+		assertEquals(Map.of("REAL", "value"), editors[0].asMap());
+	}
+
+	@Test
 	void aValueContainingAnEqualsKeepsIt() throws Exception {
 		var editors = new ListEditor[1];
 		onEdt(() -> {

@@ -137,6 +137,7 @@ public final class ProjectSidebar extends JPanel {
 	private final Map<String, CollapsibleSection> sections = new LinkedHashMap<>();
 	private final Map<String, DefaultListModel<SidebarEntry>> models = new LinkedHashMap<>();
 	private final Map<String, List<SidebarEntry>> allEntries = new LinkedHashMap<>();
+	private final Map<String, String> badges = new LinkedHashMap<>();
 	private final JPanel stack = new JPanel();
 	private final JTextField filter = new JTextField();
 
@@ -315,7 +316,7 @@ public final class ProjectSidebar extends JPanel {
 		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.TERMINAL, "New terminal"),
 				() -> actions.newTerminal(null)));
 		setEntries(SECTION_AGENTS, entries);
-		sections.get(SECTION_AGENTS).setBadge(String.valueOf(store.project().getAgents().size()));
+		setBadge(SECTION_AGENTS, String.valueOf(store.project().getAgents().size()));
 	}
 
 	private void refreshContext() {
@@ -333,7 +334,7 @@ public final class ProjectSidebar extends JPanel {
 					null, item.path(), null, false, null));
 		}
 		setEntries(SECTION_CONTEXT, entries);
-		sections.get(SECTION_CONTEXT).setBadge(String.valueOf(resolved.size()));
+		setBadge(SECTION_CONTEXT, String.valueOf(resolved.size()));
 	}
 
 	private void refreshDocuments(String section, Path directory, String newLabel, String glyph) {
@@ -347,7 +348,7 @@ public final class ProjectSidebar extends JPanel {
 		var count = entries.size();
 		entries.add(SidebarEntry.command(newLabel, () -> actions.newDocument(directory)));
 		setEntries(section, entries);
-		sections.get(section).setBadge(String.valueOf(count));
+		setBadge(section, String.valueOf(count));
 	}
 
 	private void refreshHarness() {
@@ -394,11 +395,24 @@ public final class ProjectSidebar extends JPanel {
 				Glyphs.sidebar(Glyphs.FOLDER, store.paths().metadataDirectory().toString()), "metadata",
 				store.paths().metadataDirectory()));
 		setEntries(SECTION_FILES, entries);
-		sections.get(SECTION_FILES).setBadge(String.valueOf(entries.size()));
+		setBadge(SECTION_FILES, String.valueOf(entries.size()));
 	}
 
 	private void setEntries(String section, List<SidebarEntry> entries) {
 		allEntries.put(section, List.copyOf(entries));
+	}
+
+	/**
+	 * Set a section's count, remembering it.
+	 *
+	 * <p>Remembered because {@link #applyFilter()} overwrites badges with match
+	 * counts while a filter is in force and has to put the real ones back when it
+	 * is cleared - otherwise the sidebar goes on reporting the counts for a search
+	 * the user has already deleted.
+	 */
+	private void setBadge(String section, String badge) {
+		badges.put(section, badge == null ? "" : badge);
+		sections.get(section).setBadge(badges.get(section));
 	}
 
 	/**
@@ -423,9 +437,9 @@ public final class ProjectSidebar extends JPanel {
 					}
 				}
 			}
-			if (!needle.isEmpty()) {
-				sections.get(section).setBadge(String.valueOf(matches));
-			}
+			sections.get(section).setBadge(needle.isEmpty()
+					? badges.getOrDefault(section, "")
+					: String.valueOf(matches));
 		});
 		revalidate();
 		repaint();

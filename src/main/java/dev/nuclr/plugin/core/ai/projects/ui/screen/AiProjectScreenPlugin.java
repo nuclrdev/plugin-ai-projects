@@ -133,6 +133,16 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 			this.desktop = new ProjectDesktop(store, registry, context.getEventBus(), this::closeFromDesktop);
 			root.removeAll();
 			root.add(desktop, BorderLayout.CENTER);
+		} catch (RuntimeException | LinkageError e) {
+			// The store owns a writer thread and holds the project open. Leaving it
+			// behind would keep this project looking open for the rest of the session,
+			// and a second attempt would then be writing the same files twice.
+			log.warn("Could not build the desktop for AI project {}: {}", projectId, e.getMessage(), e);
+			store.close();
+			this.currentResource = null;
+			showMessage("Could not open this project's desktop: "
+					+ (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+			return true;
 		} finally {
 			root.setCursor(java.awt.Cursor.getDefaultCursor());
 		}

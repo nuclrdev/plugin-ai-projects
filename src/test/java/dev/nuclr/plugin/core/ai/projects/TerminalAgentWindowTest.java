@@ -217,6 +217,67 @@ class TerminalAgentWindowTest {
 		onEdt(window::close);
 	}
 
+	/**
+	 * Drive the exit handler directly.
+	 *
+	 * <p>The alternative is spawning a real CLI and killing it, which is exactly
+	 * what the rest of this suite avoids. Passing {@code null} for the connector
+	 * matches the window's own field, which is what its guard compares.
+	 */
+	private static void exitWith(AgentWindow window, int exitCode) throws Exception {
+		var onExit = window.getClass().getDeclaredMethod("onExit",
+				Class.forName("dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentTtyConnector"), int.class);
+		onExit.setAccessible(true);
+		onEdt(() -> {
+			try {
+				onExit.invoke(window, null, exitCode);
+			} catch (ReflectiveOperationException e) {
+				throw new IllegalStateException(e);
+			}
+		});
+	}
+
+	private static void forceLive(AgentWindow window) throws Exception {
+		var statusField = window.getClass().getDeclaredField("status");
+		statusField.setAccessible(true);
+		statusField.set(window, AgentStatus.RUNNING);
+	}
+
+	@Test
+	void anAgentTheUserStoppedIsReportedAsStoppedRatherThanFailed() throws Exception {
+
+		var window = window();
+		forceLive(window);
+		store.session("a1").setStatus(AgentStatus.RUNNING);
+		store.session("a1").setPid(4242);
+
+		onEdt(window::stop);
+		// A killed process exits with a status it did not choose; "Stop" is not a fault.
+		exitWith(window, 143);
+
+		assertEquals(AgentStatus.STOPPED, window.status());
+		assertEquals(AgentStatus.STOPPED, store.session("a1").getStatus());
+		assertEquals(0, store.session("a1").getPid());
+		assertTrue(window.sessionSummary().contains("on request"), window.sessionSummary());
+		assertTrue(host.attention.isEmpty(),
+				"stopping an agent deliberately must not interrupt the user: " + host.attention);
+		onEdt(window::close);
+	}
+
+	@Test
+	void anAgentThatDiesOnItsOwnStillFailsAndAsksForTheUser() throws Exception {
+
+		var window = window();
+		forceLive(window);
+
+		exitWith(window, 1);
+
+		assertEquals(AgentStatus.FAILED, window.status());
+		assertEquals(AgentStatus.FAILED, store.session("a1").getStatus());
+		assertFalse(host.attention.isEmpty(), "an unasked-for failure is worth flagging");
+		onEdt(window::close);
+	}
+
 	@Test
 	void closingTwiceIsSafe() throws Exception {
 		var window = window();

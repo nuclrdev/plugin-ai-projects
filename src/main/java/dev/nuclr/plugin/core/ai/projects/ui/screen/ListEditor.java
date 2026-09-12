@@ -93,17 +93,21 @@ public final class ListEditor extends JPanel {
 	 * dropped: silently discarding a line someone typed is worse than showing it
 	 * back to them looking wrong.
 	 *
+	 * <p>A line that starts at the {@code =} is the exception. It names no
+	 * variable, and keeping it would put a blank name in the environment handed to
+	 * the agent process - which is not a variable the user can ever have meant.
+	 *
 	 * @return the parsed entries, in the order they were written
 	 */
 	public Map<String, String> asMap() {
 		var entries = new LinkedHashMap<String, String>();
 		for (var line : values()) {
 			var separator = line.indexOf('=');
-			if (separator < 0) {
-				entries.put(line, "");
-			} else {
-				entries.put(line.substring(0, separator).trim(), line.substring(separator + 1).trim());
+			var name = separator < 0 ? line : line.substring(0, separator).trim();
+			if (name.isEmpty()) {
+				continue;
 			}
+			entries.put(name, separator < 0 ? "" : line.substring(separator + 1).trim());
 		}
 		return entries;
 	}
