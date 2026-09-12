@@ -2,6 +2,7 @@ package dev.nuclr.plugin.core.ai.projects.store;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -39,7 +40,7 @@ public final class PathContainment {
 	public static Path real(Path path) {
 		var normalized = path.toAbsolutePath().normalize();
 		try {
-			return Files.exists(normalized) ? normalized.toRealPath() : normalized;
+			return canonicalForContainment(normalized);
 		} catch (IOException e) {
 			// Unreadable is not the same as outside, but it is not somewhere to hand an
 			// agent either. Callers treat the normalised form as the answer.
@@ -63,12 +64,23 @@ public final class PathContainment {
 		if (candidate == null) {
 			return false;
 		}
-		var resolved = real(candidate);
+		final Path resolved;
+		try {
+			resolved = canonicalForContainment(candidate);
+		} catch (IOException | RuntimeException e) {
+			return false;
+		}
 
 		if (owned != null) {
 			for (var directory : owned) {
-				if (directory != null && resolved.startsWith(real(directory))) {
-					return true;
+				if (directory != null) {
+					try {
+						if (resolved.startsWith(canonicalForContainment(directory))) {
+							return true;
+						}
+					} catch (IOException | RuntimeException e) {
+						// An unreadable root grants no access; try the remaining roots.
+					}
 				}
 			}
 		}
@@ -80,14 +92,32 @@ public final class PathContainment {
 				continue;
 			}
 			try {
-				if (resolved.startsWith(real(Path.of(configured.trim())))) {
+				if (resolved.startsWith(canonicalForContainment(Path.of(configured.trim())))) {
 					return true;
 				}
-			} catch (RuntimeException e) {
+			} catch (IOException | RuntimeException e) {
 				// A malformed allowed root widens nothing; try the next one.
-				continue;
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Resolve every existing part of a path, not just a target that already exists.
+	 * This matters for a missing child below a symlink: resolving only the complete
+	 * target would compare its lexical spelling and could mistake an external path
+	 * for one owned by the project.
+	 */
+	private static Path canonicalForContainment(Path path) throws IOException {
+		var normalized = path.toAbsolutePath().normalize();
+		var existing = normalized;
+		while (existing != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
+			existing = existing.getParent();
+		}
+		if (existing == null) {
+			return normalized;
+		}
+		var canonicalParent = existing.toRealPath();
+		return canonicalParent.resolve(existing.relativize(normalized)).normalize();
 	}
 }

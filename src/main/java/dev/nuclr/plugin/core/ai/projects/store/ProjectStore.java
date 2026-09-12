@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -91,6 +92,7 @@ public final class ProjectStore implements AutoCloseable {
 		if (desktop.getSchemaVersion() > 1) {
 			desktop = new DesktopState();
 		}
+		normalise(desktop);
 		var store = new ProjectStore(paths, project, desktop);
 		store.loadSessions();
 		return store;
@@ -131,6 +133,7 @@ public final class ProjectStore implements AutoCloseable {
 			project.setTemplates(new ArrayList<>());
 		}
 		project.getAgents().removeIf(agent -> agent == null || agent.getId() == null);
+		project.getTemplates().removeIf(template -> template == null || template.getId() == null);
 		for (var agent : project.getAgents()) {
 			if (agent.getHarness() == null) {
 				agent.setHarness(new HarnessSpec());
@@ -141,6 +144,17 @@ public final class ProjectStore implements AutoCloseable {
 		}
 		if (project.getRoot() == null || project.getRoot().isBlank()) {
 			project.setRoot(paths.root().toString());
+		}
+	}
+
+	private static void normalise(DesktopState desktop) {
+		if (desktop.getWindows() == null) {
+			desktop.setWindows(new ArrayList<>());
+		} else {
+			desktop.getWindows().removeIf(window -> window == null || window.getAgentId() == null);
+		}
+		if (desktop.getExpandedSections() == null) {
+			desktop.setExpandedSections(new LinkedHashSet<>());
 		}
 	}
 
@@ -198,15 +212,19 @@ public final class ProjectStore implements AutoCloseable {
 
 	/** Note that the project definition needs writing. */
 	public void markProjectDirty() {
-		projectRevision.incrementAndGet();
-		projectDirty.set(true);
+		synchronized (flushLock) {
+			projectRevision.incrementAndGet();
+			projectDirty.set(true);
+		}
 		scheduleSave();
 	}
 
 	/** Note that the desktop layout needs writing. */
 	public void markDesktopDirty() {
-		desktopRevision.incrementAndGet();
-		desktopDirty.set(true);
+		synchronized (flushLock) {
+			desktopRevision.incrementAndGet();
+			desktopDirty.set(true);
+		}
 		scheduleSave();
 	}
 
@@ -217,8 +235,10 @@ public final class ProjectStore implements AutoCloseable {
 	 */
 	public void markSessionDirty(String agentId) {
 		if (agentId != null) {
-			sessionRevisions.computeIfAbsent(agentId, ignored -> new AtomicLong()).incrementAndGet();
-			dirtySessions.put(agentId, Boolean.TRUE);
+			synchronized (flushLock) {
+				sessionRevisions.computeIfAbsent(agentId, ignored -> new AtomicLong()).incrementAndGet();
+				dirtySessions.put(agentId, Boolean.TRUE);
+			}
 			scheduleSave();
 		}
 	}
@@ -294,14 +314,19 @@ public final class ProjectStore implements AutoCloseable {
 	 * @param agentId the agent
 	 */
 	public void deleteAgentRuntime(String agentId) {
-		sessions.remove(agentId);
-		dirtySessions.remove(agentId);
-		sessionRevisions.remove(agentId);
-		transcripts.delete(agentId);
-		try {
-			Files.deleteIfExists(paths.sessionFile(agentId));
-		} catch (IOException e) {
-			log.debug("Could not delete the session record for {}: {}", agentId, e.getMessage());
+		if (agentId == null) {
+			return;
+		}
+		synchronized (flushLock) {
+			sessions.remove(agentId);
+			dirtySessions.remove(agentId);
+			sessionRevisions.remove(agentId);
+			transcripts.delete(agentId);
+			try {
+				Files.deleteIfExists(paths.sessionFile(agentId));
+			} catch (IOException e) {
+				log.debug("Could not delete the session record for {}: {}", agentId, e.getMessage());
+			}
 		}
 	}
 

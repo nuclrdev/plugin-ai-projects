@@ -83,14 +83,32 @@ public class HarnessSpec {
 	public HarnessSpec copy() {
 		var copy = new HarnessSpec();
 		copy.executable = executable;
-		copy.startupArgs = startupArgs == null ? null : List.copyOf(startupArgs);
+		copy.startupArgs = copyValues(startupArgs);
 		copy.provider = provider;
 		copy.model = model;
-		copy.env = env == null ? null : new LinkedHashMap<>(env);
-		copy.permissions = permissions == null ? null : List.copyOf(permissions);
-		copy.mcpServers = mcpServers == null ? null : mcpServers.stream().map(McpServerSpec::copy).toList();
-		copy.allowedRoots = allowedRoots == null ? null : List.copyOf(allowedRoots);
-		copy.sharedInstructions = sharedInstructions == null ? null : List.copyOf(sharedInstructions);
+		copy.env = copyEnvironment(env);
+		copy.permissions = copyValues(permissions);
+		copy.mcpServers = mcpServers == null ? null : mcpServers.stream()
+				.filter(java.util.Objects::nonNull).map(McpServerSpec::copy).toList();
+		copy.allowedRoots = copyValues(allowedRoots);
+		copy.sharedInstructions = copyValues(sharedInstructions);
+		return copy;
+	}
+
+	private static List<String> copyValues(List<String> values) {
+		return values == null ? null : values.stream().filter(java.util.Objects::nonNull).toList();
+	}
+
+	private static Map<String, String> copyEnvironment(Map<String, String> values) {
+		if (values == null) {
+			return null;
+		}
+		var copy = new LinkedHashMap<String, String>();
+		values.forEach((key, value) -> {
+			if (key != null && value != null) {
+				copy.put(key, value);
+			}
+		});
 		return copy;
 	}
 }

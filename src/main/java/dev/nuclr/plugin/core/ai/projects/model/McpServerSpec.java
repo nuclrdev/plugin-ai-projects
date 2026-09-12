@@ -40,7 +40,7 @@ public class McpServerSpec {
 		var spec = new McpServerSpec();
 		spec.setName(name);
 		spec.setCommand(command);
-		spec.setArgs(args == null ? List.of() : List.copyOf(args));
+		spec.setArgs(copyArguments(args));
 		return spec;
 	}
 
@@ -49,8 +49,15 @@ public class McpServerSpec {
 		var copy = new McpServerSpec();
 		copy.name = name;
 		copy.command = command;
-		copy.args = args == null ? List.of() : List.copyOf(args);
-		copy.env = env == null ? new LinkedHashMap<>() : new LinkedHashMap<>(env);
+		copy.args = copyArguments(args);
+		copy.env = new LinkedHashMap<>();
+		if (env != null) {
+			env.forEach((key, value) -> {
+				if (key != null && value != null) {
+					copy.env.put(key, value);
+				}
+			});
+		}
 		copy.enabled = enabled;
 		return copy;
 	}
@@ -64,5 +71,10 @@ public class McpServerSpec {
 			}
 		}
 		return text.toString();
+	}
+
+	private static List<String> copyArguments(List<String> arguments) {
+		return arguments == null ? List.of()
+				: arguments.stream().filter(java.util.Objects::nonNull).toList();
 	}
 }

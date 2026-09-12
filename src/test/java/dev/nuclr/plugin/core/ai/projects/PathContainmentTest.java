@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -88,6 +89,19 @@ class PathContainmentTest {
 	@Test
 	void aNonExistentPathOutOfTheProjectIsRefused() {
 		assertNull(paths.resolveDocument("../../../outside.md"));
+	}
+
+	@Test
+	void aMissingFileBelowASymlinkOutsideTheProjectIsRefused() throws IOException {
+		var outside = Files.createDirectories(workspace.resolve("outside"));
+		var link = root.resolve("external-link");
+		try {
+			Files.createSymbolicLink(link, outside);
+		} catch (IOException | UnsupportedOperationException | SecurityException e) {
+			assumeTrue(false, "Symbolic links are unavailable in this test environment");
+		}
+
+		assertNull(paths.resolveDocument("../../external-link/not-created-yet.md"));
 	}
 
 	@Test

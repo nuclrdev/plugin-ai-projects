@@ -91,23 +91,27 @@ public final class HarnessResolver {
 				sources.put(EffectiveHarness.MODEL, level.provenance());
 			}
 			if (spec.getStartupArgs() != null) {
-				startupArgs = List.copyOf(spec.getStartupArgs());
+				startupArgs = copyValues(spec.getStartupArgs());
 				sources.put(EffectiveHarness.STARTUP_ARGS, level.provenance());
 			}
 			if (spec.getPermissions() != null) {
-				permissions = List.copyOf(spec.getPermissions());
+				permissions = copyValues(spec.getPermissions());
 				sources.put(EffectiveHarness.PERMISSIONS, level.provenance());
 			}
 			if (spec.getAllowedRoots() != null) {
-				allowedRoots = List.copyOf(spec.getAllowedRoots());
+				allowedRoots = copyValues(spec.getAllowedRoots());
 				sources.put(EffectiveHarness.ALLOWED_ROOTS, level.provenance());
 			}
 			if (spec.getSharedInstructions() != null) {
-				sharedInstructions = List.copyOf(spec.getSharedInstructions());
+				sharedInstructions = copyValues(spec.getSharedInstructions());
 				sources.put(EffectiveHarness.SHARED_INSTRUCTIONS, level.provenance());
 			}
 			if (spec.getEnv() != null) {
-				env.putAll(spec.getEnv());
+				for (var entry : spec.getEnv().entrySet()) {
+					if (entry.getKey() != null && entry.getValue() != null) {
+						env.put(entry.getKey(), entry.getValue());
+					}
+				}
 				sources.put(EffectiveHarness.ENV, level.provenance());
 			}
 			if (spec.getMcpServers() != null) {
@@ -162,28 +166,34 @@ public final class HarnessResolver {
 			merged.setModel(override.getModel());
 		}
 		if (override.getStartupArgs() != null) {
-			merged.setStartupArgs(List.copyOf(override.getStartupArgs()));
+			merged.setStartupArgs(copyValues(override.getStartupArgs()));
 		}
 		if (override.getPermissions() != null) {
-			merged.setPermissions(List.copyOf(override.getPermissions()));
+			merged.setPermissions(copyValues(override.getPermissions()));
 		}
 		if (override.getAllowedRoots() != null) {
-			merged.setAllowedRoots(List.copyOf(override.getAllowedRoots()));
+			merged.setAllowedRoots(copyValues(override.getAllowedRoots()));
 		}
 		if (override.getSharedInstructions() != null) {
-			merged.setSharedInstructions(List.copyOf(override.getSharedInstructions()));
+			merged.setSharedInstructions(copyValues(override.getSharedInstructions()));
 		}
 		if (override.getEnv() != null) {
 			var env = merged.getEnv() == null ? new LinkedHashMap<String, String>()
 					: new LinkedHashMap<>(merged.getEnv());
-			env.putAll(override.getEnv());
+			for (var entry : override.getEnv().entrySet()) {
+				if (entry.getKey() != null && entry.getValue() != null) {
+					env.put(entry.getKey(), entry.getValue());
+				}
+			}
 			merged.setEnv(env);
 		}
 		if (override.getMcpServers() != null) {
 			var servers = new LinkedHashMap<String, McpServerSpec>();
 			if (!override.getMcpServers().isEmpty() && merged.getMcpServers() != null) {
 				for (var server : merged.getMcpServers()) {
-					servers.put(server.getName(), server.copy());
+					if (server != null && server.getName() != null) {
+						servers.put(server.getName(), server.copy());
+					}
 				}
 			}
 			for (var server : override.getMcpServers()) {
@@ -197,6 +207,10 @@ public final class HarnessResolver {
 	}
 
 	private record Level(HarnessSpec spec, Provenance provenance) {
+	}
+
+	private static List<String> copyValues(List<String> values) {
+		return values.stream().filter(java.util.Objects::nonNull).toList();
 	}
 
 	/** Ordered, never-null view of a possibly-null map, for callers building specs. */

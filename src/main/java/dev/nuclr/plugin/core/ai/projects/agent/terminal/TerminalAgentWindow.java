@@ -146,6 +146,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 		var session = context.session();
 		if (session.isStale(context.runtimeStamp())) {
 			session.setStatus(AgentStatus.STOPPED);
+			session.setPid(0);
 			session.setEndedAt(session.getEndedAt() == null ? Instant.now() : session.getEndedAt());
 			context.host().sessionUpdated(context.agentId());
 			summary = "Session stopped - the process did not survive the Commander restart.";
@@ -235,7 +236,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 						.start();
 			} catch (IOException | RuntimeException e) {
 				log.warn("Could not start agent {}: {}", context.agentId(), e.getMessage(), e);
-				SwingUtilities.invokeLater(() -> fail("Could not start the agent: " + e.getMessage()));
+				SwingUtilities.invokeLater(() -> handleStartFailure("Could not start the agent: " + e.getMessage()));
 				return;
 			}
 			SwingUtilities.invokeLater(() -> attach(started, command, workingDirectory.toString(), launchNotice));
@@ -244,22 +245,52 @@ public final class TerminalAgentWindow implements AgentWindow {
 
 	private void attach(PtyProcess started, List<String> command, String workingDirectory, String launchNotice) {
 
-		if (closed || stopRequested) {
+		if (closed) {
+			destroyProcessTree(started);
+			return;
+		}
+		if (stopRequested) {
 			destroyProcessTree(started);
 			stopRequested = false;
 			setStatus(AgentStatus.STOPPED);
 			showStopped("Stopped before it finished starting.");
+			startPendingRestart();
+			return;
+		}
+
+		AgentTtyConnector attachedConnector = null;
+		JediTermWidget attachedWidget = null;
+		try {
+			attachedConnector = new AgentTtyConnector(started, StandardCharsets.UTF_8, command,
+					cli.displayName(), this::onOutput);
+			attachedWidget = new JediTermWidget(COLUMNS, ROWS, TerminalTheme.settingsProvider());
+			attachedWidget.setBackground(TerminalTheme.backgroundColor());
+			attachedWidget.setTtyConnector(attachedConnector);
+			attachedWidget.start();
+		} catch (RuntimeException | LinkageError e) {
+			log.warn("Could not attach terminal for agent {}: {}", context.agentId(), e.getMessage(), e);
+			if (attachedWidget != null) {
+				try {
+					attachedWidget.close();
+				} catch (RuntimeException closeFailure) {
+					log.debug("Closing a partially started terminal failed: {}", closeFailure.getMessage());
+				}
+			}
+			if (attachedConnector != null) {
+				try {
+					attachedConnector.close();
+				} catch (RuntimeException closeFailure) {
+					log.debug("Closing a partially attached connector failed: {}", closeFailure.getMessage());
+				}
+			}
+			destroyProcessTree(started);
+			fail("Could not initialise the terminal: " + e.getMessage());
 			return;
 		}
 
 		this.process = started;
-		this.connector = new AgentTtyConnector(started, StandardCharsets.UTF_8, command,
-				cli.displayName(), this::onOutput);
-
-		this.widget = new JediTermWidget(COLUMNS, ROWS, TerminalTheme.settingsProvider());
-		this.widget.setBackground(TerminalTheme.backgroundColor());
-		this.widget.setTtyConnector(connector);
-		this.widget.start();
+		this.connector = attachedConnector;
+		this.widget = attachedWidget;
 
 		root.removeAll();
 		root.add(widget, BorderLayout.CENTER);
@@ -294,6 +325,27 @@ public final class TerminalAgentWindow implements AgentWindow {
 		watchForExit(connector);
 	}
 
+	private void handleStartFailure(String message) {
+		if (closed) {
+			return;
+		}
+		if (stopRequested) {
+			stopRequested = false;
+			setStatus(AgentStatus.STOPPED);
+			showStopped("Stopped before it finished starting.");
+			startPendingRestart();
+			return;
+		}
+		fail(message);
+	}
+
+	private void startPendingRestart() {
+		if (restartPending) {
+			restartPending = false;
+			start();
+		}
+	}
+
 	private void watchForExit(AgentTtyConnector watched) {
 		Thread.ofVirtual().name("nuclr-ai-agent-exit-" + context.agentId()).start(() -> {
 			int exitCode;
@@ -324,6 +376,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 
 		context.transcripts().appendNote(context.agentId(), "exited with status " + exitCode);
 
+		process = null;
+		connector = null;
 		summary = describeLastRun(exitCode, session.displayCommandLine());
 		setStatus(exitCode == 0 ? AgentStatus.FINISHED : AgentStatus.FAILED);
 		if (exitCode != 0 && !restartPending) {
@@ -331,10 +385,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 		}
 		showStopped(summary);
 
-		if (restartPending) {
-			restartPending = false;
-			start();
-		}
+		startPendingRestart();
 	}
 
 	private void fail(String message) {
@@ -345,6 +396,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 		var session = context.session();
 		session.setStatus(AgentStatus.FAILED);
 		session.setEndedAt(Instant.now());
+		session.setPid(0);
+		session.setExitCode(null);
 		context.host().sessionUpdated(context.agentId());
 	}
 
@@ -521,11 +574,25 @@ public final class TerminalAgentWindow implements AgentWindow {
 		if (closed) {
 			return;
 		}
+		var wasLive = status.isLive();
 		closed = true;
 		statusTimer.stop();
+		restartPending = false;
 		stop();
-		flushTranscript();
 		disposeTerminal();
+		flushTranscript();
+		connector = null;
+		process = null;
+		if (wasLive) {
+			var session = context.session();
+			session.setStatus(AgentStatus.STOPPED);
+			session.setEndedAt(Instant.now());
+			session.setPid(0);
+			status = AgentStatus.STOPPED;
+			context.transcripts().appendNote(context.agentId(), "stopped because the window closed");
+			context.host().sessionUpdated(context.agentId());
+			context.host().statusChanged(context.agentId(), AgentStatus.STOPPED);
+		}
 	}
 
 	private void disposeTerminal() {
@@ -549,6 +616,9 @@ public final class TerminalAgentWindow implements AgentWindow {
 	 * {@link #flushTranscript()} from the status timer.
 	 */
 	private void onOutput(String chunk) {
+		if (closed || chunk == null || chunk.isEmpty()) {
+			return;
+		}
 		lastOutputAt = System.currentTimeMillis();
 		synchronized (recentOutput) {
 			recentOutput.append(chunk);
@@ -656,7 +726,11 @@ public final class TerminalAgentWindow implements AgentWindow {
 			}
 		} catch (RuntimeException e) {
 			log.debug("Could not stop the full process tree: {}", e.getMessage());
-			process.destroyForcibly();
+			try {
+				process.destroyForcibly();
+			} catch (RuntimeException fallbackFailure) {
+				log.debug("Could not stop the process itself: {}", fallbackFailure.getMessage());
+			}
 		}
 	}
 

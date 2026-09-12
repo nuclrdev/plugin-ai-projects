@@ -5,6 +5,7 @@ import java.awt.Color;
 import javax.swing.UIManager;
 
 import com.jediterm.terminal.TextStyle;
+import com.jediterm.terminal.TerminalColor;
 import com.jediterm.terminal.ui.settings.DefaultSettingsProvider;
 
 /**
@@ -22,8 +23,13 @@ final class TerminalTheme {
 		return new DefaultSettingsProvider() {
 
 			@Override
-			public TextStyle getDefaultStyle() {
-				return defaultStyle();
+			public TerminalColor getDefaultForeground() {
+				return terminalColor(uiColor("TextArea.foreground", Color.WHITE));
+			}
+
+			@Override
+			public TerminalColor getDefaultBackground() {
+				return terminalColor(uiColor("TextArea.background", Color.BLACK));
 			}
 
 			@Override
@@ -31,11 +37,6 @@ final class TerminalTheme {
 				return selectionStyle();
 			}
 		};
-	}
-
-	/** Foreground and background from the theme's text-area colours. */
-	static TextStyle defaultStyle() {
-		return style(uiColor("TextArea.foreground", Color.WHITE), uiColor("TextArea.background", Color.BLACK));
 	}
 
 	/** Selection colours from the theme. */
@@ -51,8 +52,7 @@ final class TerminalTheme {
 
 	private static TextStyle style(Color foreground, Color background) {
 		return new TextStyle(
-				com.jediterm.terminal.TerminalColor.fromColor(toTerminalColor(foreground)),
-				com.jediterm.terminal.TerminalColor.fromColor(toTerminalColor(background)));
+				terminalColor(foreground), terminalColor(background));
 	}
 
 	private static Color uiColor(String key, Color fallback) {
@@ -60,7 +60,7 @@ final class TerminalTheme {
 		return color != null ? color : fallback;
 	}
 
-	private static com.jediterm.core.Color toTerminalColor(Color color) {
-		return new com.jediterm.core.Color(color.getRed(), color.getGreen(), color.getBlue());
+	private static TerminalColor terminalColor(Color color) {
+		return TerminalColor.rgb(color.getRed(), color.getGreen(), color.getBlue());
 	}
 }

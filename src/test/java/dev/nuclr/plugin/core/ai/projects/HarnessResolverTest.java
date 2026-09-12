@@ -3,6 +3,7 @@ package dev.nuclr.plugin.core.ai.projects;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 
@@ -198,5 +199,33 @@ class HarnessResolverTest {
 		assertEquals(2, resolved.mcpServers().size());
 		assertEquals(1, resolved.enabledMcpServers().size());
 		assertEquals("files", resolved.enabledMcpServers().getFirst().getName());
+	}
+
+	@Test
+	void malformedNullCollectionEntriesAreIgnored() {
+		var project = project();
+		var args = new ArrayList<String>();
+		args.add("--valid");
+		args.add(null);
+		project.getHarness().setStartupArgs(args);
+		var permissions = new ArrayList<String>();
+		permissions.add(null);
+		permissions.add("read");
+		project.getHarness().setPermissions(permissions);
+		var env = new LinkedHashMap<String, String>();
+		env.put("VALID", "yes");
+		env.put("BROKEN", null);
+		project.getHarness().setEnv(env);
+		var servers = new ArrayList<McpServerSpec>();
+		servers.add(null);
+		servers.add(McpServerSpec.of("files", "mcp-files", args));
+		project.getHarness().setMcpServers(servers);
+
+		var resolved = HarnessResolver.resolveProject(project);
+
+		assertEquals(List.of("--valid"), resolved.startupArgs());
+		assertEquals(List.of("read"), resolved.permissions());
+		assertEquals(java.util.Map.of("VALID", "yes"), resolved.env());
+		assertEquals(List.of("--valid"), resolved.mcpServers().getFirst().getArgs());
 	}
 }

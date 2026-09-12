@@ -60,6 +60,13 @@ class TranscriptStoreTest {
 	}
 
 	@Test
+	void aCharacterTailDoesNotSplitAnEmoji() {
+		transcripts.append("a1", "prefix😀");
+		assertEquals("😀", transcripts.tail("a1", 1));
+		assertEquals("", transcripts.tail("a1", 0));
+	}
+
+	@Test
 	void aNoteIsRecordedAsALineOfItsOwn() {
 		transcripts.appendNote("a1", "exited with status 0");
 		assertTrue(transcripts.tail("a1", 500).contains("[nuclr] exited with status 0"));
@@ -85,6 +92,17 @@ class TranscriptStoreTest {
 		transcripts.append("a1", "THE-END");
 
 		assertTrue(transcripts.tail("a1", 100).endsWith("THE-END"));
+	}
+
+	@Test
+	void trimmingDoesNotKeepHalfOfAUtf8Character() {
+		var retainedAscii = "y".repeat(1024 * 1024 - 2);
+
+		transcripts.append("unicode", "x".repeat(1024 * 1024) + "€" + retainedAscii);
+
+		var tail = transcripts.tail("unicode", Integer.MAX_VALUE);
+		assertEquals(retainedAscii, tail);
+		assertFalse(tail.contains("\uFFFD"));
 	}
 
 	@Test

@@ -126,6 +126,7 @@ class TerminalAgentWindowTest {
 
 		assertEquals(AgentStatus.STOPPED, window.status());
 		assertEquals(AgentStatus.STOPPED, store.session("a1").getStatus());
+		assertEquals(0, store.session("a1").getPid());
 		assertTrue(window.sessionSummary().contains("did not survive"),
 				"the window should say why the session is gone, said: " + window.sessionSummary());
 		assertTrue(host.sessionUpdates > 0);
@@ -171,6 +172,7 @@ class TerminalAgentWindowTest {
 	void anExecutableThatIsNotInstalledFailsBeforeTouchingAPty() throws Exception {
 
 		project().getHarness().setExecutable("definitely-not-installed-4b2c");
+		store.session("a1").setPid(4242);
 
 		var window = window();
 		onEdt(window::start);
@@ -178,6 +180,7 @@ class TerminalAgentWindowTest {
 		assertEquals(AgentStatus.FAILED, window.status());
 		assertTrue(window.sessionSummary().contains("PATH"), window.sessionSummary());
 		assertEquals(AgentStatus.FAILED, store.session("a1").getStatus());
+		assertEquals(0, store.session("a1").getPid());
 		onEdt(window::close);
 	}
 
@@ -219,6 +222,25 @@ class TerminalAgentWindowTest {
 		var window = window();
 		onEdt(window::close);
 		onEdt(window::close);
+	}
+
+	@Test
+	void closingALiveWindowRecordsThatItsProcessStopped() throws Exception {
+		var window = window();
+		var statusField = window.getClass().getDeclaredField("status");
+		statusField.setAccessible(true);
+		statusField.set(window, AgentStatus.STARTING);
+		var session = store.session("a1");
+		session.setStatus(AgentStatus.STARTING);
+		session.setPid(4242);
+
+		onEdt(window::close);
+
+		assertEquals(AgentStatus.STOPPED, window.status());
+		assertEquals(AgentStatus.STOPPED, session.getStatus());
+		assertEquals(0, session.getPid());
+		assertNotNull(session.getEndedAt());
+		assertTrue(host.sessionUpdates > 0);
 	}
 
 	@Test

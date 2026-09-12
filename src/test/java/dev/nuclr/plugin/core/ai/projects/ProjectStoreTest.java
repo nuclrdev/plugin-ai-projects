@@ -161,6 +161,22 @@ class ProjectStoreTest {
 	}
 
 	@Test
+	void nullCollectionsInAHandEditedDesktopAreFilledIn() throws IOException {
+		var project = definition(ProjectStorageMode.PROJECT_LOCAL);
+		var paths = ProjectPaths.of(root, ProjectStorageMode.PROJECT_LOCAL, project.getId(), root.resolve("home"));
+		try (var store = ProjectCreator.create(project, root.resolve("home"))) {
+			store.flush();
+		}
+		Files.writeString(paths.desktopFile(),
+				"{\"schemaVersion\":1,\"windows\":null,\"expandedSections\":null}");
+
+		try (var reopened = ProjectStore.open(paths)) {
+			assertNotNull(reopened.desktop().getWindows());
+			assertNotNull(reopened.desktop().getExpandedSections());
+		}
+	}
+
+	@Test
 	void aDamagedDefinitionFailsLoudlyRatherThanOpeningAnEmptyProject() throws IOException {
 
 		var project = definition(ProjectStorageMode.PROJECT_LOCAL);

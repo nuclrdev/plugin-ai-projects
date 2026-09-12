@@ -1,10 +1,13 @@
 package dev.nuclr.plugin.core.ai.projects.store;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -84,7 +87,7 @@ public final class TranscriptStore {
 	 * @return the transcript tail, or an empty string when there is none
 	 */
 	public String tail(String agentId, int maxChars) {
-		if (agentId == null) {
+		if (agentId == null || maxChars <= 0) {
 			return "";
 		}
 		synchronized (lock(agentId)) {
@@ -94,7 +97,15 @@ public final class TranscriptStore {
 			}
 			try {
 				var content = Files.readString(file, StandardCharsets.UTF_8);
-				return content.length() <= maxChars ? content : content.substring(content.length() - maxChars);
+				if (content.length() <= maxChars) {
+					return content;
+				}
+				var start = content.length() - maxChars;
+				if (start > 0 && Character.isLowSurrogate(content.charAt(start))
+						&& Character.isHighSurrogate(content.charAt(start - 1))) {
+					start--;
+				}
+				return content.substring(start);
 			} catch (IOException | RuntimeException e) {
 				return "";
 			}
@@ -127,18 +138,28 @@ public final class TranscriptStore {
 				return;
 			}
 		}
-		locks.remove(agentId);
 	}
 
 	private void trim(Path file) throws IOException {
-		if (Files.size(file) <= MAX_BYTES) {
+		var size = Files.size(file);
+		if (size <= MAX_BYTES) {
 			return;
 		}
-		var bytes = Files.readAllBytes(file);
-		var keep = (int) Math.min(TRIM_TO_BYTES, bytes.length);
-		var tail = new byte[keep];
-		System.arraycopy(bytes, bytes.length - keep, tail, 0, keep);
-		Files.write(file, tail);
+		var keep = (int) Math.min(TRIM_TO_BYTES, size);
+		var tail = ByteBuffer.allocate(keep);
+		try (var channel = FileChannel.open(file, StandardOpenOption.READ)) {
+			channel.position(size - keep);
+			while (tail.hasRemaining() && channel.read(tail) >= 0) {
+				// A file channel may complete a read before filling the buffer.
+			}
+		}
+		var length = tail.position();
+		var firstCompleteCharacter = 0;
+		while (firstCompleteCharacter < length
+				&& (tail.array()[firstCompleteCharacter] & 0xC0) == 0x80) {
+			firstCompleteCharacter++;
+		}
+		Files.write(file, Arrays.copyOfRange(tail.array(), firstCompleteCharacter, length));
 	}
 
 	private Object lock(String agentId) {
