@@ -199,7 +199,7 @@ class GlyphsTest {
 				Glyphs.RESET, Glyphs.TILE, Glyphs.CASCADE, Glyphs.WINDOWS, Glyphs.SIDEBAR, Glyphs.CLOSE,
 				Glyphs.DELETE, Glyphs.EDIT, Glyphs.RENAME, Glyphs.REFRESH, Glyphs.FOCUS, Glyphs.COPY,
 				Glyphs.CLEAR, Glyphs.ZOOM, Glyphs.MORE, Glyphs.TEMPLATE, Glyphs.TRANSCRIPT,
-				Glyphs.MISSING, Glyphs.BACKGROUND, Glyphs.OPACITY }) {
+				Glyphs.MISSING, Glyphs.BACKGROUND }) {
 
 			assertNotNull(glyph);
 			assertFalse(glyph.isBlank());

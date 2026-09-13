@@ -101,20 +101,17 @@ public final class EffectDesktopPane extends JDesktopPane {
 	/**
 	 * One animation tick.
 	 *
-	 * <p>Normally only the background layer is repainted, which is the whole point
-	 * of having it as its own component. A translucent frame is the exception: the
-	 * moving background shows through it, so it has to be composited again or it
-	 * freezes over a backdrop that is still moving. Repainting a non-opaque child
-	 * pulls the layer beneath it along, so this stays limited to the frames that
-	 * actually need it.
+	 * <p>Only the background layer is asked to repaint. It used to walk the frames as
+	 * well, to recomposite translucent ones over a backdrop that had moved underneath
+	 * them; windows are always solid now, so there is nothing to recomposite.
+	 *
+	 * <p>Repainting the layer still redraws the windows above it, because a layered
+	 * pane reports {@code isOptimizedDrawingEnabled() == false} - its children may
+	 * overlap, so Swing cannot repaint one of them alone. That is the cost of an
+	 * animated background and it is what the cached windows below are for.
 	 */
 	private void animate() {
 		backgroundCanvas.repaint();
-		for (var frame : getAllFrames()) {
-			if (!frame.isOpaque() && frame.isVisible()) {
-				frame.repaint();
-			}
-		}
 	}
 
 	private void updateAnimationState() {

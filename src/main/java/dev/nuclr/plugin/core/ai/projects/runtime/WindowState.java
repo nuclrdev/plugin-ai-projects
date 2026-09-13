@@ -34,49 +34,13 @@ public class WindowState {
 	private boolean open = true;
 
 	/**
-	 * How solid the window is, as a percentage.
+	 * Creates a window state with default bounds.
 	 *
-	 * <p>Per window rather than per desktop: one agent worth watching out of the
-	 * corner of an eye wants to be faint, while the one being read wants to be
-	 * solid, and that is a property of the window.
-	 *
-	 * <p>Floored well above zero by {@link #MIN_OPACITY}. A terminal loses
-	 * legibility long before it becomes invisible, and a window nobody can find
-	 * again is not a feature.
+	 * <p>Desktop files written by earlier versions carry an {@code opacity} entry from
+	 * when windows could be faded. Reads ignore properties they do not know, so those
+	 * files still open; the entry is simply dropped the next time one is written.
 	 */
-	private int opacity = MAX_OPACITY;
-
-	/** The faintest a window may be made. */
-	public static final int MIN_OPACITY = 35;
-
-	/** Fully solid. */
-	public static final int MAX_OPACITY = 100;
-
-	/** Creates a window state with default bounds. */
 	public WindowState() {}
-
-	/**
-	 * The stored opacity, clamped into range.
-	 *
-	 * <p>Read through this rather than the field: the value can come from a
-	 * hand-edited file, and a window restored at 0 would be invisible and
-	 * unrecoverable.
-	 *
-	 * @return a percentage between {@link #MIN_OPACITY} and {@link #MAX_OPACITY}
-	 */
-	public int safeOpacity() {
-		return clampOpacity(opacity);
-	}
-
-	/**
-	 * Clamp an opacity percentage into the usable range.
-	 *
-	 * @param value any percentage
-	 * @return the value, held between {@link #MIN_OPACITY} and {@link #MAX_OPACITY}
-	 */
-	public static int clampOpacity(int value) {
-		return Math.clamp(value, MIN_OPACITY, MAX_OPACITY);
-	}
 
 	/**
 	 * A window state for a freshly created agent, cascaded from the number of

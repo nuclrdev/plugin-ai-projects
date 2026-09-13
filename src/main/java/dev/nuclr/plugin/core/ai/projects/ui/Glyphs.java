@@ -153,8 +153,6 @@ public final class Glyphs {
 	public static final String SIDEBAR = pick("☰", "|");
 	/** The animated desktop background. */
 	public static final String BACKGROUND = pick("🎨", "▦");
-	/** Window opacity. */
-	public static final String OPACITY = pick("\uD83C\uDF13", "\u25D0");
 	/** Close. */
 	public static final String CLOSE = pick("✖️", "✖");
 	/** Delete. */
@@ -181,7 +179,6 @@ public final class Glyphs {
 	public static final String TRANSCRIPT = pick("📜", "≣");
 	/** Something missing or wrong. */
 	public static final String MISSING = pick("⚠️", "⚠");
-
 	// The icon form's colours. Where an emoji's own colour carries meaning -
 	// status, a destructive command, a folder - the icon keeps one; everything
 	// else follows the component's foreground, so a toolbar is not a box of
@@ -245,7 +242,6 @@ public final class Glyphs {
 		tints.put(FOCUS, RED);
 		tints.put(CLEAR, PURPLE);
 		tints.put(BACKGROUND, PINK);
-		tints.put(OPACITY, SKY);
 		tints.put(DELETE, RED);
 		tints.put(CLOSE, RED);
 		return Map.copyOf(tints);
