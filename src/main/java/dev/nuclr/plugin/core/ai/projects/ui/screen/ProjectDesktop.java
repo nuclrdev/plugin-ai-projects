@@ -139,7 +139,6 @@ public final class ProjectDesktop extends JPanel
 		this.sidebar = new ProjectSidebar(store, this, store.desktop().getExpandedSections());
 
 		notifier.setBaseTitle(title());
-		desktopPane.setDragMode(JDesktopPane.OUTLINE_DRAG_MODE);
 
 		split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebar, desktopPane);
 		split.setDividerLocation(Math.max(180, store.desktop().getSidebarWidth()));

@@ -25,6 +25,7 @@ public final class EffectDesktopPane extends JDesktopPane {
 	private DesktopBackgroundEffect activeEffect;
 	private String effectId;
 	private long startedAt = System.nanoTime();
+	private boolean interacting;
 
 	/** Build a desktop pane with the requested effect, falling back safely when needed. */
 	public EffectDesktopPane(List<DesktopBackgroundEffect> availableEffects, String initialEffectId) {
@@ -44,6 +45,15 @@ public final class EffectDesktopPane extends JDesktopPane {
 		animationTimer = new Timer(FRAME_DELAY_MILLIS, event -> animate());
 		animationTimer.setCoalesce(true);
 		animationTimer.stop();
+
+		// Frames drag and resize with their contents showing, rather than as an
+		// outline. The outline mode is not merely uglier here, it is invisible: it is
+		// XOR-drawn straight onto the desktop's Graphics outside the paint cycle, and
+		// the background repainting twenty-five times a second wipes it as fast as it
+		// is drawn. See InteractionAwareDesktopManager for what pays for the change.
+		setDragMode(LIVE_DRAG_MODE);
+		setDesktopManager(new InteractionAwareDesktopManager());
+
 		add(backgroundCanvas, JLayeredPane.DEFAULT_LAYER, 0);
 		addHierarchyListener(event -> {
 			if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0) {
@@ -115,10 +125,63 @@ public final class EffectDesktopPane extends JDesktopPane {
 	}
 
 	private void updateAnimationState() {
-		if (!DesktopBackgroundEffects.NONE.equals(effectId) && isShowing()) {
+		if (!DesktopBackgroundEffects.NONE.equals(effectId) && isShowing() && !interacting) {
 			animationTimer.start();
 		} else {
 			animationTimer.stop();
+		}
+	}
+
+	/** Whether the background is currently animating. */
+	public boolean isAnimating() {
+		return animationTimer.isRunning();
+	}
+
+	/**
+	 * Hold the background still while a frame is being dragged or resized.
+	 *
+	 * <p>A layered pane cannot repaint one child alone - its children may overlap, so
+	 * {@code isOptimizedDrawingEnabled()} is false and any repaint redraws the windows
+	 * over it. Dragging therefore competes with the animation for the same frames, and
+	 * the animation is the half nobody is looking at while a window is under the
+	 * cursor. Stopping it for the duration is what makes a live drag affordable.
+	 *
+	 * @param busy whether an interaction is in progress
+	 */
+	private void setInteracting(boolean busy) {
+		if (interacting != busy) {
+			interacting = busy;
+			updateAnimationState();
+		}
+	}
+
+	/** A desktop manager that tells the pane when a frame is being pushed around. */
+	private final class InteractionAwareDesktopManager extends javax.swing.DefaultDesktopManager {
+
+		private static final long serialVersionUID = 1L;
+
+		@Override
+		public void beginDraggingFrame(javax.swing.JComponent frame) {
+			setInteracting(true);
+			super.beginDraggingFrame(frame);
+		}
+
+		@Override
+		public void endDraggingFrame(javax.swing.JComponent frame) {
+			super.endDraggingFrame(frame);
+			setInteracting(false);
+		}
+
+		@Override
+		public void beginResizingFrame(javax.swing.JComponent frame, int direction) {
+			setInteracting(true);
+			super.beginResizingFrame(frame, direction);
+		}
+
+		@Override
+		public void endResizingFrame(javax.swing.JComponent frame) {
+			super.endResizingFrame(frame);
+			setInteracting(false);
 		}
 	}
 
