@@ -1,12 +1,23 @@
 package dev.nuclr.plugin.core.ai.projects.agent.terminal;
 
+import java.awt.BasicStroke;
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Rectangle;
+import java.awt.RenderingHints;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.geom.RoundRectangle2D;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -15,9 +26,11 @@ import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JLayeredPane;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.swing.UIManager;
 
 import com.jediterm.terminal.ui.JediTermWidget;
 import com.pty4j.PtyProcess;
@@ -58,6 +71,17 @@ public final class TerminalAgentWindow implements AgentWindow {
 
 	/** How much of the transcript is handed over for copying or reading elsewhere. */
 	private static final int TRANSCRIPT_TAIL_CHARS = 200_000;
+
+	/**
+	 * Tint drawn over a stopped window's replayed screen.
+	 *
+	 * <p>The replay runs the same emulator as a live terminal, so without this a
+	 * stopped agent's last screen looks identical to one still working - the
+	 * banner above the replay is otherwise the only cue. Dark enough to read as
+	 * "inactive" at a glance, translucent enough that the last screen is still
+	 * legible underneath.
+	 */
+	private static final Color STOPPED_TINT = new Color(0, 0, 0, 110);
 
 	/**
 	 * How much of the transcript the stopped view replays.
@@ -163,13 +187,88 @@ public final class TerminalAgentWindow implements AgentWindow {
 		if (currentCenter != null) {
 			stoppedView.remove(currentCenter);
 		}
-		stoppedView.add(replayWidget, BorderLayout.CENTER);
+		stoppedView.add(tinted(replayWidget, status), BorderLayout.CENTER);
 		stoppedView.revalidate();
 		stoppedView.repaint();
 
 		if (old != null) {
 			old.close();
 		}
+	}
+
+	/**
+	 * Layer {@link #STOPPED_TINT} and a status badge over a replay widget.
+	 *
+	 * <p>A {@link JLayeredPane} rather than a plain overlapping panel, because
+	 * layers - not add order - are what guarantee the overlay paints on top of
+	 * the terminal instead of underneath it. The dimming alone reads as "inactive"
+	 * but not as any particular state; the badge names it - stopped, finished or
+	 * failed - in the same glyph and colour the rest of the desktop uses for that
+	 * status, so a window is never dark and ambiguous at once.
+	 */
+	private static JComponent tinted(JediTermWidget widget, AgentStatus status) {
+
+		var badge = Glyphs.label(Glyphs.forStatus(status), (status == null ? AgentStatus.STOPPED : status)
+				.label().toUpperCase(Locale.ROOT));
+		var icon = Glyphs.icon(Glyphs.forStatus(status));
+		var accent = icon == null || icon.tint() == null ? Color.LIGHT_GRAY : icon.tint();
+
+		var tint = new JPanel() {
+			@Override
+			protected void paintComponent(Graphics g) {
+				var canvas = (Graphics2D) g.create();
+				try {
+					canvas.setColor(STOPPED_TINT);
+					canvas.fillRect(0, 0, getWidth(), getHeight());
+					paintBadge(canvas, badge, accent, getWidth(), getHeight());
+				} finally {
+					canvas.dispose();
+				}
+			}
+		};
+		tint.setOpaque(false);
+
+		var layered = new JLayeredPane();
+		layered.add(widget, JLayeredPane.DEFAULT_LAYER);
+		layered.add(tint, JLayeredPane.PALETTE_LAYER);
+		layered.addComponentListener(new ComponentAdapter() {
+			@Override
+			public void componentResized(ComponentEvent event) {
+				var bounds = new Rectangle(layered.getSize());
+				widget.setBounds(bounds);
+				tint.setBounds(bounds);
+			}
+		});
+		return layered;
+	}
+
+	/** Draw a status pill - glyph, label and accent colour - centred over the dimmed replay. */
+	private static void paintBadge(Graphics2D canvas, String text, Color accent, int width, int height) {
+
+		canvas.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		canvas.setFont(badgeFont());
+		var metrics = canvas.getFontMetrics();
+		var paddingX = 18;
+		var paddingY = 9;
+		var boxWidth = metrics.stringWidth(text) + paddingX * 2;
+		var boxHeight = metrics.getHeight() + paddingY * 2;
+		var x = (width - boxWidth) / 2.0;
+		var y = (height - boxHeight) / 2.0;
+		var pill = new RoundRectangle2D.Double(x, y, boxWidth, boxHeight, boxHeight, boxHeight);
+
+		canvas.setColor(new Color(20, 20, 20, 200));
+		canvas.fill(pill);
+		canvas.setStroke(new BasicStroke(1.5f));
+		canvas.setColor(accent);
+		canvas.draw(pill);
+		canvas.drawString(text, (float) (x + paddingX), (float) (y + paddingY + metrics.getAscent()));
+	}
+
+	/** The interface font, bold and a shade larger, for the badge's short label. */
+	private static Font badgeFont() {
+		var base = UIManager.getFont("Label.font");
+		var size = (base != null ? base.getSize2D() : 12f) + 1f;
+		return (base != null ? base : new Font(Font.SANS_SERIF, Font.PLAIN, 12)).deriveFont(Font.BOLD, size);
 	}
 
 	/**
