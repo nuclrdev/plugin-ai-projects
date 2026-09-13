@@ -233,6 +233,15 @@ class AgentWindowRegistryTest {
 	}
 
 	@Test
+	void windowsResolutionSkipsShimsCreateProcessCannotRun() {
+		var bare = AgentCli.windowsCandidateExtensions("pi");
+		assertFalse(bare.contains(""), "an extensionless npm sh shim fails with CreateProcess error 193");
+		assertFalse(bare.contains(".ps1"));
+		assertTrue(bare.contains(".cmd"));
+		assertEquals(List.of(""), AgentCli.windowsCandidateExtensions("cmd.EXE"));
+	}
+
+	@Test
 	void anAbsolutePathThatDoesNotExistDoesNotResolve() {
 		assertTrue(AgentCli.resolveOnPath(root.resolve("nothing-here").toString()).isEmpty());
 	}

@@ -116,9 +116,7 @@ public record AgentCli(String id, String displayName, String executable, String 
 		if (path == null || path.isBlank()) {
 			return Optional.empty();
 		}
-		var extensions = WINDOWS
-				? List.of("", ".cmd", ".exe", ".bat", ".ps1")
-				: List.of("");
+		var extensions = WINDOWS ? windowsCandidateExtensions(command) : List.of("");
 		for (var directory : path.split(File.pathSeparator)) {
 			if (directory.isBlank()) {
 				continue;
@@ -137,6 +135,23 @@ public record AgentCli(String id, String displayName, String executable, String 
 		}
 		return Optional.empty();
 	}
+
+	/**
+	 * The file names worth trying for a command on Windows.
+	 *
+	 * <p>Only names CreateProcess can launch qualify. npm drops an extensionless
+	 * sh script and a {@code .ps1} beside every {@code .cmd} shim; picking either
+	 * fails at spawn with error 193 (not a valid Win32 application).
+	 */
+	public static List<String> windowsCandidateExtensions(String command) {
+		var lower = command.toLowerCase(Locale.ROOT);
+		if (WINDOWS_EXTENSIONS.stream().anyMatch(lower::endsWith)) {
+			return List.of("");
+		}
+		return WINDOWS_EXTENSIONS;
+	}
+
+	private static final List<String> WINDOWS_EXTENSIONS = List.of(".exe", ".com", ".cmd", ".bat");
 
 	/**
 	 * Whether a command can be found on this machine, used to grey out a menu

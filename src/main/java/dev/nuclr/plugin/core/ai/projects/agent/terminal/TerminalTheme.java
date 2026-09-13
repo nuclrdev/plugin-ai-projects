@@ -59,6 +59,16 @@ final class TerminalTheme {
 
 	/** A settings provider whose colours follow the theme and whose font can draw a banner. */
 	static DefaultSettingsProvider settingsProvider() {
+		return settingsProvider(0);
+	}
+
+	/**
+	 * The themed settings provider, with the terminal font grown or shrunk from its
+	 * default size.
+	 *
+	 * @param fontScale steps to add to the default terminal font size; zero for the default
+	 */
+	static DefaultSettingsProvider settingsProvider(int fontScale) {
 		return new DefaultSettingsProvider() {
 
 			@Override
@@ -74,6 +84,11 @@ final class TerminalTheme {
 			@Override
 			public TextStyle getSelectionColor() {
 				return selectionStyle();
+			}
+
+			@Override
+			public float getTerminalFontSize() {
+				return Math.max(7, super.getTerminalFontSize() + fontScale);
 			}
 
 			@Override

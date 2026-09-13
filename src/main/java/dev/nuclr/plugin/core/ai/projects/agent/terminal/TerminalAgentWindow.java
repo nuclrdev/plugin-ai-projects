@@ -1,7 +1,6 @@
 package dev.nuclr.plugin.core.ai.projects.agent.terminal;
 
 import java.awt.BorderLayout;
-import java.awt.Font;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -17,8 +16,6 @@ import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 
@@ -63,12 +60,12 @@ public final class TerminalAgentWindow implements AgentWindow {
 	private static final int TRANSCRIPT_TAIL_CHARS = 200_000;
 
 	/**
-	 * How much of the transcript the stopped view shows.
+	 * How much of the transcript the stopped view replays.
 	 *
 	 * <p>Less than is copied. Every transition to a stopped state re-reads this and
-	 * pushes it through {@link JTextArea#setText}, which rebuilds and re-lays out the
-	 * whole document; a fifth of the text is still more scrollback than anyone reads in
-	 * a window, and the full record is one click away in the transcript file.
+	 * replays it through the terminal emulator from scratch; a fifth of the text is
+	 * still more scrollback than anyone reads in a window, and the full record is one
+	 * click away in the transcript file.
 	 */
 	private static final int VIEW_TAIL_CHARS = 40_000;
 
@@ -76,7 +73,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 	private final AgentCli cli;
 	private final Function<String, Optional<java.nio.file.Path>> executableResolver;
 	private final JPanel root = new JPanel(new BorderLayout());
-	private final JTextArea transcriptView = new JTextArea();
 	private final JLabel banner = new JLabel();
 	private final JButton startButton = Glyphs.decorate(new JButton(), Glyphs.START, "Start");
 	private final JPanel stoppedView = new JPanel(new BorderLayout());
@@ -93,6 +89,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 	private volatile boolean restartPending;
 	private int fontScale;
 	private JediTermWidget widget;
+	private JediTermWidget replayWidget;
+	private String replayedText;
 	private AgentTtyConnector connector;
 	private PtyProcess process;
 	private String summary = "";
@@ -123,12 +121,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 
 	private void buildStoppedView() {
 
-		transcriptView.setEditable(false);
-		transcriptView.setLineWrap(false);
-		transcriptView.setFont(scaledMonospaced());
-		transcriptView.setText(context.transcripts().tail(context.agentId(), VIEW_TAIL_CHARS));
-		transcriptView.setCaretPosition(transcriptView.getDocument().getLength());
-
 		banner.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
 
 		startButton.addActionListener(event -> start());
@@ -142,7 +134,42 @@ public final class TerminalAgentWindow implements AgentWindow {
 		header.add(actions, BorderLayout.SOUTH);
 
 		stoppedView.add(header, BorderLayout.NORTH);
-		stoppedView.add(new JScrollPane(transcriptView), BorderLayout.CENTER);
+		replaceReplay(context.transcripts().tail(context.agentId(), VIEW_TAIL_CHARS));
+	}
+
+	/**
+	 * Replay a transcript into the stopped view, skipping the work when it would
+	 * show the same thing again.
+	 *
+	 * <p>Several transitions call {@link #showStopped(String)} in a row - a failure
+	 * sets the status, shows the message and reports the session - and re-running the
+	 * emulator over tens of thousands of characters each time is work for no visible
+	 * change. The old widget is disposed before the new one replaces it: each replay
+	 * owns its own {@code TerminalTextBuffer} and executor, and nothing else is
+	 * keeping a reference once it is off screen.
+	 */
+	private void replaceReplay(String text) {
+
+		if (text.equals(replayedText)) {
+			return;
+		}
+		replayedText = text;
+
+		var old = replayWidget;
+		replayWidget = TranscriptReplay.render(text, COLUMNS, ROWS, TerminalTheme.settingsProvider(fontScale));
+
+		var layout = (BorderLayout) stoppedView.getLayout();
+		var currentCenter = layout.getLayoutComponent(stoppedView, BorderLayout.CENTER);
+		if (currentCenter != null) {
+			stoppedView.remove(currentCenter);
+		}
+		stoppedView.add(replayWidget, BorderLayout.CENTER);
+		stoppedView.revalidate();
+		stoppedView.repaint();
+
+		if (old != null) {
+			old.close();
+		}
 	}
 
 	/**
@@ -282,7 +309,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 		try {
 			attachedConnector = new AgentTtyConnector(started, StandardCharsets.UTF_8, command,
 					cli.displayName(), this::onOutput);
-			attachedWidget = new JediTermWidget(COLUMNS, ROWS, TerminalTheme.settingsProvider());
+			attachedWidget = new JediTermWidget(COLUMNS, ROWS, TerminalTheme.settingsProvider(fontScale));
 			attachedWidget.setBackground(TerminalTheme.backgroundColor());
 			attachedWidget.setTtyConnector(attachedConnector);
 			attachedWidget.start();
@@ -433,12 +460,12 @@ public final class TerminalAgentWindow implements AgentWindow {
 		context.host().sessionUpdated(context.agentId());
 	}
 
-	/** Swap the terminal out for the stopped view, keeping the transcript on screen. */
+	/** Swap the terminal out for the stopped view, replaying the transcript into it. */
 	private void showStopped(String message) {
 		flushTranscript();
 		banner.setText("<html><b>" + escape(message) + "</b></html>");
 		startButton.setEnabled(!status.isLive());
-		showTranscript(context.transcripts().tail(context.agentId(), VIEW_TAIL_CHARS));
+		replaceReplay(context.transcripts().tail(context.agentId(), VIEW_TAIL_CHARS));
 		if (root.getComponentCount() != 1 || root.getComponent(0) != stoppedView) {
 			disposeTerminal();
 			root.removeAll();
@@ -446,21 +473,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 			root.revalidate();
 			root.repaint();
 		}
-	}
-
-	/**
-	 * Put text in the transcript view, skipping the work when it is already there.
-	 *
-	 * <p>Several transitions call {@link #showStopped(String)} in a row - a failure
-	 * sets the status, shows the message and reports the session - and re-laying out
-	 * tens of thousands of characters each time is work for no visible change.
-	 */
-	private void showTranscript(String text) {
-		if (text.equals(transcriptView.getText())) {
-			return;
-		}
-		transcriptView.setText(text);
-		transcriptView.setCaretPosition(transcriptView.getDocument().getLength());
 	}
 
 	@Override
@@ -521,16 +533,12 @@ public final class TerminalAgentWindow implements AgentWindow {
 	public void focusContent() {
 		clearAttention();
 		var terminal = widget;
-		if (terminal != null) {
-			terminal.requestFocusInWindow();
-		} else {
-			transcriptView.requestFocusInWindow();
-		}
+		(terminal != null ? terminal : replayWidget).requestFocusInWindow();
 	}
 
 	@Override
 	public void updateTheme() {
-		transcriptView.setFont(scaledMonospaced());
+		rerenderReplay();
 		var terminal = widget;
 		if (terminal != null) {
 			terminal.setBackground(TerminalTheme.backgroundColor());
@@ -546,7 +554,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 	/**
 	 * Grow or shrink the text.
 	 *
-	 * <p>The transcript view re-renders at the new size immediately. A running
+	 * <p>The stopped view re-renders at the new size immediately. A running
 	 * JediTerm widget is built with the font it was given, so the change is
 	 * recorded and takes effect on the next start rather than being silently
 	 * ignored - the terminal itself keeps its own Ctrl+scroll handling meanwhile.
@@ -556,17 +564,20 @@ public final class TerminalAgentWindow implements AgentWindow {
 	@Override
 	public void zoom(int steps) {
 		fontScale = Math.clamp(fontScale + steps, -4, 12);
-		transcriptView.setFont(scaledMonospaced());
-		transcriptView.revalidate();
-		transcriptView.repaint();
+		rerenderReplay();
 	}
 
 	@Override
 	public void resetZoom() {
 		fontScale = 0;
-		transcriptView.setFont(scaledMonospaced());
-		transcriptView.revalidate();
-		transcriptView.repaint();
+		rerenderReplay();
+	}
+
+	/** Rebuild the replay at the current zoom and theme, even though its text has not changed. */
+	private void rerenderReplay() {
+		var text = replayedText;
+		replayedText = null;
+		replaceReplay(text == null ? "" : text);
 	}
 
 	@Override
@@ -589,13 +600,13 @@ public final class TerminalAgentWindow implements AgentWindow {
 			terminal.getTerminalPanel().repaint();
 			return;
 		}
-		transcriptView.setText("");
+		replaceReplay("");
 	}
 
 	@Override
 	public String outputForCopy() {
 		flushTranscript();
-		return context.transcripts().tail(context.agentId(), TRANSCRIPT_TAIL_CHARS);
+		return PromptWaitDetector.strip(context.transcripts().tail(context.agentId(), TRANSCRIPT_TAIL_CHARS));
 	}
 
 	@Override
@@ -611,7 +622,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 		}
 		context.transcripts().delete(context.agentId());
 		if (!status.isLive()) {
-			transcriptView.setText("");
+			replaceReplay("");
 		}
 	}
 
@@ -626,6 +637,11 @@ public final class TerminalAgentWindow implements AgentWindow {
 		restartPending = false;
 		stop();
 		disposeTerminal();
+		var replay = replayWidget;
+		replayWidget = null;
+		if (replay != null) {
+			replay.close();
+		}
 		flushTranscript();
 		connector = null;
 		process = null;
@@ -852,20 +868,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 		}
 		return unsupported.isEmpty() ? ""
 				: "Not applied by the terminal CLI: " + String.join(", ", unsupported);
-	}
-
-	/**
-	 * The transcript font at the current zoom step.
-	 *
-	 * <p>The same family the live terminal uses, and for the same reason: the
-	 * stopped view replays what the agent printed, banner and progress bars
-	 * included, so a font that cannot draw block glyphs at cell width garbles the
-	 * restored transcript exactly as it would garble the terminal.
-	 */
-	private Font scaledMonospaced() {
-		var base = javax.swing.UIManager.getFont("TextArea.font");
-		var size = (base == null ? 12 : base.getSize()) + fontScale;
-		return new Font(TerminalTheme.monospacedFamily(), Font.PLAIN, Math.max(7, size));
 	}
 
 	private static String escape(String text) {
