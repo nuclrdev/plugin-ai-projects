@@ -206,6 +206,84 @@ public final class ProjectPaths {
 		return owned(inRoot, allowedRoots) ? inRoot.normalize() : null;
 	}
 
+	/**
+	 * Resolve an instruction or skill reference, also accepting a Markdown document
+	 * linked from somewhere else.
+	 *
+	 * <p>Instruction and skill documents are worth sharing between projects: a house
+	 * style kept in one repository, a skill written once and used everywhere. An
+	 * explicit absolute (or {@code ~/}) path to a Markdown file is a deliberate link,
+	 * and is accepted without declaring its directory as an allowed root - which would
+	 * also let agents <em>run</em> there, a much wider grant than reading one document.
+	 *
+	 * <p>The narrowing is what keeps this safe for a definition that arrived from
+	 * someone else: only Markdown, only an absolute path (a {@code ..} climb is still
+	 * refused), and a link whose real target is not Markdown - a symlink named
+	 * {@code notes.md} pointing at a key file - is refused too. Everything else goes
+	 * through {@link #resolveDocument(String, List)} unchanged.
+	 *
+	 * @param reference    the reference, possibly {@code null}
+	 * @param allowedRoots directories outside the project the harness permits
+	 * @return the resolved path, or {@code null} when it is refused
+	 */
+	public Path resolveLinkedDocument(String reference, List<String> allowedRoots) {
+		var linked = linkedMarkdown(reference);
+		return linked != null ? linked : resolveDocument(reference, allowedRoots);
+	}
+
+	/**
+	 * Whether a path lies inside this project's root or metadata directory, so a
+	 * document there is the project's own rather than linked from elsewhere.
+	 *
+	 * @param path the path to check
+	 * @return whether the project owns it
+	 */
+	public boolean owns(Path path) {
+		return PathContainment.contains(path, List.of(root, metadataDirectory), null);
+	}
+
+	/** The absolute Markdown path a reference links to, or {@code null} when it is not such a link. */
+	private static Path linkedMarkdown(String reference) {
+
+		if (reference == null || reference.isBlank()) {
+			return null;
+		}
+		var text = reference.trim();
+		final Path candidate;
+		try {
+			if (text.startsWith("~/") || text.startsWith("~\\")) {
+				candidate = Path.of(System.getProperty("user.home", "")).resolve(text.substring(2));
+			} else {
+				candidate = Path.of(text);
+			}
+		} catch (RuntimeException e) {
+			return null;
+		}
+		if (!candidate.isAbsolute() || !isMarkdown(candidate)) {
+			return null;
+		}
+		var normalized = candidate.normalize();
+		if (Files.exists(normalized)) {
+			try {
+				if (!isMarkdown(normalized.toRealPath())) {
+					return null;
+				}
+			} catch (IOException e) {
+				return null;
+			}
+		}
+		return normalized;
+	}
+
+	private static boolean isMarkdown(Path path) {
+		var name = path.getFileName();
+		if (name == null) {
+			return false;
+		}
+		var lower = name.toString().toLowerCase(java.util.Locale.ROOT);
+		return lower.endsWith(".md") || lower.endsWith(".markdown");
+	}
+
 	/** Whether a path lies inside the project, its metadata, or an allowed root. */
 	private boolean owned(Path path, List<String> allowedRoots) {
 		return PathContainment.contains(path, List.of(root, metadataDirectory), allowedRoots);

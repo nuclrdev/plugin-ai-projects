@@ -95,6 +95,25 @@ under one is not wrongly refused.
 A reference to a legal place that holds no file still resolves, and shows as
 missing. Dropping it would hide the most common configuration mistake there is.
 
+### Linking instructions and skills from elsewhere
+
+Instruction and skill documents are worth sharing: a house style kept in one
+repository, a skill written once and used in every project. An **absolute path
+(or `~/…`) to a Markdown file** in an instruction or skill list is a deliberate
+link, and resolves without declaring its folder as an allowed root — which would
+also let agents *run* there, a far wider grant than reading one document.
+
+- **Link instruction…** / **Link skill…** in the sidebar pick files and add them
+  to the project context; the Context editor has a **Link Markdown file…** button
+  on the same two tabs for agent- and template-level links.
+- Linked documents appear in the Instructions and Skills sections and are marked
+  *linked* in Resolved Context. Right-click offers **Unlink** instead of Rename and
+  Delete, because the file belongs to the project it came from.
+- The link is narrow on purpose, since a definition can arrive from someone else:
+  Markdown only (`.md`, `.markdown`), absolute paths only — a `..` climb is still
+  refused — and a `.md` symlink whose real target is not Markdown is refused too.
+  Injected files are not linkable this way; they still need an allowed root.
+
 ## Agent window kinds
 
 `AgentWindowProvider` is the extension point. "Terminal" is one implementation of

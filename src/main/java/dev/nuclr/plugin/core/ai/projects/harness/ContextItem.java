@@ -11,8 +11,10 @@ import java.nio.file.Path;
  * @param source    which level contributed it
  * @param path      the file it resolves to, or {@code null} when it is not a file
  * @param available whether that file exists; a missing instruction is worth seeing
+ * @param linked    whether that file lives outside the project, linked from elsewhere
  */
-public record ContextItem(Kind kind, String label, String detail, Provenance source, Path path, boolean available) {
+public record ContextItem(Kind kind, String label, String detail, Provenance source, Path path, boolean available,
+		boolean linked) {
 
 	/** The categories the resolved-context view groups by. */
 	public enum Kind {
@@ -63,8 +65,23 @@ public record ContextItem(Kind kind, String label, String detail, Provenance sou
 	 * @return the item
 	 */
 	public static ContextItem file(Kind kind, String label, Path path, Provenance source) {
+		return file(kind, label, path, source, false);
+	}
+
+	/**
+	 * A file-backed item that may be linked from outside the project.
+	 *
+	 * @param kind   the category
+	 * @param label  display name
+	 * @param path   the resolved file, possibly missing
+	 * @param source contributing level
+	 * @param linked whether the file lives outside the project
+	 * @return the item
+	 */
+	public static ContextItem file(Kind kind, String label, Path path, Provenance source, boolean linked) {
 		var exists = path != null && java.nio.file.Files.isRegularFile(path);
-		return new ContextItem(kind, label, path == null ? "" : path.toString(), source, path, exists);
+		return new ContextItem(kind, label, path == null ? "" : path.toString(), source, path, exists,
+				path != null && linked);
 	}
 
 	/**
@@ -77,6 +94,6 @@ public record ContextItem(Kind kind, String label, String detail, Provenance sou
 	 * @return the item
 	 */
 	public static ContextItem value(Kind kind, String label, String detail, Provenance source) {
-		return new ContextItem(kind, label, detail == null ? "" : detail, source, null, true);
+		return new ContextItem(kind, label, detail == null ? "" : detail, source, null, true, false);
 	}
 }

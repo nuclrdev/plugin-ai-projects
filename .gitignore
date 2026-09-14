@@ -5,3 +5,4 @@
 c.bat
 deploy.bat
 /target
+/.nuclr

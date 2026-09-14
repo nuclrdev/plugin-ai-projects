@@ -32,6 +32,7 @@ import javax.swing.ListSelectionModel;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
+import dev.nuclr.plugin.core.ai.projects.harness.ContextItem;
 import dev.nuclr.plugin.core.ai.projects.harness.ContextResolver;
 import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
@@ -121,6 +122,12 @@ public final class ProjectSidebar extends JPanel {
 
 		/** Delete a document, after confirmation. */
 		void deleteDocument(Path file);
+
+		/** Link Markdown documents from elsewhere into the project's shared context. */
+		void linkDocuments(ContextItem.Kind kind);
+
+		/** Remove the project's references to a linked document; the file is untouched. */
+		void unlinkDocument(Path file);
 
 		/** Open a folder in the system file manager. */
 		void openFolder(Path folder);
@@ -290,10 +297,13 @@ public final class ProjectSidebar extends JPanel {
 	public void refresh(Map<String, AgentStatus> statuses, Set<String> attention) {
 		refreshAgents(statuses, attention);
 		refreshContext();
+		var linked = linkedDocuments();
 		refreshDocuments(SECTION_INSTRUCTIONS, store.paths().instructionsDirectory(),
-				Glyphs.sidebar(Glyphs.NEW, "New instruction..."), Glyphs.INSTRUCTION);
+				Glyphs.sidebar(Glyphs.NEW, "New instruction..."), Glyphs.INSTRUCTION,
+				ContextItem.Kind.INSTRUCTION, linked);
 		refreshDocuments(SECTION_SKILLS, store.paths().skillsDirectory(),
-				Glyphs.sidebar(Glyphs.NEW, "New skill..."), Glyphs.SKILL);
+				Glyphs.sidebar(Glyphs.NEW, "New skill..."), Glyphs.SKILL,
+				ContextItem.Kind.SKILL, linked);
 		refreshHarness();
 		refreshFiles();
 		applyFilter();
@@ -354,6 +364,7 @@ public final class ProjectSidebar extends JPanel {
 		for (var item : resolved.items()) {
 			entries.add(new SidebarEntry(Glyphs.sidebar(Glyphs.forContextKind(item.kind()), item.label()),
 					item.kind().groupLabel() + " - " + item.source().label()
+							+ (item.linked() ? " - linked" : "")
 							+ (item.path() != null && !item.available() ? " - missing" : ""),
 					null, item.path(), null, false, null));
 		}
@@ -361,7 +372,30 @@ public final class ProjectSidebar extends JPanel {
 		setBadge(SECTION_CONTEXT, String.valueOf(resolved.size()));
 	}
 
-	private void refreshDocuments(String section, Path directory, String newLabel, String glyph) {
+	/**
+	 * Every linked document the project or any of its agents references, by path.
+	 *
+	 * <p>A linked document is not in the directory being listed, so without this the
+	 * Instructions and Skills sections would not show the documents an agent is
+	 * actually told to read from somewhere else.
+	 */
+	private List<ContextItem> linkedDocuments() {
+
+		var linked = new LinkedHashMap<String, ContextItem>();
+		var resolved = new ArrayList<>(ContextResolver.resolve(store.project(), null, store.paths()).items());
+		for (var agent : store.project().getAgents()) {
+			resolved.addAll(ContextResolver.resolve(store.project(), agent, store.paths()).items());
+		}
+		for (var item : resolved) {
+			if (item.linked()) {
+				linked.putIfAbsent(item.kind() + " " + item.path(), item);
+			}
+		}
+		return List.copyOf(linked.values());
+	}
+
+	private void refreshDocuments(String section, Path directory, String newLabel, String glyph,
+			ContextItem.Kind kind, List<ContextItem> linked) {
 
 		var entries = new ArrayList<SidebarEntry>();
 		for (var file : listFiles(directory)) {
@@ -369,8 +403,19 @@ public final class ProjectSidebar extends JPanel {
 			entries.add(SidebarEntry.file(
 					Glyphs.sidebar(glyph, name == null ? file.toString() : name.toString()), "", file));
 		}
+		for (var item : linked) {
+			if (item.kind() == kind) {
+				var name = item.path().getFileName();
+				entries.add(SidebarEntry.file(
+						Glyphs.sidebar(glyph, name == null ? item.label() : name.toString()),
+						"linked" + (item.available() ? "" : " - missing"), item.path()));
+			}
+		}
 		var count = entries.size();
 		entries.add(SidebarEntry.command(newLabel, () -> actions.newDocument(directory)));
+		entries.add(SidebarEntry.command(
+				Glyphs.sidebar(Glyphs.FOLDER, kind == ContextItem.Kind.SKILL ? "Link skill..." : "Link instruction..."),
+				() -> actions.linkDocuments(kind)));
 		setEntries(section, entries);
 		setBadge(section, String.valueOf(count));
 	}
@@ -556,7 +601,12 @@ public final class ProjectSidebar extends JPanel {
 			// Renaming or deleting the project definition from here would leave the open
 			// desktop pointing at a file that is no longer there.
 			var isDefinition = path.equals(store.paths().projectFile());
-			if (!isDefinition) {
+			if (!store.paths().owns(path)) {
+				// A linked document belongs to another project; renaming or deleting it
+				// from here would break that project too. Unlinking is what this one owns.
+				menu.addSeparator();
+				menu.add(item(Glyphs.DELETE, "Unlink", () -> actions.unlinkDocument(path)));
+			} else if (!isDefinition) {
 				menu.addSeparator();
 				menu.add(item(Glyphs.RENAME, "Rename...", () -> actions.renameDocument(path)));
 				menu.add(item(Glyphs.DELETE, "Delete...", () -> actions.deleteDocument(path)));

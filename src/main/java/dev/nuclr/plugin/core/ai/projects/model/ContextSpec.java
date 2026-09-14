@@ -23,10 +23,16 @@ import lombok.Data;
 @Data
 public class ContextSpec {
 
-	/** Instruction documents, as paths relative to the metadata directory (or absolute). */
+	/**
+	 * Instruction documents, as paths relative to the metadata directory, or an
+	 * absolute path to a Markdown document linked from another project or folder.
+	 */
 	private List<String> instructions = new ArrayList<>();
 
-	/** Skill names, resolved against the project's {@code skills/} directory. */
+	/**
+	 * Skill names, resolved against the project's {@code skills/} directory, or an
+	 * absolute path to a Markdown skill linked from elsewhere.
+	 */
 	private List<String> skills = new ArrayList<>();
 
 	/** Files pasted into the agent's context on startup. */

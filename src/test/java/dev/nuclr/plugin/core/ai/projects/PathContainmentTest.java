@@ -179,7 +179,62 @@ class PathContainmentTest {
 		var skill = Files.writeString(shared.resolve("review.md"), "review");
 
 		assertEquals(skill, ContextResolver.skillPath(paths, skill.toString(), List.of(shared.toString())));
+	}
+
+	@Test
+	void aNonMarkdownSkillOutsideEveryRootIsRefused() throws IOException {
+
+		var shared = Files.createDirectories(workspace.resolve("shared-skills"));
+		var skill = Files.writeString(shared.resolve("review.txt"), "review");
+
 		assertNull(ContextResolver.skillPath(paths, skill.toString(), List.of()));
+	}
+
+	// ------------------------------------------------------- linked documents
+
+	@Test
+	void aMarkdownDocumentLinkedByAbsolutePathResolvesWithoutAnAllowedRoot() throws IOException {
+
+		// The case this exists for: a house style or skill kept in another project,
+		// linked without letting agents run in that project.
+		var other = Files.createDirectories(workspace.resolve("other-project"));
+		var doc = Files.writeString(other.resolve("HOUSE-STYLE.md"), "house style");
+
+		assertEquals(doc, paths.resolveLinkedDocument(doc.toString(), List.of()));
+		assertEquals(doc, ContextResolver.skillPath(paths, doc.toString(), List.of()));
+		assertFalse(paths.owns(doc));
+	}
+
+	@Test
+	void aLinkToAMissingMarkdownDocumentStillResolvesSoItReadsAsMissing() {
+		var absent = workspace.resolve("other-project").resolve("GONE.md");
+		assertEquals(absent, paths.resolveLinkedDocument(absent.toString(), List.of()));
+	}
+
+	@Test
+	void onlyMarkdownCanBeLinked() throws IOException {
+		var outside = Files.writeString(workspace.resolve("secret.txt"), "secret");
+		assertNull(paths.resolveLinkedDocument(outside.toString(), List.of()));
+	}
+
+	@Test
+	void climbingOutWithDotDotIsRefusedEvenForMarkdown() throws IOException {
+		Files.writeString(workspace.resolve("outside.md"), "outside");
+		assertNull(paths.resolveLinkedDocument("../../../outside.md", List.of()));
+	}
+
+	@Test
+	void aMarkdownNamedLinkToSomethingElseIsRefused() throws IOException {
+
+		var secret = Files.writeString(workspace.resolve("id_rsa"), "key");
+		var link = workspace.resolve("notes.md");
+		try {
+			Files.createSymbolicLink(link, secret);
+		} catch (IOException | UnsupportedOperationException | SecurityException e) {
+			assumeTrue(false, "Symbolic links are unavailable in this test environment");
+		}
+
+		assertNull(paths.resolveLinkedDocument(link.toString(), List.of()));
 	}
 
 	@Test

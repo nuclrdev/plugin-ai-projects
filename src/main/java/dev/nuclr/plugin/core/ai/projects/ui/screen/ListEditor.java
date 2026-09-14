@@ -87,6 +87,21 @@ public final class ListEditor extends JPanel {
 	}
 
 	/**
+	 * Add lines not already present, keeping what was typed.
+	 *
+	 * @param additions the values to add
+	 */
+	public void append(List<String> additions) {
+		var values = new ArrayList<>(values());
+		for (var addition : additions) {
+			if (addition != null && !addition.isBlank() && !values.contains(addition.trim())) {
+				values.add(addition.trim());
+			}
+		}
+		setValues(values);
+	}
+
+	/**
 	 * Parse {@code KEY=value} lines into an ordered map, for environment editing.
 	 *
 	 * <p>A line with no {@code =} is kept as a key with an empty value rather than

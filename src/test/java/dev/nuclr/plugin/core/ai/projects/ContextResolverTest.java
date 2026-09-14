@@ -122,6 +122,31 @@ class ContextResolverTest {
 	}
 
 	@Test
+	void documentsLinkedFromAnotherProjectAreListedAsLinked() throws IOException {
+
+		var other = Files.createDirectories(root.resolveSibling(root.getFileName() + "-other"));
+		var instruction = Files.writeString(other.resolve("HOUSE-STYLE.md"), "house style");
+		var skill = Files.writeString(other.resolve("review.md"), "review");
+		writeSkill("local", "local");
+
+		project.getContext().getInstructions().add(instruction.toString());
+		var agent = agent("a1", "Agent");
+		agent.getContext().getSkills().add("local");
+		agent.getContext().getSkills().add(skill.toString());
+
+		var resolved = ContextResolver.resolve(project, agent, paths);
+		var linkedInstruction = resolved.of(ContextItem.Kind.INSTRUCTION).getFirst();
+		var skills = resolved.of(ContextItem.Kind.SKILL);
+
+		assertTrue(linkedInstruction.available());
+		assertTrue(linkedInstruction.linked());
+		assertFalse(skills.get(0).linked(), "a skill in the project's own folder is not linked");
+		assertTrue(skills.get(1).linked());
+		assertEquals(skill, skills.get(1).path());
+		assertTrue(resolved.missing().isEmpty());
+	}
+
+	@Test
 	void harnessSharedInstructionsAreListedBeforeContextOnes() throws IOException {
 
 		Files.writeString(paths.instructionsDirectory().resolve("house.md"), "house");

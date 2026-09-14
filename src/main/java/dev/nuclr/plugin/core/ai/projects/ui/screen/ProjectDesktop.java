@@ -45,6 +45,7 @@ import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowHost;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
 import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.harness.AgentEnvironment;
+import dev.nuclr.plugin.core.ai.projects.harness.ContextItem;
 import dev.nuclr.plugin.core.ai.projects.harness.ContextResolver;
 import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
@@ -1022,6 +1023,98 @@ public final class ProjectDesktop extends JPanel
 		}
 		closeDocumentFrame(file);
 		refreshSidebar();
+	}
+
+	/**
+	 * Link Markdown documents from another project or folder into the project's
+	 * shared context, by absolute path.
+	 *
+	 * @param kind {@link ContextItem.Kind#SKILL} for skills; anything else links instructions
+	 */
+	@Override
+	public void linkDocuments(ContextItem.Kind kind) {
+
+		var skill = kind == ContextItem.Kind.SKILL;
+		var files = ContextEditorDialog.chooseMarkdown(this, skill ? "Link skills" : "Link instructions");
+		if (files.isEmpty()) {
+			return;
+		}
+		if (store.project().getContext() == null) {
+			store.project().setContext(new ContextSpec());
+		}
+		var context = store.project().getContext();
+		if (skill && context.getSkills() == null) {
+			context.setSkills(new ArrayList<>());
+		}
+		if (!skill && context.getInstructions() == null) {
+			context.setInstructions(new ArrayList<>());
+		}
+		var references = skill ? context.getSkills() : context.getInstructions();
+		var added = 0;
+		for (var file : files) {
+			var reference = file.toString();
+			if (!references.contains(reference)) {
+				references.add(reference);
+				added++;
+			}
+		}
+		if (added == 0) {
+			flash("Already linked");
+			return;
+		}
+		store.markProjectDirty();
+		afterProjectChanged();
+		warnAboutRunningAgents("The context changed.");
+	}
+
+	/**
+	 * Remove the project context's references to a linked document. The file itself
+	 * belongs to wherever it was linked from and is left alone.
+	 *
+	 * @param file the resolved document
+	 */
+	@Override
+	public void unlinkDocument(Path file) {
+
+		if (file == null) {
+			return;
+		}
+		var allowedRoots = HarnessResolver.resolveProject(store.project()).allowedRoots();
+		var context = store.project().getContext();
+		var removed = false;
+		if (context != null && context.getInstructions() != null) {
+			removed |= context.getInstructions().removeIf(reference ->
+					file.equals(store.paths().resolveLinkedDocument(reference, allowedRoots)));
+		}
+		if (context != null && context.getSkills() != null) {
+			removed |= context.getSkills().removeIf(reference ->
+					file.equals(ContextResolver.skillPath(store.paths(), reference, allowedRoots)));
+		}
+		if (removed) {
+			store.markProjectDirty();
+			afterProjectChanged();
+		}
+
+		// An agent, its template or the harness can link the same document; say so
+		// rather than letting it look unlinked while agents still receive it.
+		var stillLinked = store.project().getAgents().stream()
+				.filter(agent -> ContextResolver.resolve(store.project(), agent, store.paths()).items().stream()
+						.anyMatch(item -> file.equals(item.path())))
+				.map(AgentDefinition::displayName)
+				.toList();
+		if (stillLinked.isEmpty()) {
+			if (removed) {
+				flash("Unlinked " + file.getFileName());
+			}
+			return;
+		}
+		Dialogs.message(this, "Unlink",
+				(removed ? "Removed from the project context.\n\n" : "The project context does not link this.\n\n")
+						+ file + "\n\nis still linked for: " + String.join(", ", stillLinked)
+						+ "\nEdit their context, template or harness to remove it there.");
+		if (removed) {
+			warnAboutRunningAgents("The context changed.");
+		}
 	}
 
 	private void closeDocumentFrame(Path file) {

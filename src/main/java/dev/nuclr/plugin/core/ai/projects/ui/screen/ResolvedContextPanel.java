@@ -167,7 +167,7 @@ public final class ResolvedContextPanel extends JPanel {
 				case 3 -> item.detail();
 				default -> item.path() == null ? ""
 						: new GlyphText(item.available() ? Glyphs.FINISHED : Glyphs.MISSING,
-							item.available() ? "" : "missing");
+							item.available() ? (item.linked() ? "linked" : "") : "missing");
 			};
 		}
 	}
