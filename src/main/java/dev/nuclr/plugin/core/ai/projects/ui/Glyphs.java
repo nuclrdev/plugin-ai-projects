@@ -105,8 +105,13 @@ public final class Glyphs {
 	public static final String TOOL = pick("🔌", "⚙");
 	/** An environment variable. */
 	public static final String ENVIRONMENT = pick("🌱", "±");
-	/** A permission. */
-	public static final String PERMISSION = pick("🔐", "⚿");
+	/**
+	 * A permission. The stand-in is a ballot box rather than the squared key: the
+	 * key is missing from DejaVu Sans, so where the emoji font holds only colour
+	 * bitmaps (Noto Color Emoji on a stock Linux desktop) the icon had nothing to
+	 * trace at all.
+	 */
+	public static final String PERMISSION = pick("🔐", "☑");
 	/** An allowed root. */
 	public static final String ROOT = pick("📂", "▸");
 	/** A context variable. */
