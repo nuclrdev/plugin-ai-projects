@@ -80,6 +80,11 @@ public final class AgentWindowContext {
 		return ContextResolver.resolve(project(), agent, store.paths());
 	}
 
+	/** Where this agent's launch briefing is written. */
+	public Path briefingFile() {
+		return store.paths().briefingFile(agent.getId());
+	}
+
 	/** The agent's last-known session record; mutate it and call {@link AgentWindowHost#sessionUpdated}. */
 	public SessionRecord session() {
 		return store.session(agent.getId());

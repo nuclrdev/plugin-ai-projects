@@ -61,10 +61,10 @@ running: they were launched with the previous configuration and only a restart
 picks the change up.
 
 The terminal provider applies the command, startup arguments, environment and
-approved working directory directly. Provider-specific permissions, MCP wiring
-and file-content injection require support from the selected CLI; the resolved
-view therefore describes the effective project configuration, not a promise that
-every CLI-specific field has a universal command-line equivalent.
+approved working directory directly, and delivers the context as a briefing (see
+below). Provider-specific permissions, model selection and MCP wiring still
+require support from the selected CLI, and the launch notice names whatever was
+not applied.
 
 The **context** says what an agent is told: instruction documents, skills,
 injected files and context variables. Unlike the harness it is **additive** — the
@@ -73,10 +73,29 @@ what makes several specialised agents in one project worth having.
 
 **Resolved Context** shows the effective project configuration after merging,
 including the environment variables the plugin itself sets at launch, with the
-contributing level and a mark on any file that is referenced but missing. The
-terminal provider currently applies the command, startup arguments, environment
-and working directory directly; provider-specific permissions, MCP wiring and
-file-content injection require support from the selected CLI.
+contributing level and a mark on any file that is referenced but missing.
+
+### The briefing: how an agent is actually told
+
+Resolving context only describes it. At every start the terminal provider builds
+a **briefing** from the same resolved context - the content of every instruction,
+skill and injected file, the context variables, and a list of anything referenced
+but missing - writes it to `sessions/<agent>.briefing.md`, and hands it to the CLI
+the way that CLI's own `--help` documents:
+
+| CLI | Mechanism |
+|---|---|
+| Claude Code | `--append-system-prompt <briefing>` |
+| Pi | `--append-system-prompt <briefing file>` |
+| Codex | the initial `[PROMPT]`: the briefing opens the session, and Codex replies "Ready" |
+| OpenCode | `OPENCODE_CONFIG_CONTENT` naming the briefing as an instructions file; `--prompt` if you already set that variable |
+
+The CLI is recognised by the executable's name, not the window kind. Through a
+`.cmd`/`.bat` shim, where `cmd.exe` splits arguments at line breaks, or for a
+briefing too long for a Windows command line, only a one-line pointer to the file
+is passed. A shell or unknown command gets no briefing, and the launch notice says
+so. The transcript records how the briefing was delivered. A briefing that cannot
+be written stops the start rather than launching an agent without its instructions.
 
 ### Allowed roots bound both halves
 

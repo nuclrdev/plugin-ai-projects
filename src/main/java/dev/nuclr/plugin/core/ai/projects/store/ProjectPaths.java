@@ -118,6 +118,14 @@ public final class ProjectPaths {
 		return metadataDirectory.resolve("sessions").resolve(safe(agentId) + ".json");
 	}
 
+	/**
+	 * Per-agent briefing - the instructions, skills and variables handed to the
+	 * agent at launch - runtime only, rewritten on every start.
+	 */
+	public Path briefingFile(String agentId) {
+		return metadataDirectory.resolve("sessions").resolve(safe(agentId) + ".briefing.md");
+	}
+
 	/** Per-agent terminal transcript — runtime only, but deliberately kept across restarts. */
 	public Path transcriptFile(String agentId) {
 		return metadataDirectory.resolve("transcripts").resolve(safe(agentId) + ".log");

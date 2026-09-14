@@ -13,6 +13,7 @@ import java.awt.event.ComponentEvent;
 import java.awt.geom.RoundRectangle2D;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -38,6 +39,7 @@ import com.pty4j.PtyProcessBuilder;
 
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
+import dev.nuclr.plugin.core.ai.projects.harness.AgentBriefing;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import lombok.extern.slf4j.Slf4j;
@@ -356,16 +358,37 @@ public final class TerminalAgentWindow implements AgentWindow {
 			return;
 		}
 
+		var environment = environment(harness);
+		var launched = new ArrayList<>(command);
+		launched.set(0, resolved.get().toString());
+
+		// Hand the agent what it is told, not just how it is run. The briefing is
+		// built from the same resolved context the view shows.
+		var briefing = AgentBriefing.of(context.project().displayName(), context.agent().displayName(),
+				context.resolvedContext());
+		var delivery = ContextDelivery.NONE;
+		if (!briefing.isEmpty()) {
+			var briefingFile = context.briefingFile();
+			try {
+				Files.createDirectories(briefingFile.getParent());
+				Files.writeString(briefingFile, briefing.text(), StandardCharsets.UTF_8);
+			} catch (IOException | RuntimeException e) {
+				fail("Could not write the agent's briefing to " + briefingFile + ": " + e.getMessage()
+						+ ". Not starting an agent without its instructions.");
+				return;
+			}
+			delivery = ContextDelivery.plan(executable, resolved.get(), briefingFile, briefing.text(), environment);
+			launched.addAll(delivery.arguments());
+			environment.putAll(delivery.environment());
+		}
+
 		stopRequested = false;
 		setStatus(AgentStatus.STARTING);
 		showStopped("Starting " + String.join(" ", command) + " ...");
 		startButton.setEnabled(false);
 
 		var workingDirectory = context.workingDirectory();
-		var environment = environment(harness);
-		var launchNotice = launchNotice(harness);
-		var launched = new ArrayList<>(command);
-		launched.set(0, resolved.get().toString());
+		var launchNotice = launchNotice(harness, briefing, delivery);
 
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> {
 			PtyProcess started;
@@ -940,8 +963,9 @@ public final class TerminalAgentWindow implements AgentWindow {
 		});
 	}
 
-	/** Describe configuration that has no portable terminal/CLI mapping yet. */
-	private String launchNotice(dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness harness) {
+	/** Say how the briefing was delivered, and what configuration has no terminal/CLI mapping yet. */
+	private String launchNotice(dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness harness,
+			AgentBriefing briefing, ContextDelivery delivery) {
 		var unsupported = new ArrayList<String>();
 		if (harness.provider() != null && !harness.provider().isBlank()) {
 			unsupported.add("provider");
@@ -958,15 +982,19 @@ public final class TerminalAgentWindow implements AgentWindow {
 		if (!harness.allowedRoots().isEmpty()) {
 			unsupported.add("filesystem access policy");
 		}
-		if (!harness.sharedInstructions().isEmpty()
-				|| context.resolvedContext().items().stream().anyMatch(item -> switch (item.kind()) {
-					case INSTRUCTION, SKILL, INJECTED_FILE, VARIABLE -> true;
-					default -> false;
-				})) {
-			unsupported.add("context files and variables");
+		if (!briefing.isEmpty() && !delivery.delivered()) {
+			unsupported.add("context files and variables (this CLI has no known way to receive them; the briefing is at "
+					+ context.briefingFile() + ")");
 		}
-		return unsupported.isEmpty() ? ""
-				: "Not applied by the terminal CLI: " + String.join(", ", unsupported);
+		var notes = new ArrayList<String>();
+		if (delivery.delivered()) {
+			notes.add(delivery.description() + ": " + briefing.documents() + " documents, "
+					+ briefing.variables() + " variables" + (briefing.missing() > 0 ? ", " + briefing.missing() + " missing" : ""));
+		}
+		if (!unsupported.isEmpty()) {
+			notes.add("Not applied by the terminal CLI: " + String.join(", ", unsupported));
+		}
+		return String.join("; ", notes);
 	}
 
 	private static String escape(String text) {
