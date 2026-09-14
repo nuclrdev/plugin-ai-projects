@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Font;
+import java.awt.GraphicsEnvironment;
 
 import javax.swing.UIManager;
 
@@ -204,6 +205,12 @@ class GlyphsTest {
 			assertNotNull(glyph);
 			assertFalse(glyph.isBlank());
 
+			// A build machine with only a minimal font set (a CI container) may have no
+			// font at all for a stand-in symbol; there is nothing pick() could choose.
+			if (!installedFontCanDraw(glyph)) {
+				continue;
+			}
+
 			var drawable = new Font(Font.SANS_SERIF, Font.PLAIN, 12).canDisplayUpTo(
 					glyph.replace("️", "")) == -1;
 			var named = Glyphs.span(glyph).contains("font-family");
@@ -211,5 +218,15 @@ class GlyphsTest {
 					"nothing can draw " + glyph + " (U+"
 							+ Integer.toHexString(glyph.codePointAt(0)).toUpperCase() + ")");
 		}
+	}
+
+	private static boolean installedFontCanDraw(String glyph) {
+		var bare = glyph.replace("️", "");
+		for (var font : GraphicsEnvironment.getLocalGraphicsEnvironment().getAllFonts()) {
+			if (font.canDisplayUpTo(bare) == -1) {
+				return true;
+			}
+		}
+		return false;
 	}
 }
