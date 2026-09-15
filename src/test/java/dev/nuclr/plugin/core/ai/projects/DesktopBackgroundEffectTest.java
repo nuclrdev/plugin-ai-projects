@@ -63,6 +63,7 @@ class DesktopBackgroundEffectTest {
 		assertTrue(ids.contains("matrix-rain"));
 		assertTrue(ids.contains("steampunk-engine"));
 		assertTrue(ids.contains("helix-sequencer"));
+		assertTrue(ids.contains("plasma"));
 		assertTrue(ids.contains("starfield"));
 	}
 }
