@@ -46,6 +46,37 @@ public final class AiProjectEvents {
 	/** Host payload key for workspace state. */
 	public static final String WORKSPACE_STATE_KEY = "workspace.state";
 
+	/** Host payload key: the display name of the workspace a workspace-state action is for. */
+	public static final String WORKSPACE_NAME_KEY = "workspace.name";
+
+	/** Host payload key: the integer version of the workspace state, so it can be migrated. */
+	public static final String WORKSPACE_STATE_VERSION_KEY = "workspace.state.version";
+
+	/** Host payload key: the plugin's answer to {@link #WORKSPACE_RESTORE_STATE}. */
+	public static final String WORKSPACE_RESTORE_RESULT_KEY = "workspace.restore.result";
+
+	/** {@link #WORKSPACE_RESTORE_RESULT_KEY}: restored; open the resource that comes with it. */
+	public static final String WORKSPACE_RESTORE_RESTORED = "restored";
+
+	/** {@link #WORKSPACE_RESTORE_RESULT_KEY}: nothing left to restore; the host drops the entry. */
+	public static final String WORKSPACE_RESTORE_SKIP = "skip";
+
+	/** {@link #WORKSPACE_RESTORE_RESULT_KEY}: restoring failed; the host keeps the entry for next time. */
+	public static final String WORKSPACE_RESTORE_FAILED = "failed";
+
+	/** Host payload key: the resource the host should open for a restored entry. */
+	public static final String WORKSPACE_RESTORE_RESOURCE_KEY = "workspace.restore.resource";
+
+	/**
+	 * Plugin to host: this instance's workspace state changed. Carries the instance
+	 * {@code uuid()} under {@link #WORKSPACE_PLUGIN_UUID_KEY} and the state under
+	 * {@link #WORKSPACE_STATE_KEY}, so the host can save it without calling back in.
+	 */
+	public static final String WORKSPACE_STATE_CHANGED = "workspace.state.changed";
+
+	/** {@link #WORKSPACE_STATE_CHANGED} payload: the announcing instance's uuid. */
+	public static final String WORKSPACE_PLUGIN_UUID_KEY = "plugin.uuid";
+
 	/** Panel action: create a project. */
 	public static final String NEW_PROJECT = "ai.projects.new";
 

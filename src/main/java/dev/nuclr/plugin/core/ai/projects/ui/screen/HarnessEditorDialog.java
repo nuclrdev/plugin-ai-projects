@@ -13,6 +13,8 @@ import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
+
+import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
@@ -121,7 +123,7 @@ public final class HarnessEditorDialog {
 		tabs.addTab("Shared instructions", block("Shared instructions", sharedInstructions, instructionsInherit));
 		tabs.setPreferredSize(new Dimension(640, 460));
 
-		var choice = JOptionPane.showConfirmDialog(parent, tabs, title,
+		var choice = Dialogs.showConfirmDialog(parent, tabs, title,
 				JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 		if (choice != JOptionPane.OK_OPTION) {
 			return null;

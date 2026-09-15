@@ -333,7 +333,7 @@ public final class DocumentFrame extends JInternalFrame {
 			return true;
 		}
 		var options = new Object[] { "Overwrite", "Reload from disk", "Cancel" };
-		var choice = JOptionPane.showOptionDialog(this,
+		var choice = Dialogs.showOptionDialog(this,
 				displayName(file) + " has changed on disk since it was opened,\n"
 						+ "probably because an agent in this project wrote it.\n\n"
 						+ "Overwrite it with what is in this window, or discard these edits and reload?",
@@ -363,7 +363,7 @@ public final class DocumentFrame extends JInternalFrame {
 		if (Dialogs.isHeadless()) {
 			return save();
 		}
-		var choice = JOptionPane.showConfirmDialog(this,
+		var choice = Dialogs.showConfirmDialog(this,
 				"Save changes to " + displayName(file) + "?", "Unsaved changes",
 				JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
 		if (choice == JOptionPane.CANCEL_OPTION || choice == JOptionPane.CLOSED_OPTION) {

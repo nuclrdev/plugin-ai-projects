@@ -3,10 +3,13 @@ package dev.nuclr.plugin.core.ai.projects.ui.screen;
 import java.awt.BorderLayout;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
@@ -26,6 +29,7 @@ import dev.nuclr.plugin.core.ai.projects.store.ProjectCatalog;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectPaths;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
 import dev.nuclr.plugin.core.ai.projects.ui.AiProjectEvents;
+import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.ui.panel.AiProjectResource;
 import lombok.extern.slf4j.Slf4j;
@@ -48,15 +52,58 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 	/** Manifest id. */
 	public static final String PLUGIN_ID = "dev.nuclr.plugin.core.ai.projects.screen";
 
+	/** Version of the state this screen keeps with a Commander workspace. */
+	public static final int WORKSPACE_STATE_VERSION = 1;
+
+	/** Workspace state key: the id of the project that was open. */
+	public static final String STATE_PROJECT_ID = "projectId";
+
 	private final String uuid = UUID.randomUUID().toString();
 	private final AgentWindowRegistry registry = new AgentWindowRegistry();
 	private final JPanel root = new JPanel(new BorderLayout());
+
+	private final ProjectLocks locks;
 
 	private NuclrPluginContext context;
 	private ProjectCatalog catalog;
 	private ProjectDesktop desktop;
 	private NuclrResource currentResource;
 	private volatile boolean focused;
+
+	/** The project this screen holds in {@link ProjectLocks}, or {@code null}. */
+	private String lockedProjectId;
+
+	/** This screen's workspace name, learned from the host's workspace-state actions; may stay unknown. */
+	private volatile String workspaceName;
+
+	/** Tells the user a project is already open elsewhere; a popup, except in tests. */
+	private final Consumer<String> alreadyOpenNotice;
+
+	/** The instance Commander creates: one lock registry shared by every workspace. */
+	public AiProjectScreenPlugin() {
+		this(ProjectLocks.shared());
+	}
+
+	/**
+	 * A screen over a given lock registry, so tests can keep their locks to themselves.
+	 *
+	 * @param locks the registry deciding which screen may open which project
+	 */
+	public AiProjectScreenPlugin(ProjectLocks locks) {
+		this(locks, AiProjectScreenPlugin::showAlreadyOpenPopup);
+	}
+
+	/**
+	 * A screen over a given lock registry that reports a project open elsewhere through
+	 * {@code alreadyOpenNotice} instead of a popup.
+	 *
+	 * @param locks             the registry deciding which screen may open which project
+	 * @param alreadyOpenNotice receives the message a popup would have shown
+	 */
+	public AiProjectScreenPlugin(ProjectLocks locks, Consumer<String> alreadyOpenNotice) {
+		this.locks = locks;
+		this.alreadyOpenNotice = alreadyOpenNotice;
+	}
 
 	@Override
 	public String uuid() {
@@ -115,11 +162,30 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 			return true;
 		}
 
+		var holder = locks.tryAcquire(entry.id(), uuid, workspaceName);
+		if (holder.isPresent()) {
+			log.info("AI project {} is already open in another workspace; not opening it twice", projectId);
+			// Nothing is open here, and nothing is kept: this workspace must not try again next time.
+			this.currentResource = null;
+			announceWorkspaceState();
+			var message = alreadyOpenMessage(entry.name(), holder.get().workspaceName());
+			// Not a screen of its own: give the window straight back to the panels and say why
+			// over them. Deferred, because the host is still in the middle of showing this
+			// screen and would ignore a close that arrived before it had.
+			SwingUtilities.invokeLater(() -> {
+				closeFromDesktop();
+				alreadyOpenNotice.accept(message);
+			});
+			return true;
+		}
+		lockedProjectId = entry.id();
+
 		ProjectStore store;
 		try {
 			store = ProjectStore.open(catalog.paths(entry));
 		} catch (IOException e) {
 			log.warn("Could not open the AI project {}: {}", projectId, e.getMessage(), e);
+			releaseLock();
 			showMessage("Could not open this project: " + e.getMessage());
 			return true;
 		}
@@ -139,6 +205,7 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 			// and a second attempt would then be writing the same files twice.
 			log.warn("Could not build the desktop for AI project {}: {}", projectId, e.getMessage(), e);
 			store.close();
+			releaseLock();
 			this.currentResource = null;
 			showMessage("Could not open this project's desktop: "
 					+ (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
@@ -153,6 +220,8 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 		// whenever the definition is actually read.
 		catalog.register(new dev.nuclr.plugin.core.ai.projects.store.ProjectEntry(
 				entry.id(), store.project().displayName(), entry.root(), entry.storageMode()));
+
+		announceWorkspaceState();
 
 		SwingUtilities.invokeLater(desktop::requestFocusInWindow);
 		return true;
@@ -191,6 +260,17 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 	@Override
 	public void act(BaseNuclrPlugin other, String actionType, List<NuclrResource> selectedResources,
 			NuclrResource focusedResource, Map<String, Object> data, NuclrPluginCallback callback) {
+
+		// Workspace state is asked for whether or not a project is open, and a restore
+		// arrives before one is - possibly off the event thread.
+		if (AiProjectEvents.WORKSPACE_SAVE_STATE.equals(actionType)) {
+			saveWorkspaceState(data);
+			return;
+		}
+		if (AiProjectEvents.WORKSPACE_RESTORE_STATE.equals(actionType)) {
+			restoreWorkspaceState(data);
+			return;
+		}
 
 		if (desktop == null) {
 			return;
@@ -258,6 +338,7 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 	 * see or stop. What survives is their transcripts and session records.
 	 */
 	private void closeDesktop() {
+		releaseLock();
 		var open = desktop;
 		desktop = null;
 		if (open == null) {
@@ -296,6 +377,110 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * The state Commander keeps for this screen in a workspace: which project was open.
+	 *
+	 * @param projectId the open project's id
+	 * @return a settings-storable map
+	 */
+	public static Map<String, Object> workspaceState(String projectId) {
+		var state = new LinkedHashMap<String, Object>();
+		state.put(STATE_PROJECT_ID, projectId);
+		return state;
+	}
+
+	private void releaseLock() {
+		var projectId = lockedProjectId;
+		lockedProjectId = null;
+		locks.release(projectId, uuid);
+	}
+
+	private static void showAlreadyOpenPopup(String message) {
+		Dialogs.notice(null, "Project already open", message);
+	}
+
+	/**
+	 * What a second workspace is told instead of opening a project that is already open.
+	 *
+	 * @param projectName     the project's display name
+	 * @param holderWorkspace the workspace holding it, or {@code null} when not known
+	 * @return the message
+	 */
+	public static String alreadyOpenMessage(String projectName, String holderWorkspace) {
+		var where = holderWorkspace == null ? "another workspace" : "the workspace \"" + holderWorkspace + "\"";
+		return "\"" + projectName + "\" is already open in " + where + ". "
+				+ "A project can be open in one workspace at a time, so its agents are never started twice. "
+				+ "Switch to that workspace to work on it, or close it there and open it here again.";
+	}
+
+	/** The host names the workspace on its workspace-state actions; remember it for the lock. */
+	private void rememberWorkspace(Map<String, Object> data) {
+		if (data != null && data.get(AiProjectEvents.WORKSPACE_NAME_KEY) instanceof String name && !name.isBlank()) {
+			workspaceName = name;
+		}
+	}
+
+	/** The pull fallback; Commander normally has the state already from {@link #announceWorkspaceState()}. */
+	private void saveWorkspaceState(Map<String, Object> data) {
+		rememberWorkspace(data);
+		var projectId = AiProjectResource.projectId(currentResource);
+		if (data == null || projectId == null) {
+			return;
+		}
+		data.put(AiProjectEvents.WORKSPACE_STATE_KEY, workspaceState(projectId));
+		data.put(AiProjectEvents.WORKSPACE_STATE_VERSION_KEY, WORKSPACE_STATE_VERSION);
+	}
+
+	/**
+	 * Turn a saved project id back into the row that opens it.
+	 *
+	 * <p>Commander may ask off the event thread, so this only reads the catalogue; the
+	 * desktop itself is built when the host opens the resource. A project the user has
+	 * since forgotten is skipped rather than failed: it is not coming back.
+	 */
+	private void restoreWorkspaceState(Map<String, Object> data) {
+
+		if (data == null) {
+			return;
+		}
+		rememberWorkspace(data);
+
+		var projectId = data.get(AiProjectEvents.WORKSPACE_STATE_KEY) instanceof Map<?, ?> state
+				&& state.get(STATE_PROJECT_ID) instanceof String id && !id.isBlank() ? id : null;
+		var entry = projectId == null || catalog == null ? null : catalog.find(projectId).orElse(null);
+
+		if (entry == null) {
+			log.info("Not reopening AI project {}: it is no longer in the list", projectId);
+			data.put(AiProjectEvents.WORKSPACE_RESTORE_RESULT_KEY, AiProjectEvents.WORKSPACE_RESTORE_SKIP);
+			return;
+		}
+
+		var holder = locks.holder(entry.id()).filter(current -> !uuid.equals(current.ownerId()));
+		if (holder.isPresent()) {
+			// Already open in another workspace, which got there first: this one comes back
+			// on its panels rather than on a screen explaining why the project is not here.
+			log.info("Not reopening AI project {} here: it is already open in another workspace", projectId);
+			data.put(AiProjectEvents.WORKSPACE_RESTORE_RESULT_KEY, AiProjectEvents.WORKSPACE_RESTORE_SKIP);
+			return;
+		}
+
+		data.put(AiProjectEvents.WORKSPACE_RESTORE_RESULT_KEY, AiProjectEvents.WORKSPACE_RESTORE_RESTORED);
+		data.put(AiProjectEvents.WORKSPACE_RESTORE_RESOURCE_KEY, AiProjectResource.forProject(entry));
+	}
+
+	/** Tell Commander which project this instance shows, so saving a workspace never has to ask. */
+	private void announceWorkspaceState() {
+		if (context == null) {
+			return;
+		}
+		var projectId = AiProjectResource.projectId(currentResource);
+		var payload = new HashMap<String, Object>();
+		payload.put(AiProjectEvents.WORKSPACE_PLUGIN_UUID_KEY, uuid);
+		payload.put(AiProjectEvents.WORKSPACE_STATE_KEY, projectId == null ? null : workspaceState(projectId));
+		payload.put(AiProjectEvents.WORKSPACE_STATE_VERSION_KEY, WORKSPACE_STATE_VERSION);
+		context.getEventBus().emit(this, AiProjectEvents.WORKSPACE_STATE_CHANGED, payload);
 	}
 
 	/** The desktop asked to be closed, and has already confirmed it with the user. */

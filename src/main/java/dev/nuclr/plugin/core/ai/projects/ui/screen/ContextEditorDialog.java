@@ -64,7 +64,7 @@ public final class ContextEditorDialog {
 		tabs.addTab("Variables", variables);
 		tabs.setPreferredSize(new Dimension(560, 380));
 
-		var choice = JOptionPane.showConfirmDialog(parent, tabs, title,
+		var choice = Dialogs.showConfirmDialog(parent, tabs, title,
 				JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 		if (choice != JOptionPane.OK_OPTION) {
 			return null;
@@ -109,7 +109,7 @@ public final class ContextEditorDialog {
 		if (Dialogs.isHeadless()) {
 			return List.of();
 		}
-		var chooser = new JFileChooser();
+		var chooser = Dialogs.fileChooser();
 		chooser.setDialogTitle(title);
 		chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
 		chooser.setMultiSelectionEnabled(true);

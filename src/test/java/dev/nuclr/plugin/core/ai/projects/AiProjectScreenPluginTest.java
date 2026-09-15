@@ -441,4 +441,78 @@ class AiProjectScreenPluginTest {
 		onEdt(plugin::closeResource);
 		assertTrue(Files.isRegularFile(paths.desktopFile()));
 	}
+
+	@Test
+	void aSavedProjectComesBackAsTheRowThatOpensIt() throws Exception {
+
+		var entry = register("alpha", 0);
+		var data = new HashMap<String, Object>();
+		data.put(AiProjectEvents.WORKSPACE_STATE_KEY, AiProjectScreenPlugin.workspaceState(entry.id()));
+
+		// Commander restores off the event thread, before any desktop exists.
+		plugin.act(null, AiProjectEvents.WORKSPACE_RESTORE_STATE, List.of(), null, data, null);
+
+		assertEquals(AiProjectEvents.WORKSPACE_RESTORE_RESTORED, data.get(AiProjectEvents.WORKSPACE_RESTORE_RESULT_KEY));
+		var resource = (NuclrResource) data.get(AiProjectEvents.WORKSPACE_RESTORE_RESOURCE_KEY);
+		assertEquals(entry.id(), AiProjectResource.projectId(resource));
+		assertTrue(plugin.supports(resource));
+
+		// And the host opens it the ordinary way.
+		onEdt(() -> assertTrue(plugin.openResource(resource, new java.util.concurrent.atomic.AtomicBoolean())));
+		assertEquals("AI Project - alpha", plugin.getWindowTitle());
+		onEdt(plugin::closeResource);
+	}
+
+	@Test
+	void aProjectThatIsGoneOrStateThatMakesNoSenseIsSkippedNotFailed() {
+
+		var forgotten = new HashMap<String, Object>();
+		forgotten.put(AiProjectEvents.WORKSPACE_STATE_KEY, AiProjectScreenPlugin.workspaceState("forgotten"));
+		var nothing = new HashMap<String, Object>();
+		var nonsense = new HashMap<String, Object>();
+		nonsense.put(AiProjectEvents.WORKSPACE_STATE_KEY, "not a state");
+
+		for (var data : List.of(forgotten, nothing, nonsense)) {
+			plugin.act(null, AiProjectEvents.WORKSPACE_RESTORE_STATE, List.of(), null, data, null);
+			assertEquals(AiProjectEvents.WORKSPACE_RESTORE_SKIP, data.get(AiProjectEvents.WORKSPACE_RESTORE_RESULT_KEY));
+			assertNull(data.get(AiProjectEvents.WORKSPACE_RESTORE_RESOURCE_KEY));
+		}
+	}
+
+	@Test
+	void openingAProjectAnnouncesItSoSavingTheWorkspaceNeverHasToAsk() throws Exception {
+
+		var entry = register("alpha", 0);
+		context.bus().clear();
+
+		onEdt(() -> plugin.openResource(resourceFor(entry), new java.util.concurrent.atomic.AtomicBoolean()));
+
+		var announcements = context.bus().of(AiProjectEvents.WORKSPACE_STATE_CHANGED);
+		assertEquals(1, announcements.size());
+		var payload = announcements.getFirst().payload();
+		assertEquals(plugin.uuid(), payload.get(AiProjectEvents.WORKSPACE_PLUGIN_UUID_KEY));
+		assertEquals(AiProjectScreenPlugin.workspaceState(entry.id()), payload.get(AiProjectEvents.WORKSPACE_STATE_KEY));
+		assertEquals(AiProjectScreenPlugin.WORKSPACE_STATE_VERSION,
+				payload.get(AiProjectEvents.WORKSPACE_STATE_VERSION_KEY));
+
+		onEdt(plugin::closeResource);
+	}
+
+	@Test
+	void theSaveFallbackNamesTheOpenProjectAndNothingBeforeOneIsOpen() throws Exception {
+
+		var before = new HashMap<String, Object>();
+		plugin.act(null, AiProjectEvents.WORKSPACE_SAVE_STATE, List.of(), null, before, null);
+		assertFalse(before.containsKey(AiProjectEvents.WORKSPACE_STATE_KEY));
+
+		var entry = register("alpha", 0);
+		onEdt(() -> plugin.openResource(resourceFor(entry), new java.util.concurrent.atomic.AtomicBoolean()));
+
+		var data = new HashMap<String, Object>();
+		onEdt(() -> plugin.act(null, AiProjectEvents.WORKSPACE_SAVE_STATE, List.of(), null, data, null));
+
+		assertEquals(AiProjectScreenPlugin.workspaceState(entry.id()), data.get(AiProjectEvents.WORKSPACE_STATE_KEY));
+		assertEquals(AiProjectScreenPlugin.WORKSPACE_STATE_VERSION, data.get(AiProjectEvents.WORKSPACE_STATE_VERSION_KEY));
+		onEdt(plugin::closeResource);
+	}
 }

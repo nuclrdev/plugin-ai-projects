@@ -125,7 +125,7 @@ public final class ProjectDialogs {
 		form.add(commanderPrivate, constraints);
 
 		while (true) {
-			var choice = JOptionPane.showConfirmDialog(null, form, "New AI project",
+			var choice = Dialogs.showConfirmDialog(null, form, "New AI project",
 					JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 			if (choice != JOptionPane.OK_OPTION) {
 				return null;
@@ -203,7 +203,7 @@ public final class ProjectDialogs {
 		if (Dialogs.isHeadless()) {
 			return null;
 		}
-		var chooser = new JFileChooser();
+		var chooser = Dialogs.fileChooser();
 		chooser.setDialogTitle(title);
 		chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
 		if (initial != null && !initial.isBlank()) {
@@ -247,7 +247,7 @@ public final class ProjectDialogs {
 			return false;
 		}
 		var options = new Object[] { "Delete", "Cancel" };
-		return JOptionPane.showOptionDialog(null, message, title,
+		return Dialogs.showOptionDialog(null, message, title,
 				JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]) == 0;
 	}
 

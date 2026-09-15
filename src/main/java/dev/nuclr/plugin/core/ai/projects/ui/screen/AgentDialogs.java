@@ -19,6 +19,8 @@ import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
+
+import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
@@ -141,14 +143,14 @@ public final class AgentDialogs {
 		addRow(form, constraints, row, "More", buttons);
 
 		while (true) {
-			var choice = JOptionPane.showConfirmDialog(parent, form,
+			var choice = Dialogs.showConfirmDialog(parent, form,
 					existing == null ? "New agent" : "Edit agent",
 					JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 			if (choice != JOptionPane.OK_OPTION) {
 				return null;
 			}
 			if (nameField.getText().isBlank()) {
-				JOptionPane.showMessageDialog(parent, "Give the agent a name.", "New agent",
+				Dialogs.showMessageDialog(parent, "Give the agent a name.", "New agent",
 						JOptionPane.ERROR_MESSAGE);
 				continue;
 			}
@@ -190,7 +192,7 @@ public final class AgentDialogs {
 		panel.add(new JScrollPane(text), BorderLayout.CENTER);
 		panel.add(recentBar(parent, history, text), BorderLayout.SOUTH);
 
-		var choice = JOptionPane.showConfirmDialog(parent, panel, "Send instruction",
+		var choice = Dialogs.showConfirmDialog(parent, panel, "Send instruction",
 				JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 		if (choice != JOptionPane.OK_OPTION || text.getText().isBlank()) {
 			return null;
@@ -209,7 +211,7 @@ public final class AgentDialogs {
 	public static Broadcast broadcast(Component parent, List<Candidate> candidates, PromptHistory history) {
 
 		if (candidates.isEmpty()) {
-			JOptionPane.showMessageDialog(parent, "No running agent can receive an instruction.",
+			Dialogs.showMessageDialog(parent, "No running agent can receive an instruction.",
 					"Broadcast prompt", JOptionPane.INFORMATION_MESSAGE);
 			return null;
 		}
@@ -250,14 +252,14 @@ public final class AgentDialogs {
 		form.add(selection, BorderLayout.WEST);
 		form.add(right, BorderLayout.CENTER);
 
-		var choice = JOptionPane.showConfirmDialog(parent, form, "Broadcast prompt",
+		var choice = Dialogs.showConfirmDialog(parent, form, "Broadcast prompt",
 				JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
 		if (choice != JOptionPane.OK_OPTION || text.getText().isBlank()) {
 			return null;
 		}
 		var targets = list.getSelectedValuesList().stream().map(Candidate::agentId).toList();
 		if (targets.isEmpty()) {
-			JOptionPane.showMessageDialog(parent, "No agents were selected, so nothing was sent.",
+			Dialogs.showMessageDialog(parent, "No agents were selected, so nothing was sent.",
 					"Broadcast prompt", JOptionPane.INFORMATION_MESSAGE);
 			return null;
 		}

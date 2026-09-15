@@ -339,6 +339,12 @@ class AiProjectsFilePanelPluginTest {
 
 		assertTrue(data.get(AiProjectEvents.WORKSPACE_STATE_KEY) instanceof Map);
 		plugin.act(null, AiProjectEvents.WORKSPACE_RESTORE_STATE, List.of(), null, data, null);
+
+		// The panel restores to the list; Commander puts the cursor back on the row.
+		org.junit.jupiter.api.Assertions.assertEquals(AiProjectEvents.WORKSPACE_RESTORE_RESTORED,
+				data.get(AiProjectEvents.WORKSPACE_RESTORE_RESULT_KEY));
+		assertTrue(dev.nuclr.plugin.core.ai.projects.ui.panel.AiProjectResource.isRoot(
+				(dev.nuclr.platform.plugin.NuclrResource) data.get(AiProjectEvents.WORKSPACE_RESTORE_RESOURCE_KEY)));
 	}
 
 	@Test

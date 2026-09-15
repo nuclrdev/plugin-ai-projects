@@ -59,7 +59,7 @@ public final class Dialogs {
 		if (isHeadless()) {
 			return true;
 		}
-		return JOptionPane.showConfirmDialog(parent, message, title,
+		return showConfirmDialog(parent, message, title,
 				JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.YES_OPTION;
 	}
 
@@ -75,7 +75,7 @@ public final class Dialogs {
 		if (isHeadless()) {
 			return true;
 		}
-		return JOptionPane.showConfirmDialog(parent, message, title,
+		return showConfirmDialog(parent, message, title,
 				JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE) == JOptionPane.YES_OPTION;
 	}
 
@@ -94,7 +94,7 @@ public final class Dialogs {
 			return true;
 		}
 		var options = new Object[] { first, second };
-		return JOptionPane.showOptionDialog(parent, message, title, JOptionPane.DEFAULT_OPTION,
+		return showOptionDialog(parent, message, title, JOptionPane.DEFAULT_OPTION,
 				JOptionPane.WARNING_MESSAGE, null, options, options[0]) == 0;
 	}
 
@@ -109,7 +109,151 @@ public final class Dialogs {
 		if (isHeadless()) {
 			return;
 		}
-		JOptionPane.showMessageDialog(parent, message, title, JOptionPane.INFORMATION_MESSAGE);
+		showMessageDialog(parent, message, title, JOptionPane.INFORMATION_MESSAGE);
+	}
+
+	/**
+	 * Tell the user something in a popup with a single Close button, over whatever window is
+	 * active. Escape closes it as well: the binding is made here rather than trusted to the
+	 * look and feel, because every popup in Commander has to close on Escape.
+	 *
+	 * @param parent  component to centre on, or {@code null} for the active window
+	 * @param title   dialog title
+	 * @param message what to say; wrapped, so it may be a long sentence
+	 */
+	public static void notice(Component parent, String title, String message) {
+		if (isHeadless()) {
+			return;
+		}
+		var close = "Close";
+		var pane = new JOptionPane(wrapped(message), JOptionPane.INFORMATION_MESSAGE, JOptionPane.DEFAULT_OPTION,
+				null, new Object[] { close }, close);
+		var owner = parent != null ? parent
+				: java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
+		show(pane, owner, title);
+	}
+
+	// ------------------------------------------------------------------------
+	// JOptionPane, with Escape bound
+	//
+	// Every dialog in this plugin goes through these rather than JOptionPane's own
+	// static methods. They take the same arguments and return the same values, and
+	// behave the same without a display (they throw), but bind Escape on the dialog
+	// itself instead of trusting the look and feel to: Escape must close every popup.
+	// Escape answers exactly like the title-bar close button - CLOSED_OPTION, or null.
+	// ------------------------------------------------------------------------
+
+	/** {@link JOptionPane#showConfirmDialog(Component, Object, String, int, int)}, closable by Escape. */
+	public static int showConfirmDialog(Component parent, Object message, String title, int optionType,
+			int messageType) {
+		var pane = new JOptionPane(message, messageType, optionType);
+		show(pane, parent, title);
+		return chosenIndex(pane, null);
+	}
+
+	/** {@link JOptionPane#showMessageDialog(Component, Object, String, int)}, closable by Escape. */
+	public static void showMessageDialog(Component parent, Object message, String title, int messageType) {
+		show(new JOptionPane(message, messageType), parent, title);
+	}
+
+	/**
+	 * {@link JOptionPane#showOptionDialog(Component, Object, String, int, int, javax.swing.Icon, Object[], Object)},
+	 * closable by Escape.
+	 */
+	public static int showOptionDialog(Component parent, Object message, String title, int optionType,
+			int messageType, javax.swing.Icon icon, Object[] options, Object initialValue) {
+		var pane = new JOptionPane(message, messageType, optionType, icon, options, initialValue);
+		pane.setInitialValue(initialValue);
+		show(pane, parent, title);
+		return chosenIndex(pane, options);
+	}
+
+	/** {@link JOptionPane#showInputDialog(Component, Object, Object)}, closable by Escape. */
+	public static String showInputDialog(Component parent, Object message, String initial) {
+		var pane = new JOptionPane(message, JOptionPane.QUESTION_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
+		pane.setWantsInput(true);
+		pane.setInitialSelectionValue(initial);
+		show(pane, parent, javax.swing.UIManager.getString("OptionPane.inputDialogTitle"));
+		var value = pane.getInputValue();
+		return value == JOptionPane.UNINITIALIZED_VALUE || value == null ? null : String.valueOf(value);
+	}
+
+	/**
+	 * A file chooser whose dialog Escape cancels, wherever the focus is in it - not only
+	 * while the file list has it.
+	 *
+	 * @return a new chooser
+	 */
+	public static javax.swing.JFileChooser fileChooser() {
+		return new javax.swing.JFileChooser() {
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			protected javax.swing.JDialog createDialog(Component parent) {
+				var dialog = super.createDialog(parent);
+				closeOnEscape(dialog, this::cancelSelection);
+				return dialog;
+			}
+		};
+	}
+
+	/**
+	 * Make Escape close a dialog, wherever the focus is inside it.
+	 *
+	 * @param dialog the dialog
+	 */
+	public static void closeOnEscape(javax.swing.JDialog dialog) {
+		closeOnEscape(dialog, () -> dialog.setVisible(false));
+	}
+
+	/**
+	 * Make Escape run {@code onEscape} in a dialog, wherever the focus is inside it.
+	 *
+	 * @param dialog   the dialog
+	 * @param onEscape what Escape does; it must close the dialog
+	 */
+	public static void closeOnEscape(javax.swing.JDialog dialog, Runnable onEscape) {
+		var root = dialog.getRootPane();
+		root.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW)
+				.put(javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ESCAPE, 0), "nuclr.dialog.close");
+		root.getActionMap().put("nuclr.dialog.close", new javax.swing.AbstractAction() {
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public void actionPerformed(java.awt.event.ActionEvent event) {
+				onEscape.run();
+			}
+		});
+	}
+
+	private static void show(JOptionPane pane, Component parent, String title) {
+		var dialog = pane.createDialog(parent, title);
+		pane.selectInitialValue();
+		closeOnEscape(dialog);
+		dialog.setVisible(true);
+		dialog.dispose();
+	}
+
+	/** The answer as JOptionPane's static methods report it: an index, or CLOSED_OPTION. */
+	private static int chosenIndex(JOptionPane pane, Object[] options) {
+		var value = pane.getValue();
+		if (value == null || value == JOptionPane.UNINITIALIZED_VALUE) {
+			return JOptionPane.CLOSED_OPTION;
+		}
+		if (options == null) {
+			return value instanceof Integer index ? index : JOptionPane.CLOSED_OPTION;
+		}
+		for (var index = 0; index < options.length; index++) {
+			if (options[index].equals(value)) {
+				return index;
+			}
+		}
+		return JOptionPane.CLOSED_OPTION;
+	}
+
+	private static String wrapped(String message) {
+		var text = message == null ? "" : message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+		return "<html><body style='width: 360px'>" + text + "</body></html>";
 	}
 
 	/**
@@ -123,7 +267,7 @@ public final class Dialogs {
 		if (isHeadless()) {
 			return;
 		}
-		JOptionPane.showMessageDialog(parent, message, title, JOptionPane.ERROR_MESSAGE);
+		showMessageDialog(parent, message, title, JOptionPane.ERROR_MESSAGE);
 	}
 
 	/**
@@ -138,7 +282,7 @@ public final class Dialogs {
 		if (isHeadless()) {
 			return null;
 		}
-		var answer = JOptionPane.showInputDialog(parent, message, initial);
+		var answer = showInputDialog(parent, message, initial);
 		if (answer == null) {
 			return null;
 		}

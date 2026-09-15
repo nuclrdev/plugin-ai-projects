@@ -697,14 +697,17 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 		data.put(AiProjectEvents.WORKSPACE_STATE_KEY, ProjectCatalog.workspaceState(focusedProject));
 	}
 
+	/**
+	 * The panel always lists every project, so there is no location to restore: it answers
+	 * with the list root, and Commander puts the cursor back on the row it was on. Commander
+	 * may ask off the event thread.
+	 */
 	private void restoreWorkspaceState(Map<String, Object> data) {
-		if (data == null || !(data.get(AiProjectEvents.WORKSPACE_STATE_KEY) instanceof Map<?, ?> state)) {
+		if (data == null) {
 			return;
 		}
-		var projectId = state.get("openProjectId");
-		if (projectId != null) {
-			log.debug("Workspace remembered AI project {}", projectId);
-		}
+		data.put(AiProjectEvents.WORKSPACE_RESTORE_RESULT_KEY, AiProjectEvents.WORKSPACE_RESTORE_RESTORED);
+		data.put(AiProjectEvents.WORKSPACE_RESTORE_RESOURCE_KEY, AiProjectResource.root());
 	}
 
 	@Override
