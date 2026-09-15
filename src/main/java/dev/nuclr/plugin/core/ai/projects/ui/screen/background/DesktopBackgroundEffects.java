@@ -25,7 +25,7 @@ public final class DesktopBackgroundEffects {
 	/** A fresh set of effect instances for one desktop. */
 	public static List<DesktopBackgroundEffect> builtIn() {
 		return List.of(new NoneEffect(), new NeonNetworkEffect(), new MatrixRainEffect(),
-				new AetherworksEffect(), new StarfieldEffect());
+				new AetherworksEffect(), new HelixSequencerEffect(), new StarfieldEffect());
 	}
 
 	private static final class NoneEffect implements DesktopBackgroundEffect {
