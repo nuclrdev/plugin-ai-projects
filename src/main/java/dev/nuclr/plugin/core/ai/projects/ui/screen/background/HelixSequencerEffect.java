@@ -23,7 +23,9 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 	/** Radians of twist per base pair: about eleven pairs a turn, close to real B-DNA. */
 	private static final double TWIST = 0.58;
 	/** Backbone samples per base pair, so the strands curve instead of zig-zagging. */
-	private static final int SAMPLES = 4;
+	private static final int MAIN_SAMPLES = 4;
+	/** The distant, translucent strand does not need the foreground strand's curve density. */
+	private static final int GHOST_SAMPLES = 2;
 	/** Fine enough that a slowly fading glow never visibly steps. */
 	private static final int ALPHA_LEVELS = 128;
 
@@ -48,6 +50,8 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 	 */
 	private static final Color[][] TINTS = createTints();
 	private static final Color[] HUES = createHues();
+	private static final Color[] HUE_SOLIDS = createHueAlphas(44);
+	private static final Color[] HUE_CLEARS = createHueAlphas(0);
 	/** Round-capped strokes in quarter-pixel steps, for the same reason as the tints. */
 	private static final BasicStroke[] STROKES = createStrokes();
 	private static final BasicStroke HAIRLINE = new BasicStroke(1f);
@@ -58,8 +62,10 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 
 	private final CachedLayer backdropLayer = new CachedLayer(true, 1);
 	private final CachedLayer finishLayer = new CachedLayer(false, 1);
-	private final Helix ghost = new Helix(0.30, 0.34, 0.075, 0.30, -1.15, 0.55, 0.42, 0.035, 0.42, 2.1);
-	private final Helix main = new Helix(0.50, 0.53, 0.155, -0.16, 1.35, 1.65, 1.0, 0.055, 1.0, 0.0);
+	private final Helix ghost = new Helix(GHOST_SAMPLES,
+			0.30, 0.34, 0.075, 0.30, -1.15, 0.55, 0.42, 0.035, 0.42, 2.1);
+	private final Helix main = new Helix(MAIN_SAMPLES,
+			0.50, 0.53, 0.155, -0.16, 1.35, 1.65, 1.0, 0.055, 1.0, 0.0);
 	private final Line2D.Double line = new Line2D.Double();
 	private final Ellipse2D.Double oval = new Ellipse2D.Double();
 	private final Rectangle2D.Double rect = new Rectangle2D.Double();
@@ -157,9 +163,9 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 		var barHeight = (float) Math.max(10, height * 0.028);
 		for (var bar = 0; bar < 4; bar++) {
 			var y = (float) (height * 0.42 + Math.sin(time * 0.9 + bar * 0.62) * height * 0.26);
-			var color = HUES[Math.floorMod((int) (bar * 40 + time * 18), HUES.length)];
-			var solid = withAlpha(color, 44);
-			var clear = withAlpha(color, 0);
+			var hue = Math.floorMod((int) (bar * 40 + time * 18), HUES.length);
+			var solid = HUE_SOLIDS[hue];
+			var clear = HUE_CLEARS[hue];
 			g.setPaint(new GradientPaint(0, y - barHeight, clear, 0, y, solid));
 			rect.setRect(0, y - barHeight, width, barHeight);
 			g.fill(rect);
@@ -259,7 +265,7 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 	}
 
 	private void drawRungs(Graphics2D g, Helix h, boolean front) {
-		for (var k = 0; k < h.count; k += SAMPLES) {
+		for (var k = 0; k < h.count; k += h.samples) {
 			var base = h.base[k];
 			var z = h.z1[k];
 			// Half of each rung belongs to either strand, so it lives on that strand's side.
@@ -293,7 +299,7 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 	}
 
 	private void drawBeads(Graphics2D g, Helix h, boolean front) {
-		for (var k = 0; k < h.count; k += SAMPLES) {
+		for (var k = 0; k < h.count; k += h.samples) {
 			for (var strand = 0; strand < 2; strand++) {
 				var z = strand == 0 ? h.z1[k] : h.z2[k];
 				if (z >= 0 != front) continue;
@@ -358,6 +364,14 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 		return hues;
 	}
 
+	private static Color[] createHueAlphas(int alpha) {
+		var colors = new Color[HUES.length];
+		for (var index = 0; index < colors.length; index++) {
+			colors[index] = withAlpha(HUES[index], alpha);
+		}
+		return colors;
+	}
+
 	private static BasicStroke[] createStrokes() {
 		var strokes = new BasicStroke[161];
 		for (var index = 0; index < strokes.length; index++) {
@@ -393,6 +407,7 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 	 */
 	private static final class Helix {
 
+		private final int samples;
 		private final double centerX;
 		private final double centerY;
 		private final double radiusFraction;
@@ -425,8 +440,9 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 		private double[] flare = new double[0];
 		private int[] base = new int[0];
 
-		private Helix(double centerX, double centerY, double radiusFraction, double axisAngle, double spin,
+		private Helix(int samples, double centerX, double centerY, double radiusFraction, double axisAngle, double spin,
 				double flow, double opacity, double bend, double pairSpacing, double phase) {
+			this.samples = samples;
 			this.centerX = centerX;
 			this.centerY = centerY;
 			this.radiusFraction = radiusFraction;
@@ -459,18 +475,43 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 			var reach = (Math.hypot(width, height) * 0.5) / (spacing * 0.75) + 3;
 			var first = -(int) Math.ceil(reach);
 			var pairs = (int) Math.ceil(reach) * 2 + 1;
-			count = (pairs - 1) * SAMPLES + 1;
+			count = (pairs - 1) * samples + 1;
 			ensureCapacity(count);
 
 			var spinAngle = time * spin;
+			var firstSample = first - fraction;
+			var sampleDistance = spacing / samples;
+
+			// All three phases advance by a constant amount from one sample to the next.
+			// Rotate their sine/cosine pairs instead of evaluating six transcendental
+			// functions for every point on both helices.
+			var swayOneAngle = firstSample * spacing / width * TAU * 0.65 + time * 0.47 + phase;
+			var swayOneSin = Math.sin(swayOneAngle);
+			var swayOneCos = Math.cos(swayOneAngle);
+			var swayOneStep = sampleDistance / width * TAU * 0.65;
+			var swayOneStepSin = Math.sin(swayOneStep);
+			var swayOneStepCos = Math.cos(swayOneStep);
+
+			var swayTwoAngle = firstSample * spacing / width * TAU * 1.7 - time * 0.33;
+			var swayTwoSin = Math.sin(swayTwoAngle);
+			var swayTwoCos = Math.cos(swayTwoAngle);
+			var swayTwoStep = sampleDistance / width * TAU * 1.7;
+			var swayTwoStepSin = Math.sin(swayTwoStep);
+			var swayTwoStepCos = Math.cos(swayTwoStep);
+
+			var theta = (firstSample + scroll) * TWIST + spinAngle;
+			var thetaSin = Math.sin(theta);
+			var thetaCos = Math.cos(theta);
+			var thetaStep = TWIST / samples;
+			var thetaStepSin = Math.sin(thetaStep);
+			var thetaStepCos = Math.cos(thetaStep);
+
 			for (var k = 0; k < count; k++) {
-				var s = first + k / (double) SAMPLES - fraction;
+				var s = firstSample + k / (double) samples;
 				var u = s * spacing;
-				var sway = Math.sin(u / width * TAU * 0.65 + time * 0.47 + phase) * height * bend
-						+ Math.sin(u / width * TAU * 1.7 - time * 0.33) * height * bend * 0.3;
-				var theta = (s + scroll) * TWIST + spinAngle;
-				var lateral = Math.sin(theta);
-				var depth = Math.cos(theta);
+				var sway = swayOneSin * height * bend + swayTwoSin * height * bend * 0.3;
+				var lateral = thetaSin;
+				var depth = thetaCos;
 
 				var p = focal / (focal - depth * radius);
 				x1[k] = originX + (axisX * u + normalX * (sway + lateral * radius)) * p;
@@ -484,13 +525,23 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 				z2[k] = -depth;
 				p2[k] = q;
 
-				base[k] = k % SAMPLES == 0 ? baseAt(first + k / SAMPLES + whole) : 0;
+				base[k] = k % samples == 0 ? baseAt(first + k / samples + whole) : 0;
 				if (Double.isNaN(headX)) {
 					flare[k] = 0;
 				} else {
 					var distance = ((x1[k] + x2[k]) * 0.5 - headX) / (spacing * 1.4);
 					flare[k] = Math.exp(-distance * distance);
 				}
+
+				var nextSin = swayOneSin * swayOneStepCos + swayOneCos * swayOneStepSin;
+				swayOneCos = swayOneCos * swayOneStepCos - swayOneSin * swayOneStepSin;
+				swayOneSin = nextSin;
+				nextSin = swayTwoSin * swayTwoStepCos + swayTwoCos * swayTwoStepSin;
+				swayTwoCos = swayTwoCos * swayTwoStepCos - swayTwoSin * swayTwoStepSin;
+				swayTwoSin = nextSin;
+				nextSin = thetaSin * thetaStepCos + thetaCos * thetaStepSin;
+				thetaCos = thetaCos * thetaStepCos - thetaSin * thetaStepSin;
+				thetaSin = nextSin;
 			}
 		}
 
