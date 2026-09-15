@@ -355,9 +355,13 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 		var items = new ArrayList<NuclrMenuResource>();
 		items.add(new NuclrMenuResource(Glyphs.label(Glyphs.REFRESH, "Refresh"), "F2",
 				AiProjectEvents.REFRESH_PANEL));
+		// F3 and F4 both open the project, as Enter does: its desktop is the one place a
+		// project is both viewed and edited. The raw definition file sits beside them.
 		items.add(new NuclrMenuResource(Glyphs.label(Glyphs.AGENT, "Open"), "F3",
 				AiProjectEvents.OPEN_PROJECT));
-		items.add(new NuclrMenuResource(Glyphs.label(Glyphs.EDIT, "Definition"), "F4",
+		items.add(new NuclrMenuResource(Glyphs.label(Glyphs.AGENT, "Open"), "F4",
+				AiProjectEvents.OPEN_PROJECT));
+		items.add(new NuclrMenuResource(Glyphs.label(Glyphs.EDIT, "Definition"), "Shift+F4",
 				AiProjectEvents.EDIT_DEFINITION));
 		items.add(new NuclrMenuResource(Glyphs.label(Glyphs.RENAME, "Rename"), "F6",
 				AiProjectEvents.RENAME_PROJECT));

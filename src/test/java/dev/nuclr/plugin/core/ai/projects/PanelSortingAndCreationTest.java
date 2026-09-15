@@ -195,6 +195,17 @@ class PanelSortingAndCreationTest {
 	}
 
 	@Test
+	void f3AndF4BothOpenTheProjectAndTheDefinitionIsOnShiftF4() {
+		var byKey = new HashMap<String, String>();
+		for (NuclrMenuResource item : plugin.menuItems(null)) {
+			byKey.put(item.getFunctionKey(), item.getEventType());
+		}
+		assertEquals(AiProjectEvents.OPEN_PROJECT, byKey.get("F3"));
+		assertEquals(AiProjectEvents.OPEN_PROJECT, byKey.get("F4"));
+		assertEquals(AiProjectEvents.EDIT_DEFINITION, byKey.get("Shift+F4"));
+	}
+
+	@Test
 	void copyingInAFolderThatAlreadyHoldsAProjectAdoptsItRatherThanAskingAnything()
 			throws IOException {
 
