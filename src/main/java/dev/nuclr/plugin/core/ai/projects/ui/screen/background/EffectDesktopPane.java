@@ -3,7 +3,10 @@ package dev.nuclr.plugin.core.ai.projects.ui.screen.background;
 import java.awt.Color;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.KeyboardFocusManager;
+import java.awt.Window;
 import java.awt.event.HierarchyEvent;
+import java.beans.PropertyChangeListener;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +29,8 @@ public final class EffectDesktopPane extends JDesktopPane {
 	private String effectId;
 	private long startedAt = System.nanoTime();
 	private boolean interacting;
+	/** Re-evaluates the animation whenever the application's active window changes. */
+	private final PropertyChangeListener activeWindowListener = event -> updateAnimationState();
 
 	/** Build a desktop pane with the requested effect, falling back safely when needed. */
 	public EffectDesktopPane(List<DesktopBackgroundEffect> availableEffects, String initialEffectId) {
@@ -93,12 +98,17 @@ public final class EffectDesktopPane extends JDesktopPane {
 	@Override
 	public void addNotify() {
 		super.addNotify();
+		var focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager();
+		focusManager.removePropertyChangeListener("activeWindow", activeWindowListener);
+		focusManager.addPropertyChangeListener("activeWindow", activeWindowListener);
 		updateAnimationState();
 	}
 
 	@Override
 	public void removeNotify() {
 		animationTimer.stop();
+		KeyboardFocusManager.getCurrentKeyboardFocusManager()
+				.removePropertyChangeListener("activeWindow", activeWindowListener);
 		super.removeNotify();
 	}
 
@@ -125,11 +135,30 @@ public final class EffectDesktopPane extends JDesktopPane {
 	}
 
 	private void updateAnimationState() {
-		if (!DesktopBackgroundEffects.NONE.equals(effectId) && isShowing() && !interacting) {
+		if (!DesktopBackgroundEffects.NONE.equals(effectId) && isShowing() && !interacting && isWorkspaceActive()) {
 			animationTimer.start();
 		} else {
 			animationTimer.stop();
 		}
+	}
+
+	/**
+	 * Whether the window holding this desktop is the one the user is working in.
+	 *
+	 * <p>A desktop in a background or minimised window still reports itself showing,
+	 * so without this the effect kept burning CPU for nobody. A dialog opened from the
+	 * workspace counts as the workspace being active, so the backdrop doesn't freeze
+	 * behind every popup.
+	 */
+	private boolean isWorkspaceActive() {
+		var owner = javax.swing.SwingUtilities.getWindowAncestor(this);
+		var active = KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
+		for (Window window = active; window != null; window = window.getOwner()) {
+			if (window == owner) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Whether the background is currently animating. */
@@ -188,6 +217,8 @@ public final class EffectDesktopPane extends JDesktopPane {
 	/** Stop animation when the owning project closes. */
 	public void disposeEffect() {
 		animationTimer.stop();
+		KeyboardFocusManager.getCurrentKeyboardFocusManager()
+				.removePropertyChangeListener("activeWindow", activeWindowListener);
 		if (activeEffect != null) {
 			activeEffect.reset();
 		}
