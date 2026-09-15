@@ -79,17 +79,17 @@ final class CachedLayer {
 			painter.paint(target, width, height);
 			return;
 		}
-		var g = (Graphics2D) target.create();
-		try {
-			if (divisor == 1) {
-				g.drawImage(image, 0, 0, null);
-			} else {
+		if (divisor == 1) {
+			target.drawImage(image, 0, 0, null);
+		} else {
+			var g = (Graphics2D) target.create();
+			try {
 				g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
 						RenderingHints.VALUE_INTERPOLATION_BILINEAR);
 				g.drawImage(image, 0, 0, width, height, null);
+			} finally {
+				g.dispose();
 			}
-		} finally {
-			g.dispose();
 		}
 	}
 
