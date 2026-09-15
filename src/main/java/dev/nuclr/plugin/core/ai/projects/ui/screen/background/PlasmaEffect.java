@@ -56,7 +56,11 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 	private int outputHeight;
 	/** Per output column: the source column to its left and the 8-bit blend towards the next. */
 	private int[] sourceColumn;
+	private int[] nextSourceColumn;
 	private int[] columnBlend;
+	private int[] sourceRow;
+	private int[] nextSourceRow;
+	private int[] rowBlend;
 	private int frameWidth;
 	private int frameHeight;
 
@@ -122,11 +126,22 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 		output = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
 		outputPixels = ((DataBufferInt) output.getRaster().getDataBuffer()).getData();
 		sourceColumn = new int[width];
+		nextSourceColumn = new int[width];
 		columnBlend = new int[width];
 		for (var x = 0; x < width; x++) {
 			var position = sourcePosition(x, width, w);
 			sourceColumn[x] = (int) position;
+			nextSourceColumn[x] = Math.min((int) position + 1, w - 1);
 			columnBlend[x] = (int) ((position - (int) position) * 256);
+		}
+		sourceRow = new int[height];
+		nextSourceRow = new int[height];
+		rowBlend = new int[height];
+		for (var y = 0; y < height; y++) {
+			var position = sourcePosition(y, height, h);
+			sourceRow[y] = (int) position * w;
+			nextSourceRow[y] = Math.min((int) position + 1, h - 1) * w;
+			rowBlend[y] = (int) ((position - (int) position) * 256);
 		}
 	}
 
@@ -225,27 +240,21 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 	 * column weights repeat on every row, and that there are cores to spare.
 	 */
 	private void upscale() {
-		var sourceWidth = frameWidth;
-		var sourceHeight = frameHeight;
 		var source = pixels;
 		var target = outputPixels;
 		var width = outputWidth;
-		var lastColumn = sourceWidth - 1;
-		var lastRow = sourceHeight - 1;
 		java.util.stream.IntStream.range(0, outputHeight).parallel().forEach(y -> {
-			var position = sourcePosition(y, outputHeight, sourceHeight);
-			var row = (int) position;
-			var rowBlend = (int) ((position - row) * 256);
-			var top = row * sourceWidth;
-			var bottom = Math.min(row + 1, lastRow) * sourceWidth;
+			var top = sourceRow[y];
+			var bottom = nextSourceRow[y];
+			var verticalBlend = rowBlend[y];
 			var offset = y * width;
 			for (var x = 0; x < width; x++) {
 				var column = sourceColumn[x];
-				var next = Math.min(column + 1, lastColumn);
+				var next = nextSourceColumn[x];
 				var blend = columnBlend[x];
 				var upper = mix(source[top + column], source[top + next], blend);
 				var lower = mix(source[bottom + column], source[bottom + next], blend);
-				target[offset + x] = mix(upper, lower, rowBlend);
+				target[offset + x] = mix(upper, lower, verticalBlend);
 			}
 		});
 	}
@@ -259,10 +268,9 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 	/** Blend two packed RGB colours, {@code amount} out of 256 towards the second. */
 	private static int mix(int a, int b, int amount) {
 		var keep = 256 - amount;
-		var r = (((a >> 16) & 0xFF) * keep + ((b >> 16) & 0xFF) * amount) >> 8;
-		var g = (((a >> 8) & 0xFF) * keep + ((b >> 8) & 0xFF) * amount) >> 8;
-		var bl = ((a & 0xFF) * keep + (b & 0xFF) * amount) >> 8;
-		return r << 16 | g << 8 | bl;
+		var redBlue = (((a & 0xFF00FF) * keep + (b & 0xFF00FF) * amount) >>> 8) & 0xFF00FF;
+		var green = (((a & 0x00FF00) * keep + (b & 0x00FF00) * amount) >>> 8) & 0x00FF00;
+		return redBlue | green;
 	}
 
 	/** Sine lookup with linear interpolation between entries, for a phase in table steps. */
