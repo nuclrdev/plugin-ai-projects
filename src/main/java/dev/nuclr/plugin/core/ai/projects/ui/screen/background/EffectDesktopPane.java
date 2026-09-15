@@ -91,6 +91,7 @@ public final class EffectDesktopPane extends JDesktopPane {
 		effectId = selected.id();
 		startedAt = System.nanoTime();
 		selected.reset();
+		animationTimer.setDelay(Math.max(1, selected.frameDelayMillis()));
 		backgroundCanvas.repaint();
 		updateAnimationState();
 	}

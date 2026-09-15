@@ -23,6 +23,14 @@ public interface DesktopBackgroundEffect {
 	/** Paint one animation frame. Called on the Swing event dispatch thread. */
 	void paint(Graphics2D graphics, int width, int height, long elapsedMillis);
 
+	/**
+	 * How long to wait between frames. Every frame also repaints the agent windows
+	 * above the desktop, so slow-moving effects should ask for fewer of them.
+	 */
+	default int frameDelayMillis() {
+		return 40;
+	}
+
 	/** Reset transient animation state when the effect becomes active. */
 	default void reset() {
 		// Stateless effects have nothing to reset.
