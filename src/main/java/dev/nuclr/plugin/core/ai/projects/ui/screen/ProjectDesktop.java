@@ -60,6 +60,7 @@ import dev.nuclr.plugin.core.ai.projects.store.PathContainment;
 import dev.nuclr.plugin.core.ai.projects.ui.AiProjectEvents;
 import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
+import dev.nuclr.plugin.core.ai.projects.ui.RibbonButtons;
 import dev.nuclr.plugin.core.ai.projects.ui.screen.background.DesktopBackgroundEffect;
 import dev.nuclr.plugin.core.ai.projects.ui.screen.background.DesktopBackgroundEffects;
 import dev.nuclr.plugin.core.ai.projects.ui.screen.background.EffectDesktopPane;
@@ -181,30 +182,30 @@ public final class ProjectDesktop extends JPanel
 		bar.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
 
 		bar.add(newAgentButton());
-		bar.add(button(Glyphs.START, "Start all",
+		bar.add(ribbonButton(Glyphs.START, "Start all",
 				"Start every agent that is not running", this::startAll));
-		bar.add(button(Glyphs.STOP, "Stop all",
+		bar.add(ribbonButton(Glyphs.STOP, "Stop all",
 				"Terminate every running agent", this::stopAll));
 		bar.add(windowsButton());
 		bar.add(backgroundButton());
 		bar.add(terminalButton());
-		bar.add(button(Glyphs.TILE, "Tile",
+		bar.add(ribbonButton(Glyphs.TILE, "Tile",
 				"Arrange the windows in a grid (Ctrl+Shift+G)", this::tile));
-		bar.add(button(Glyphs.CASCADE, "Cascade",
+		bar.add(ribbonButton(Glyphs.CASCADE, "Cascade",
 				"Stack the windows from the top left (Ctrl+Shift+D)", this::cascade));
-		bar.add(button(Glyphs.SAVE, "Save layout",
+		bar.add(ribbonButton(Glyphs.SAVE, "Save layout",
 				"Write the current window layout now (Ctrl+Shift+S)", this::saveLayout));
-		bar.add(button(Glyphs.RESET, "Reset layout",
+		bar.add(ribbonButton(Glyphs.RESET, "Reset layout",
 				"Discard the saved layout and cascade afresh", this::resetLayout));
-		bar.add(button(Glyphs.BROADCAST, "Broadcast...",
+		bar.add(ribbonButton(Glyphs.BROADCAST, "Broadcast...",
 				"Send one instruction to several agents (Ctrl+Shift+B)", this::broadcast));
-		bar.add(button(Glyphs.CONTEXT, "Context...",
+		bar.add(ribbonButton(Glyphs.CONTEXT, "Context...",
 				"Show and edit the project's shared context", () -> showResolvedContext(null)));
-		bar.add(button(Glyphs.HARNESS, "Harness...",
+		bar.add(ribbonButton(Glyphs.HARNESS, "Harness...",
 				"Show and edit the project harness", () -> showHarness(null)));
-		bar.add(button(Glyphs.SIDEBAR, "Sidebar",
+		bar.add(ribbonButton(Glyphs.SIDEBAR, "Sidebar",
 				"Show or hide the project sidebar (Ctrl+Shift+K)", this::toggleSidebar));
-		bar.add(button(Glyphs.CLOSE, "Close project",
+		bar.add(ribbonButton(Glyphs.CLOSE, "Close project",
 				"Close this project and stop its agents", this::requestClose));
 		return bar;
 	}
@@ -212,6 +213,12 @@ public final class ProjectDesktop extends JPanel
 	private static JButton button(String glyph, String label, String tip, Runnable action) {
 		var button = Glyphs.decorate(new JButton(), glyph, label);
 		button.setToolTipText(tip);
+		button.addActionListener(event -> action.run());
+		return button;
+	}
+
+	private static JButton ribbonButton(String glyph, String label, String tip, Runnable action) {
+		var button = RibbonButtons.large(glyph, label, tip);
 		button.addActionListener(event -> action.run());
 		return button;
 	}
@@ -226,8 +233,8 @@ public final class ProjectDesktop extends JPanel
 	 */
 	private JButton newAgentButton() {
 
-		var button = Glyphs.decorate(new JButton(), Glyphs.NEW, "New agent");
-		button.setToolTipText("Add an agent to this project (Ctrl+Shift+N)");
+		var button = RibbonButtons.large(Glyphs.NEW, "New agent",
+				"Add an agent to this project (Ctrl+Shift+N)");
 		button.addActionListener(event -> {
 			var menu = new JPopupMenu();
 			for (var template : store.project().getTemplates()) {
@@ -260,8 +267,8 @@ public final class ProjectDesktop extends JPanel
 	 * but wanting a terminal should not cost a form.
 	 */
 	private JButton terminalButton() {
-		var button = Glyphs.decorate(new JButton(), Glyphs.TERMINAL, "Terminal");
-		button.setToolTipText("Open a plain shell in " + store.paths().root() + " (Ctrl+O)");
+		var button = RibbonButtons.large(Glyphs.TERMINAL, "Terminal",
+				"Open a plain shell in " + store.paths().root() + " (Ctrl+O)");
 		button.addActionListener(event -> newTerminal(store.paths().root()));
 		return button;
 	}
@@ -363,8 +370,8 @@ public final class ProjectDesktop extends JPanel
 	 */
 	private JButton windowsButton() {
 
-		var button = Glyphs.decorate(new JButton(), Glyphs.WINDOWS, "Windows");
-		button.setToolTipText("Every agent window, minimised or not");
+		var button = RibbonButtons.large(Glyphs.WINDOWS, "Windows",
+				"Every agent window, minimised or not");
 		button.addActionListener(event -> {
 			var menu = new JPopupMenu();
 			if (frames.isEmpty()) {
@@ -391,8 +398,8 @@ public final class ProjectDesktop extends JPanel
 
 	/** Choose and persist the animated desktop background. */
 	private JButton backgroundButton() {
-		var button = Glyphs.decorate(new JButton(), Glyphs.BACKGROUND, "Background");
-		button.setToolTipText("Choose the project desktop background effect");
+		var button = RibbonButtons.large(Glyphs.BACKGROUND, "Background",
+				"Choose the project desktop background effect");
 		button.addActionListener(event -> {
 			var menu = new JPopupMenu();
 			var group = new ButtonGroup();
