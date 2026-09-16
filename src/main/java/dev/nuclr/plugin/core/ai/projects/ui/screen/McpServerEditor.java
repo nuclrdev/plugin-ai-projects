@@ -15,6 +15,7 @@ import javax.swing.JToolBar;
 import javax.swing.table.AbstractTableModel;
 
 import dev.nuclr.plugin.core.ai.projects.model.McpServerSpec;
+import dev.nuclr.plugin.core.ai.projects.ui.TextContextMenu;
 
 /**
  * The MCP server table: name, command, arguments and an enabled box.
@@ -44,6 +45,9 @@ public final class McpServerEditor extends JPanel {
 		table.setRowHeight(Math.max(table.getRowHeight(), 20));
 		table.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
 		table.getColumnModel().getColumn(3).setMaxWidth(60);
+		var cellField = new javax.swing.JTextField();
+		TextContextMenu.install(cellField);
+		table.setDefaultEditor(String.class, new javax.swing.DefaultCellEditor(cellField));
 
 		var bar = new JToolBar();
 		bar.setFloatable(false);

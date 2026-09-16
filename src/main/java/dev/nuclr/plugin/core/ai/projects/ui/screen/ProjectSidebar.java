@@ -38,6 +38,7 @@ import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
+import dev.nuclr.plugin.core.ai.projects.ui.TextContextMenu;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -55,14 +56,10 @@ public final class ProjectSidebar extends JPanel {
 
 	/** Section key for the agent list. */
 	public static final String SECTION_AGENTS = "agents";
-	/** Section key for the shared context. */
-	public static final String SECTION_CONTEXT = "context";
 	/** Section key for instruction documents. */
 	public static final String SECTION_INSTRUCTIONS = "instructions";
 	/** Section key for skills. */
 	public static final String SECTION_SKILLS = "skills";
-	/** Section key for the harness summary. */
-	public static final String SECTION_HARNESS = "harness";
 	/** Section key for roots and repositories. */
 	public static final String SECTION_FILES = "files";
 
@@ -98,18 +95,6 @@ public final class ProjectSidebar extends JPanel {
 
 		/** Open a plain shell rooted at a folder; the project root when {@code null}. */
 		void newTerminal(Path folder);
-
-		/** Show what an agent receives; {@code null} for the project's shared context. */
-		void showResolvedContext(String agentId);
-
-		/** Show a resolved harness; {@code null} for the project harness. */
-		void showHarness(String agentId);
-
-		/** Edit a harness; {@code null} for the project harness. */
-		void editHarness(String agentId);
-
-		/** Edit a context; {@code null} for the project's shared context. */
-		void editContext(String agentId);
 
 		/** Open a document in the desktop. */
 		void openDocument(Path file);
@@ -168,11 +153,9 @@ public final class ProjectSidebar extends JPanel {
 				: expanded;
 
 		addSection(SECTION_AGENTS, Glyphs.sidebar(Glyphs.AGENT, "Agents"), open.contains(SECTION_AGENTS));
-		addSection(SECTION_CONTEXT, Glyphs.sidebar(Glyphs.CONTEXT, "Context"), open.contains(SECTION_CONTEXT));
 		addSection(SECTION_INSTRUCTIONS, Glyphs.sidebar(Glyphs.INSTRUCTION, "Instructions"),
 				open.contains(SECTION_INSTRUCTIONS));
 		addSection(SECTION_SKILLS, Glyphs.sidebar(Glyphs.SKILL, "Skills"), open.contains(SECTION_SKILLS));
-		addSection(SECTION_HARNESS, Glyphs.sidebar(Glyphs.HARNESS, "Harness"), open.contains(SECTION_HARNESS));
 		addSection(SECTION_FILES, Glyphs.sidebar(Glyphs.ROOT, "Files / Repositories"),
 				open.contains(SECTION_FILES));
 
@@ -198,6 +181,7 @@ public final class ProjectSidebar extends JPanel {
 
 		filter.setToolTipText("Show only entries matching this text");
 		filter.putClientProperty("JTextField.placeholderText", "Filter");
+		TextContextMenu.install(filter);
 		filter.getDocument().addDocumentListener(new DocumentListener() {
 
 			@Override
@@ -296,7 +280,6 @@ public final class ProjectSidebar extends JPanel {
 	 */
 	public void refresh(Map<String, AgentStatus> statuses, Set<String> attention) {
 		refreshAgents(statuses, attention);
-		refreshContext();
 		var linked = linkedDocuments();
 		refreshDocuments(SECTION_INSTRUCTIONS, store.paths().instructionsDirectory(),
 				Glyphs.sidebar(Glyphs.NEW, "New instruction..."), Glyphs.INSTRUCTION,
@@ -304,7 +287,6 @@ public final class ProjectSidebar extends JPanel {
 		refreshDocuments(SECTION_SKILLS, store.paths().skillsDirectory(),
 				Glyphs.sidebar(Glyphs.NEW, "New skill..."), Glyphs.SKILL,
 				ContextItem.Kind.SKILL, linked);
-		refreshHarness();
 		refreshFiles();
 		applyFilter();
 		revalidate();
@@ -353,25 +335,6 @@ public final class ProjectSidebar extends JPanel {
 		setBadge(SECTION_AGENTS, String.valueOf(store.project().getAgents().size()));
 	}
 
-	private void refreshContext() {
-
-		var resolved = ContextResolver.resolve(store.project(), null, store.paths());
-		var entries = new ArrayList<SidebarEntry>();
-		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.CONTEXT, "Resolved context..."),
-				() -> actions.showResolvedContext(null)));
-		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.EDIT, "Edit project context..."),
-				() -> actions.editContext(null)));
-		for (var item : resolved.items()) {
-			entries.add(new SidebarEntry(Glyphs.sidebar(Glyphs.forContextKind(item.kind()), item.label()),
-					item.kind().groupLabel() + " - " + item.source().label()
-							+ (item.linked() ? " - linked" : "")
-							+ (item.path() != null && !item.available() ? " - missing" : ""),
-					null, item.path(), null, false, null));
-		}
-		setEntries(SECTION_CONTEXT, entries);
-		setBadge(SECTION_CONTEXT, String.valueOf(resolved.size()));
-	}
-
 	/**
 	 * Every linked document the project or any of its agents references, by path.
 	 *
@@ -418,31 +381,6 @@ public final class ProjectSidebar extends JPanel {
 				() -> actions.linkDocuments(kind)));
 		setEntries(section, entries);
 		setBadge(section, String.valueOf(count));
-	}
-
-	private void refreshHarness() {
-
-		var harness = HarnessResolver.resolveProject(store.project());
-		var entries = new ArrayList<SidebarEntry>();
-		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.HARNESS, "Resolved harness..."),
-				() -> actions.showHarness(null)));
-		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.EDIT, "Edit project harness..."),
-				() -> actions.editHarness(null)));
-		entries.add(SidebarEntry.text(Glyphs.sidebar(Glyphs.START, "Executable"),
-				harness.executable() == null ? "(not set)" : harness.executable()));
-		entries.add(SidebarEntry.text(Glyphs.sidebar(Glyphs.TOOL, "Provider"),
-				harness.provider() == null ? "(not set)" : harness.provider()));
-		entries.add(SidebarEntry.text(Glyphs.sidebar(Glyphs.SKILL, "Model"),
-				harness.model() == null ? "(not set)" : harness.model()));
-		entries.add(SidebarEntry.text(Glyphs.sidebar(Glyphs.ENVIRONMENT, "Environment"),
-				harness.env().size() + " variables"));
-		entries.add(SidebarEntry.text(Glyphs.sidebar(Glyphs.PERMISSION, "Permissions"),
-				harness.permissions().size() + " granted"));
-		entries.add(SidebarEntry.text(Glyphs.sidebar(Glyphs.TOOL, "MCP / tools"),
-				harness.mcpServers().size() + " servers"));
-		entries.add(SidebarEntry.file(Glyphs.sidebar(Glyphs.INSTRUCTION, "project.json"), "definition",
-				store.paths().projectFile()));
-		setEntries(SECTION_HARNESS, entries);
 	}
 
 	private void refreshFiles() {
@@ -549,9 +487,6 @@ public final class ProjectSidebar extends JPanel {
 			}
 			return;
 		}
-		if (SECTION_HARNESS.equals(section)) {
-			actions.showHarness(null);
-		}
 	}
 
 	private JPopupMenu contextMenu(String section, SidebarEntry entry) {
@@ -571,9 +506,6 @@ public final class ProjectSidebar extends JPanel {
 			menu.add(item(Glyphs.DUPLICATE, "Duplicate", () -> actions.duplicate(agentId)));
 			menu.add(item(Glyphs.TEMPLATE, "Save as template...",
 					() -> actions.saveAsTemplate(agentId)));
-			menu.add(item(Glyphs.CONTEXT, "Resolved context...",
-					() -> actions.showResolvedContext(agentId)));
-			menu.add(item(Glyphs.HARNESS, "Harness...", () -> actions.showHarness(agentId)));
 			menu.add(item(Glyphs.EDIT, "Edit...", () -> actions.editAgent(agentId)));
 			menu.addSeparator();
 			menu.add(item(Glyphs.DELETE, "Delete agent...",
@@ -616,16 +548,6 @@ public final class ProjectSidebar extends JPanel {
 
 		if (SECTION_AGENTS.equals(section)) {
 			menu.add(item(Glyphs.NEW, "New agent...", () -> actions.newAgent(null)));
-			return menu;
-		}
-		if (SECTION_HARNESS.equals(section)) {
-			menu.add(item(Glyphs.EDIT, "Edit project harness...",
-					() -> actions.editHarness(null)));
-			return menu;
-		}
-		if (SECTION_CONTEXT.equals(section)) {
-			menu.add(item(Glyphs.EDIT, "Edit project context...",
-					() -> actions.editContext(null)));
 			return menu;
 		}
 		return null;

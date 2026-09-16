@@ -136,6 +136,22 @@ public final class Glyphs {
 	public static final String RULE = pick("📏", "※");
 	/** The project configuration. */
 	public static final String CONFIGURE = pick("🛠️", "⚒");
+	/** A shared profile. */
+	public static final String PROFILE = pick("🧩", "❖");
+	/** Content written in place. */
+	public static final String TEXT = pick("📝", "✍");
+	/** A link to a file or folder. */
+	public static final String LINK = pick("🔗", "↗");
+	/** A git repository. */
+	public static final String GIT = pick("🔀", "⎇");
+	/** Bring something in from a file. */
+	public static final String IMPORT = pick("📥", "⇩");
+	/** Write something out to a file. */
+	public static final String EXPORT = pick("📤", "⇧");
+	/** Move up. */
+	public static final String UP = pick("⬆️", "↑");
+	/** Move down. */
+	public static final String DOWN = pick("⬇️", "↓");
 
 	// Commands.
 	/** Create something. */

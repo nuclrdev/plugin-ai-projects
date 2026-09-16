@@ -29,7 +29,6 @@ import javax.swing.JTextField;
 
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
-import dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AgentTemplate;
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
@@ -58,11 +57,10 @@ public final class AgentDialogs {
 	 * @param registry  the available window kinds
 	 * @param existing  the agent to edit, or {@code null} to define a new one
 	 * @param template  the template to preselect for a new agent, or {@code null}
-	 * @param inherited what this agent would inherit with no overrides at all
 	 * @return the edited copy, or {@code null} when cancelled
 	 */
 	public static AgentDefinition editAgent(Component parent, AiProject project, AgentWindowRegistry registry,
-			AgentDefinition existing, String template, EffectiveHarness inherited) {
+			AgentDefinition existing, String template) {
 
 		var draft = copyOf(existing);
 
@@ -86,41 +84,13 @@ public final class AgentDialogs {
 				: ""));
 		selectKind(kindChoice, providers, existing != null ? existing.getWindowKind() : null, registry.defaultKind());
 
-		// The two overrides people reach for constantly stay on this form; everything
-		// else lives behind the harness editor, which knows about inheritance.
+		// The two overrides people reach for constantly stay on this form.
 		var executable = new JTextField(
 				draft.getHarness().getExecutable() == null ? "" : draft.getHarness().getExecutable(), 26);
 		executable.setToolTipText("Leave blank to inherit the project harness.");
 		var model = new JTextField(
 				draft.getHarness().getModel() == null ? "" : draft.getHarness().getModel(), 26);
 		model.setToolTipText("Leave blank to inherit the project harness.");
-
-		var harnessOverrides = new HarnessSpec[] { draft.getHarness() };
-		var harnessButton = new JButton("Harness overrides...");
-		harnessButton.setToolTipText("Environment, permissions, MCP servers, allowed roots, startup arguments");
-		harnessButton.addActionListener(event -> {
-			// Whatever is on the form wins over what the editor was last given, so a
-			// value typed here is not silently discarded by opening the editor.
-			harnessOverrides[0].setExecutable(blankToNull(executable.getText()));
-			harnessOverrides[0].setModel(blankToNull(model.getText()));
-			var edited = HarnessEditorDialog.edit(parent, "Agent harness overrides",
-					harnessOverrides[0], inherited);
-			if (edited != null) {
-				harnessOverrides[0] = edited;
-				executable.setText(edited.getExecutable() == null ? "" : edited.getExecutable());
-				model.setText(edited.getModel() == null ? "" : edited.getModel());
-			}
-		});
-
-		var contextOverrides = new ContextSpec[] { draft.getContext() };
-		var contextButton = new JButton("Agent context...");
-		contextButton.setToolTipText("Instructions, skills and files this agent adds to the project's");
-		contextButton.addActionListener(event -> {
-			var edited = ContextEditorDialog.edit(parent, "Agent context", contextOverrides[0]);
-			if (edited != null) {
-				contextOverrides[0] = edited;
-			}
-		});
 
 		var form = new JPanel(new GridBagLayout());
 		form.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
@@ -129,18 +99,13 @@ public final class AgentDialogs {
 		constraints.anchor = GridBagConstraints.LINE_START;
 		constraints.fill = GridBagConstraints.HORIZONTAL;
 
-		var buttons = new JPanel(new BorderLayout(6, 0));
-		buttons.add(harnessButton, BorderLayout.WEST);
-		buttons.add(contextButton, BorderLayout.CENTER);
-
 		var row = 0;
 		addRow(form, constraints, row++, "Name", nameField);
 		addRow(form, constraints, row++, "Template", templateChoice);
 		addRow(form, constraints, row++, "Window kind", kindChoice);
 		addRow(form, constraints, row++, "Working directory", workingDirectory);
 		addRow(form, constraints, row++, "Executable override", executable);
-		addRow(form, constraints, row++, "Model override", model);
-		addRow(form, constraints, row, "More", buttons);
+		addRow(form, constraints, row, "Model override", model);
 
 		while (true) {
 			var choice = Dialogs.showConfirmDialog(parent, form,
@@ -161,10 +126,8 @@ public final class AgentDialogs {
 			draft.setTemplateId(chosenTemplate == null ? null : chosenTemplate.getId());
 			draft.setWindowKind(chosenKind == null ? registry.defaultKind() : chosenKind.kind());
 			draft.setWorkingDirectory(blankToNull(workingDirectory.getText()));
-			draft.setHarness(harnessOverrides[0]);
 			draft.getHarness().setExecutable(blankToNull(executable.getText()));
 			draft.getHarness().setModel(blankToNull(model.getText()));
-			draft.setContext(contextOverrides[0]);
 			return draft;
 		}
 	}

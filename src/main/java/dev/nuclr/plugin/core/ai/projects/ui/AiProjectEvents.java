@@ -77,6 +77,9 @@ public final class AiProjectEvents {
 	/** {@link #WORKSPACE_STATE_CHANGED} payload: the announcing instance's uuid. */
 	public static final String WORKSPACE_PLUGIN_UUID_KEY = "plugin.uuid";
 
+	/** Panel action: open the profile manager. */
+	public static final String MANAGE_PROFILES = "ai.projects.profiles";
+
 	/** Panel action: create a project. */
 	public static final String NEW_PROJECT = "ai.projects.new";
 

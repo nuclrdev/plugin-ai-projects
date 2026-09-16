@@ -8,7 +8,6 @@ import java.beans.PropertyVetoException;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JInternalFrame;
-import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -17,7 +16,6 @@ import javax.swing.event.InternalFrameEvent;
 
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
-import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.runtime.WindowState;
 import lombok.extern.slf4j.Slf4j;
@@ -68,12 +66,6 @@ public final class AgentFrame extends JInternalFrame {
 
 		/** Open the agent's working directory in the system file manager. */
 		void openWorkingDirectory(String agentId);
-
-		/** Show what this agent receives, after inheritance. */
-		void showResolvedContext(String agentId);
-
-		/** Show this agent's resolved harness. */
-		void showHarness(String agentId);
 
 		/** Change the agent's name, kind, working directory and overrides. */
 		void editAgent(String agentId);
@@ -194,9 +186,6 @@ public final class AgentFrame extends JInternalFrame {
 		bar.add(send);
 		bar.add(button(Glyphs.FOLDER, "Folder", "Open the agent's working directory",
 				() -> actions.openWorkingDirectory(agentId)));
-		bar.add(button(Glyphs.CONTEXT, "Context",
-				"Show everything this agent receives, after inheritance",
-				() -> actions.showResolvedContext(agentId)));
 		// "More" opens the same menu as a right-click, so nothing is reachable only by
 		// a gesture the user has to guess at. Held by reference rather than fished out
 		// of the bar by position, which breaks the moment anything is added after it.
@@ -259,9 +248,6 @@ public final class AgentFrame extends JInternalFrame {
 		menu.addSeparator();
 		menu.add(item(Glyphs.DUPLICATE, "Duplicate", () -> actions.duplicate(agentId)));
 		menu.add(item(Glyphs.EDIT, "Edit agent...", () -> actions.editAgent(agentId)));
-		menu.add(item(Glyphs.CONTEXT, "Resolved context...",
-				() -> actions.showResolvedContext(agentId)));
-		menu.add(item(Glyphs.HARNESS, "Harness...", () -> actions.showHarness(agentId)));
 		menu.add(item(Glyphs.FOLDER, "Open working directory",
 				() -> actions.openWorkingDirectory(agentId)));
 		menu.addSeparator();

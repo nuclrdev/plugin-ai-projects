@@ -7,6 +7,7 @@ import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -22,6 +23,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
+import javax.swing.filechooser.FileNameExtensionFilter;
 
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
 import dev.nuclr.plugin.core.ai.projects.model.ContextSpec;
@@ -150,13 +152,17 @@ public final class ProjectConfigurationDialog {
 				row("Max budget (USD)", maxBudgetUsd, "Blank means no limit."))));
 
 		var contextTabs = new JTabbedPane(JTabbedPane.LEFT);
+		harnessTabs.putClientProperty("JTabbedPane.tabAlignment", "leading");
+		contextTabs.putClientProperty("JTabbedPane.tabAlignment", "leading");
+		harnessTabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+		contextTabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
 		contextTabs.addTab("Instructions", Glyphs.icon(Glyphs.INSTRUCTION), scroll(form(
 				block("Project instructions",
-						ContextEditorDialog.withLinkButton(instructions, "Link instructions")),
+						withLinkButton(instructions, "Link instructions")),
 				block("Shared harness instructions", sharedInstructions))));
 		contextTabs.addTab("Skills", Glyphs.icon(Glyphs.SKILL), page(
 				"Skills - stored here, and part of an agent's context once it starts",
-				ContextEditorDialog.withLinkButton(skills, "Link skills")));
+				withLinkButton(skills, "Link skills")));
 		contextTabs.addTab("Project knowledge", Glyphs.icon(Glyphs.KNOWLEDGE), page("Project knowledge",
 				withAddButton(knowledge, "Add file or folder...", JFileChooser.FILES_AND_DIRECTORIES)));
 		contextTabs.addTab("Files", Glyphs.icon(Glyphs.INJECTED), page("Files injected into the context",
@@ -324,6 +330,50 @@ public final class ProjectConfigurationDialog {
 		constraints.weighty = 1;
 		form.add(new JPanel(), constraints);
 		return form;
+	}
+
+	/**
+	 * Put a "Link Markdown file..." button under a list, so a document from another
+	 * project can be picked rather than its path typed out.
+	 */
+	private static JPanel withLinkButton(ListEditor editor, String chooserTitle) {
+
+		var link = new JButton("Link Markdown file...");
+		link.setToolTipText("Add a Markdown document from another project or folder by its absolute path");
+		link.addActionListener(event -> editor.append(
+				chooseMarkdown(editor, chooserTitle).stream().map(Path::toString).toList()));
+
+		var buttons = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 4));
+		buttons.add(link);
+
+		var panel = new JPanel(new BorderLayout());
+		panel.add(editor, BorderLayout.CENTER);
+		panel.add(buttons, BorderLayout.SOUTH);
+		return panel;
+	}
+
+	/**
+	 * Ask for one or more Markdown documents.
+	 *
+	 * @param parent component to centre on
+	 * @param title  dialog title
+	 * @return the chosen files as absolute paths; empty when cancelled
+	 */
+	public static List<Path> chooseMarkdown(Component parent, String title) {
+		if (Dialogs.isHeadless()) {
+			return List.of();
+		}
+		var chooser = Dialogs.fileChooser();
+		chooser.setDialogTitle(title);
+		chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+		chooser.setMultiSelectionEnabled(true);
+		chooser.setFileFilter(new FileNameExtensionFilter("Markdown documents", "md", "markdown"));
+		if (chooser.showOpenDialog(parent) != JFileChooser.APPROVE_OPTION) {
+			return List.of();
+		}
+		return Arrays.stream(chooser.getSelectedFiles())
+				.map(file -> file.toPath().toAbsolutePath().normalize())
+				.toList();
 	}
 
 	/** A list with a chooser button under it, so a path can be picked rather than typed. */

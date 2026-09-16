@@ -192,6 +192,7 @@ public final class Dialogs {
 			protected javax.swing.JDialog createDialog(Component parent) {
 				var dialog = super.createDialog(parent);
 				closeOnEscape(dialog, this::cancelSelection);
+				TextContextMenu.installTree(dialog.getContentPane());
 				return dialog;
 			}
 		};
@@ -230,6 +231,7 @@ public final class Dialogs {
 		var dialog = pane.createDialog(parent, title);
 		pane.selectInitialValue();
 		closeOnEscape(dialog);
+		TextContextMenu.installTree(dialog.getContentPane());
 		dialog.setVisible(true);
 		dialog.dispose();
 	}

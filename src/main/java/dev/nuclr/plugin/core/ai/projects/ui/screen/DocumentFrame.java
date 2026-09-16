@@ -30,6 +30,7 @@ import javax.swing.undo.UndoManager;
 
 import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
+import dev.nuclr.plugin.core.ai.projects.ui.TextContextMenu;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -91,6 +92,7 @@ public final class DocumentFrame extends JInternalFrame {
 		// returns the text to what was on disk still marks the document dirty, which
 		// is the conservative side to be on.
 		editor.getDocument().addUndoableEditListener(undo);
+		TextContextMenu.install(editor, undo);
 		editor.getDocument().addDocumentListener(new DocumentListener() {
 
 			@Override

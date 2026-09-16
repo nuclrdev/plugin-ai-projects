@@ -369,6 +369,8 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 				AiProjectEvents.NEW_PROJECT));
 		items.add(new NuclrMenuResource(Glyphs.label(Glyphs.CLOSE, "Forget"), "F8",
 				AiProjectEvents.FORGET_PROJECT));
+		items.add(new NuclrMenuResource(Glyphs.label(Glyphs.PROFILE, "Profiles"), "Shift+F7",
+				AiProjectEvents.MANAGE_PROFILES));
 
 		// Commander owns the comparators; a plugin declares which of its columns each
 		// one applies to and omits the ones it cannot back. These also drive the
@@ -432,6 +434,8 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 			case AiProjectEvents.PATH_OPENED -> open(focusedResource, data);
 			case AiProjectEvents.OPEN_PROJECT -> openProject(focusedResource);
 			case AiProjectEvents.NEW_PROJECT -> newProject(data);
+			case AiProjectEvents.MANAGE_PROFILES -> dev.nuclr.plugin.core.ai.projects.ui.profile.ProfilesDialog.show(null,
+					dev.nuclr.plugin.core.ai.projects.profile.ProfileStore.inCommanderHome(catalog.commanderHome()));
 			case AiProjectEvents.ADD_EXISTING -> addExisting(data);
 			case AiProjectEvents.ACCEPT_COPY -> adoptFolders(selectedResources, focusedResource, data);
 			case AiProjectEvents.RENAME_PROJECT -> rename(focusedResource, data);

@@ -2,7 +2,6 @@ package dev.nuclr.plugin.core.ai.projects.ui.screen;
 
 import java.awt.BorderLayout;
 import java.awt.Desktop;
-import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.InputEvent;
@@ -55,7 +54,10 @@ import dev.nuclr.plugin.core.ai.projects.model.ContextSpec;
 import dev.nuclr.plugin.core.ai.projects.model.HarnessSpec;
 import dev.nuclr.plugin.core.ai.projects.runtime.RuntimeStamp;
 import dev.nuclr.plugin.core.ai.projects.runtime.WindowState;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
+import dev.nuclr.plugin.core.ai.projects.store.ProjectPaths;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
+import dev.nuclr.plugin.core.ai.projects.ui.profile.ProfilesDialog;
 import dev.nuclr.plugin.core.ai.projects.store.PathContainment;
 import dev.nuclr.plugin.core.ai.projects.ui.AiProjectEvents;
 import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
@@ -171,109 +173,128 @@ public final class ProjectDesktop extends JPanel
 	}
 
 	/**
-	 * The project toolbar.
+	 * The project toolbar: three dropdowns, each opening a menu built at the moment
+	 * it is clicked, so the window list and the ticks are never stale.
 	 *
-	 * <p>Wrapping, not a {@code JToolBar}: there are a dozen commands here and a
-	 * plain toolbar clips the end of them in a narrow window without saying so.
+	 * <p>Everything a dropdown does is also a keyboard shortcut or a function-bar
+	 * command; Start all, Stop all, Broadcast and Close live on the function bar.
 	 */
 	private JPanel buildToolBar() {
 
 		var bar = new JPanel(new WrapLayout(4, 2));
 		bar.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
 
-		bar.add(newAgentButton());
-		bar.add(ribbonButton(Glyphs.START, "Start all",
-				"Start every agent that is not running", this::startAll));
-		bar.add(ribbonButton(Glyphs.STOP, "Stop all",
-				"Terminate every running agent", this::stopAll));
-		bar.add(windowsButton());
-		bar.add(backgroundButton());
-		bar.add(terminalButton());
-		bar.add(ribbonButton(Glyphs.TILE, "Tile",
-				"Arrange the windows in a grid (Ctrl+Shift+G)", this::tile));
-		bar.add(ribbonButton(Glyphs.CASCADE, "Cascade",
-				"Stack the windows from the top left (Ctrl+Shift+D)", this::cascade));
-		bar.add(ribbonButton(Glyphs.SAVE, "Save layout",
-				"Write the current window layout now (Ctrl+Shift+S)", this::saveLayout));
-		bar.add(ribbonButton(Glyphs.RESET, "Reset layout",
-				"Discard the saved layout and cascade afresh", this::resetLayout));
-		bar.add(ribbonButton(Glyphs.BROADCAST, "Broadcast...",
-				"Send one instruction to several agents (Ctrl+Shift+B)", this::broadcast));
-		bar.add(ribbonButton(Glyphs.CONFIGURE, "Configure...",
-				"Project configuration: the harness (what agents can do) and context (what they know)",
-				this::editConfiguration));
-		bar.add(ribbonButton(Glyphs.CONTEXT, "Context...",
-				"Show and edit the project's shared context", () -> showResolvedContext(null)));
-		bar.add(ribbonButton(Glyphs.HARNESS, "Harness...",
-				"Show and edit the project harness", () -> showHarness(null)));
-		bar.add(ribbonButton(Glyphs.SIDEBAR, "Sidebar",
-				"Show or hide the project sidebar (Ctrl+Shift+K)", this::toggleSidebar));
-		bar.add(ribbonButton(Glyphs.CLOSE, "Close project",
-				"Close this project and stop its agents", this::requestClose));
+		bar.add(dropdownButton(Glyphs.CONFIGURE, "Configuration",
+				"Project configuration and agents", this::fillConfigurationMenu));
+		bar.add(dropdownButton(Glyphs.BACKGROUND, "UI",
+				"Sidebar and desktop background", this::fillUiMenu));
+		bar.add(dropdownButton(Glyphs.TILE, "Layout",
+				"Windows and their arrangement", this::fillLayoutMenu));
 		return bar;
 	}
 
-	private static JButton button(String glyph, String label, String tip, Runnable action) {
-		var button = Glyphs.decorate(new JButton(), glyph, label);
-		button.setToolTipText(tip);
-		button.addActionListener(event -> action.run());
-		return button;
-	}
-
-	private static JButton ribbonButton(String glyph, String label, String tip, Runnable action) {
-		var button = RibbonButtons.large(glyph, label, tip);
-		button.addActionListener(event -> action.run());
-		return button;
-	}
-
-	/**
-	 * "New agent", offering the project's templates directly.
-	 *
-	 * <p>A template is the normal way to add an agent - Coder, Reviewer,
-	 * Researcher, Architect - so it belongs one click away rather than behind a
-	 * dropdown inside a dialog. "Custom..." is the way to an agent that starts from
-	 * the project harness alone.
-	 */
-	private JButton newAgentButton() {
-
-		var button = RibbonButtons.large(Glyphs.NEW, "New agent",
-				"Add an agent to this project (Ctrl+Shift+N)");
+	private static JButton dropdownButton(String glyph, String label, String tip,
+			java.util.function.Consumer<JPopupMenu> fill) {
+		var button = RibbonButtons.large(glyph, label + " ▾", tip);
 		button.addActionListener(event -> {
 			var menu = new JPopupMenu();
-			for (var template : store.project().getTemplates()) {
-				var item = Glyphs.decorate(new JMenuItem(), Glyphs.TEMPLATE, template.displayName());
-				item.setToolTipText(template.getDescription());
-				item.addActionListener(chosen -> newAgent(template.getId()));
-				menu.add(item);
-			}
-			if (menu.getComponentCount() > 0) {
-				menu.addSeparator();
-			}
-			var custom = Glyphs.decorate(new JMenuItem(), Glyphs.AGENT, "Custom...");
-			custom.addActionListener(chosen -> newAgent(null));
-			menu.add(custom);
-			var terminal = Glyphs.decorate(new JMenuItem(), Glyphs.TERMINAL, "Terminal in the project folder");
-			terminal.addActionListener(chosen -> newTerminal(store.paths().root()));
-			menu.add(terminal);
+			fill.accept(menu);
 			menu.show(button, 0, button.getHeight());
 		});
 		return button;
 	}
 
 	/**
-	 * "Terminal", for when a plain shell in the project folder is all that is
-	 * wanted.
+	 * Configuration: the project's setup and the agents it defines.
 	 *
-	 * <p>A shell is one of the window kinds like any other, so this is the same
-	 * "new agent" path with the questions already answered: shell kind, project
-	 * root, started immediately. Getting there through the agent dialog works too,
-	 * but wanting a terminal should not cost a form.
+	 * <p>A template is the normal way to add an agent - Coder, Reviewer,
+	 * Researcher, Architect - so templates are listed directly rather than behind a
+	 * dropdown inside a dialog. "Custom..." starts from the project harness alone.
 	 */
-	private JButton terminalButton() {
-		var button = RibbonButtons.large(Glyphs.TERMINAL, "Terminal",
-				"Open a plain shell in " + store.paths().root() + " (Ctrl+O)");
-		button.addActionListener(event -> newTerminal(store.paths().root()));
-		return button;
+	private void fillConfigurationMenu(JPopupMenu menu) {
+
+		menu.add(menuItem(Glyphs.CONFIGURE, "Project configuration...", this::editConfiguration));
+		menu.add(menuItem(Glyphs.PROFILE, "Profiles...", () -> ProfilesDialog.show(this,
+				ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome()))));
+		menu.addSeparator();
+
+		var newAgent = Glyphs.decorate(new javax.swing.JMenu(), Glyphs.NEW, "New agent");
+		for (var template : store.project().getTemplates()) {
+			var item = menuItem(Glyphs.TEMPLATE, template.displayName(), () -> newAgent(template.getId()));
+			item.setToolTipText(template.getDescription());
+			newAgent.add(item);
+		}
+		if (newAgent.getMenuComponentCount() > 0) {
+			newAgent.addSeparator();
+		}
+		newAgent.add(shortcut(menuItem(Glyphs.AGENT, "Custom...", () -> newAgent(null)),
+				KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+		menu.add(newAgent);
+		// A shell is one of the window kinds like any other; wanting one should not cost a form.
+		menu.add(shortcut(menuItem(Glyphs.TERMINAL, "Terminal in the project folder",
+				() -> newTerminal(store.paths().root())), KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK));
+	}
+
+	/** UI: how the desktop looks. */
+	private void fillUiMenu(JPopupMenu menu) {
+
+		var sidebarItem = new javax.swing.JCheckBoxMenuItem("Sidebar", !store.desktop().isSidebarCollapsed());
+		sidebarItem.addActionListener(event -> toggleSidebar());
+		menu.add(shortcut(sidebarItem, KeyEvent.VK_K, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
+
+		var background = Glyphs.decorate(new javax.swing.JMenu(), Glyphs.BACKGROUND, "Background");
+		var group = new ButtonGroup();
+		for (var effect : desktopPane.effects()) {
+			var item = new JRadioButtonMenuItem(effect.displayName(), effect.id().equals(desktopPane.effectId()));
+			item.setToolTipText(effect.description());
+			item.addActionListener(chosen -> selectBackground(effect));
+			group.add(item);
+			background.add(item);
+		}
+		menu.add(background);
+	}
+
+	/**
+	 * Layout: every window, then how they are arranged.
+	 *
+	 * <p>A {@link JDesktopPane} minimises frames into its bottom-left corner and
+	 * offers no way back to one you cannot see. With ten agents that corner is
+	 * unusable, so this list is the reliable route to any window, minimised or not.
+	 */
+	private void fillLayoutMenu(JPopupMenu menu) {
+
+		var modifiers = InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK;
+		if (frames.isEmpty()) {
+			var empty = new JMenuItem("No windows open");
+			empty.setEnabled(false);
+			menu.add(empty);
+		}
+		for (var frame : frames.values()) {
+			menu.add(menuItem(Glyphs.statusGlyph(frame.window().status(), frame.hasAttention()),
+					frame.agentName()
+							+ (frame.isIcon() ? "  (minimised)" : "")
+							+ "  -  " + frame.window().status().label(),
+					() -> focusAgent(frame.agentId())));
+		}
+		menu.addSeparator();
+		menu.add(shortcut(menuItem(Glyphs.TILE, "Tile", this::tile), KeyEvent.VK_G, modifiers));
+		menu.add(shortcut(menuItem(Glyphs.CASCADE, "Cascade", this::cascade), KeyEvent.VK_D, modifiers));
+		menu.add(shortcut(menuItem(Glyphs.CASCADE, "Minimise all", this::minimiseAll), KeyEvent.VK_M, modifiers));
+		menu.add(menuItem(Glyphs.TILE, "Restore all", this::restoreAll));
+		menu.addSeparator();
+		menu.add(shortcut(menuItem(Glyphs.SAVE, "Save layout", this::saveLayout), KeyEvent.VK_S, modifiers));
+		menu.add(menuItem(Glyphs.RESET, "Reset layout", this::resetLayout));
+	}
+
+	/**
+	 * Name a shortcut on a menu item. Written into the label rather than set as an
+	 * accelerator: the real bindings are in {@link #installShortcuts()}, and an
+	 * accelerator on an open popup could fire the same command a second time.
+	 */
+	private static <T extends JMenuItem> T shortcut(T item, int key, int modifiers) {
+		item.setText(item.getText() + "   (" + java.awt.event.InputEvent.getModifiersExText(modifiers) + "+"
+				+ KeyEvent.getKeyText(key) + ")");
+		return item;
 	}
 
 	/**
@@ -362,60 +383,6 @@ public final class ProjectDesktop extends JPanel
 			return null;
 		}
 		return target.startsWith(base) ? base.relativize(target).toString() : target.toString();
-	}
-
-	/**
-	 * The window list.
-	 *
-	 * <p>A {@link JDesktopPane} minimises frames into its bottom-left corner and
-	 * offers no way back to one you cannot see. With ten agents that corner is
-	 * unusable, so this list is the reliable route to any window, minimised or not.
-	 */
-	private JButton windowsButton() {
-
-		var button = RibbonButtons.large(Glyphs.WINDOWS, "Windows",
-				"Every agent window, minimised or not");
-		button.addActionListener(event -> {
-			var menu = new JPopupMenu();
-			if (frames.isEmpty()) {
-				var empty = new JMenuItem("No windows open");
-				empty.setEnabled(false);
-				menu.add(empty);
-			}
-			for (var frame : frames.values()) {
-				var item = Glyphs.decorate(new JMenuItem(),
-						Glyphs.statusGlyph(frame.window().status(), frame.hasAttention()),
-						frame.agentName()
-								+ (frame.isIcon() ? "  (minimised)" : "")
-								+ "  -  " + frame.window().status().label());
-				item.addActionListener(chosen -> focusAgent(frame.agentId()));
-				menu.add(item);
-			}
-			menu.addSeparator();
-			menu.add(menuItem(Glyphs.CASCADE, "Minimise all (Ctrl+Shift+M)", this::minimiseAll));
-			menu.add(menuItem(Glyphs.TILE, "Restore all", this::restoreAll));
-			menu.show(button, 0, button.getHeight());
-		});
-		return button;
-	}
-
-	/** Choose and persist the animated desktop background. */
-	private JButton backgroundButton() {
-		var button = RibbonButtons.large(Glyphs.BACKGROUND, "Background",
-				"Choose the project desktop background effect");
-		button.addActionListener(event -> {
-			var menu = new JPopupMenu();
-			var group = new ButtonGroup();
-			for (var effect : desktopPane.effects()) {
-				var item = new JRadioButtonMenuItem(effect.displayName(), effect.id().equals(desktopPane.effectId()));
-				item.setToolTipText(effect.description());
-				item.addActionListener(chosen -> selectBackground(effect));
-				group.add(item);
-				menu.add(item);
-			}
-			menu.show(button, 0, button.getHeight());
-		});
-		return button;
 	}
 
 	private void selectBackground(DesktopBackgroundEffect effect) {
@@ -651,38 +618,6 @@ public final class ProjectDesktop extends JPanel
 		}
 	}
 
-	@Override
-	public void showResolvedContext(String agentId) {
-
-		var agent = agentId == null ? null : store.project().agent(agentId).orElse(null);
-		var label = agent == null ? store.project().displayName() + " (project)" : agent.displayName();
-		var panel = new ResolvedContextPanel(this::openDocument);
-		panel.show(label, ContextResolver.resolve(store.project(), agent, store.paths()));
-
-		var edit = button(Glyphs.EDIT,
-				agent == null ? "Edit project context..." : "Edit agent context...",
-				"Change the instructions, skills and files this level contributes",
-				() -> editContext(agentId));
-		showUtilityFrame(Glyphs.CONTEXT, "Resolved context - " + label,
-				panel, edit, new Dimension(840, 540));
-	}
-
-	@Override
-	public void showHarness(String agentId) {
-
-		var agent = agentId == null ? null : store.project().agent(agentId).orElse(null);
-		var label = agent == null ? store.project().displayName() + " (project)" : agent.displayName();
-		var panel = new HarnessPanel();
-		panel.show(label, HarnessResolver.resolve(store.project(), agent));
-
-		var edit = button(Glyphs.EDIT,
-				agent == null ? "Edit project harness..." : "Edit agent overrides...",
-				"Change the executable, model, environment, permissions, tools and roots",
-				() -> editHarness(agentId));
-		showUtilityFrame(Glyphs.HARNESS, "Harness - " + label,
-				panel, edit, new Dimension(780, 500));
-	}
-
 	/**
 	 * Edit the whole project configuration - name, harness and context - in one
 	 * tabbed dialog.
@@ -702,67 +637,6 @@ public final class ProjectDesktop extends JPanel
 		notifier.setBaseTitle(title());
 		afterProjectChanged();
 		warnAboutRunningAgents("The project configuration changed.");
-	}
-
-	/**
-	 * Edit a harness: the project's, or one agent's overrides.
-	 *
-	 * @param agentId the agent, or {@code null} for the project harness
-	 */
-	@Override
-	public void editHarness(String agentId) {
-
-		var agent = agentId == null ? null : store.project().agent(agentId).orElse(null);
-		if (agentId != null && agent == null) {
-			return;
-		}
-
-		if (agent == null) {
-			var edited = HarnessEditorDialog.edit(this, "Project harness", store.project().getHarness(), null);
-			if (edited == null) {
-				return;
-			}
-			store.project().setHarness(edited);
-		} else {
-			var inherited = HarnessResolver.resolve(store.project(), null);
-			var edited = HarnessEditorDialog.edit(this,
-					"Harness overrides - " + agent.displayName(), agent.getHarness(), inherited);
-			if (edited == null) {
-				return;
-			}
-			agent.setHarness(edited);
-		}
-		store.markProjectDirty();
-		afterProjectChanged();
-		warnAboutRunningAgents("The harness changed.");
-	}
-
-	/**
-	 * Edit a context: the project's shared one, or one agent's additions.
-	 *
-	 * @param agentId the agent, or {@code null} for the project
-	 */
-	@Override
-	public void editContext(String agentId) {
-
-		var agent = agentId == null ? null : store.project().agent(agentId).orElse(null);
-		if (agentId != null && agent == null) {
-			return;
-		}
-		var title = agent == null ? "Project context" : "Context - " + agent.displayName();
-		var edited = ContextEditorDialog.edit(this, title,
-				agent == null ? store.project().getContext() : agent.getContext());
-		if (edited == null) {
-			return;
-		}
-		if (agent == null) {
-			store.project().setContext(edited);
-		} else {
-			agent.setContext(edited);
-		}
-		store.markProjectDirty();
-		afterProjectChanged();
-		warnAboutRunningAgents("The context changed.");
 	}
 
 	/**
@@ -836,8 +710,7 @@ public final class ProjectDesktop extends JPanel
 	@Override
 	public void newAgent(String templateId) {
 
-		var inherited = HarnessResolver.resolve(store.project(), null);
-		var definition = AgentDialogs.editAgent(this, store.project(), registry, null, templateId, inherited);
+		var definition = AgentDialogs.editAgent(this, store.project(), registry, null, templateId);
 		if (definition == null) {
 			return;
 		}
@@ -857,8 +730,7 @@ public final class ProjectDesktop extends JPanel
 		if (existing == null) {
 			return;
 		}
-		var inherited = HarnessResolver.resolve(store.project(), null);
-		var edited = AgentDialogs.editAgent(this, store.project(), registry, existing, null, inherited);
+		var edited = AgentDialogs.editAgent(this, store.project(), registry, existing, null);
 		if (edited == null) {
 			return;
 		}
@@ -1066,7 +938,7 @@ public final class ProjectDesktop extends JPanel
 	public void linkDocuments(ContextItem.Kind kind) {
 
 		var skill = kind == ContextItem.Kind.SKILL;
-		var files = ContextEditorDialog.chooseMarkdown(this, skill ? "Link skills" : "Link instructions");
+		var files = ProjectConfigurationDialog.chooseMarkdown(this, skill ? "Link skills" : "Link instructions");
 		if (files.isEmpty()) {
 			return;
 		}
@@ -1676,26 +1548,6 @@ public final class ProjectDesktop extends JPanel
 	private void cascadePlace(JInternalFrame frame) {
 		var offset = (desktopPane.getAllFrames().length % 8) * 28;
 		frame.setLocation(40 + offset, 40 + offset);
-	}
-
-	private void showUtilityFrame(String glyph, String title, JPanel content, JButton action, Dimension size) {
-
-		var frame = new JInternalFrame(title, true, true, true, true);
-		frame.setFrameIcon(Glyphs.icon(glyph));
-		frame.setDefaultCloseOperation(JInternalFrame.DISPOSE_ON_CLOSE);
-		frame.getContentPane().setLayout(new BorderLayout());
-		frame.getContentPane().add(content, BorderLayout.CENTER);
-		if (action != null) {
-			var footer = new JPanel(new WrapLayout(4, 2));
-			footer.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
-			footer.add(action);
-			frame.getContentPane().add(footer, BorderLayout.SOUTH);
-		}
-		frame.setSize(size);
-		desktopPane.add(frame);
-		cascadePlace(frame);
-		frame.setVisible(true);
-		select(frame);
 	}
 
 	/** Close a frame without recording it as user-closed, for rebuilds and deletes. */
