@@ -149,12 +149,13 @@ final class ProviderFields {
 			public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected,
 					boolean focused) {
 				var chosen = selectedProvider();
-				var supported = !(value instanceof AccessMode mode) || chosen == null || chosen.supports(mode);
+				var supported = !(value instanceof AccessMode mode) || accessSupported(mode);
 				String text;
 				if (UNSET.equals(value)) {
 					text = chosen == null ? "Default" : "Default (" + chosen.defaultAccessMode().label() + ")";
 				} else if (value instanceof AccessMode mode) {
-					text = supported ? mode.label() : mode.label() + "  (not available for " + chosen.displayName() + ")";
+					text = supported ? mode.label() : mode.label() + "  (not available for "
+							+ (chosen.supports(mode) ? "this model" : chosen.displayName()) + ")";
 				} else {
 					text = value + "  (unknown)";
 				}
@@ -173,12 +174,12 @@ final class ProviderFields {
 		provider.addActionListener(event -> providerChanged());
 		model.addActionListener(event -> {
 			if (!updating) {
-				rebuildEfforts(selectedEffort());
+				modelChanged();
 			}
 		});
 		RecordEditorDialog.onChange(modelEditor(), () -> {
 			if (!updating) {
-				SwingUtilities.invokeLater(() -> rebuildEfforts(selectedEffort()));
+				SwingUtilities.invokeLater(this::modelChanged);
 			}
 		});
 
@@ -263,7 +264,7 @@ final class ProviderFields {
 		}
 		rebuildEfforts(UNSET);
 		var newProvider = selectedProvider();
-		if (newProvider != null && access.getSelectedItem() instanceof AccessMode mode && !newProvider.supports(mode)) {
+		if (newProvider != null && access.getSelectedItem() instanceof AccessMode mode && !accessSupported(mode)) {
 			selectAccess(UNSET);
 			updateAccess(newProvider.unsupportedReason(mode) + " Access mode was reset to the default.");
 		} else {
@@ -282,7 +283,7 @@ final class ProviderFields {
 			return;
 		}
 		var provider = selectedProvider();
-		if (chosen instanceof AccessMode mode && provider != null && !provider.supports(mode)) {
+		if (chosen instanceof AccessMode mode && provider != null && !accessSupported(mode)) {
 			// A mode the provider cannot honour is not selectable; say why instead.
 			selectAccess(lastAccess);
 			updateAccess(provider.unsupportedReason(mode));
@@ -290,6 +291,30 @@ final class ProviderFields {
 		}
 		lastAccess = chosen;
 		updateAccess(null);
+	}
+
+	/**
+	 * The model changed: offer its efforts, and let go of an access mode it cannot
+	 * use - some Claude models have no auto mode.
+	 */
+	private void modelChanged() {
+		rebuildEfforts(selectedEffort());
+		var chosen = selectedProvider();
+		if (chosen != null && access.getSelectedItem() instanceof AccessMode mode && !accessSupported(mode)) {
+			selectAccess(UNSET);
+			updateAccess(chosen.unsupportedReason(mode) + " Access mode was reset to the default.");
+		} else {
+			access.repaint();
+		}
+	}
+
+	/** Whether the chosen provider - and the chosen model, when the catalogue knows it - supports a mode. */
+	private boolean accessSupported(AccessMode mode) {
+		var chosen = selectedProvider();
+		if (chosen == null) {
+			return true;
+		}
+		return catalog == null ? chosen.supports(mode) : catalog.supports(modelText(), mode);
 	}
 
 	private void selectAccess(Object value) {
@@ -382,7 +407,7 @@ final class ProviderFields {
 		refresh.setEnabled(true);
 		modelNote.setText(result.note());
 		modelNote.setToolTipText(result.note());
-		rebuildEfforts(selectedEffort());
+		modelChanged();
 	}
 
 	private void rebuildEfforts(String keep) {
@@ -404,7 +429,21 @@ final class ProviderFields {
 		} finally {
 			updating = false;
 		}
-		effort.setEnabled(chosen != null);
+		// Only "Default" means the model has no effort setting at all.
+		effort.setEnabled(chosen != null && values.size() > 1);
+		updateEffortNote();
+	}
+
+	private void updateEffortNote() {
+		var chosen = selectedProvider();
+		if (chosen == null) {
+			effortNote.setText("Choose a provider first.");
+		} else if (catalog != null && catalog.model(modelText()).map(ModelCatalog.Model::efforts)
+				.map(List::isEmpty).orElse(false)) {
+			effortNote.setText("This model has no reasoning effort setting.");
+		} else {
+			effortNote.setText("Passed to " + chosen.displayName() + " as " + chosen.effortSetting() + ".");
+		}
 	}
 
 	private String effortText(String value) {
@@ -423,8 +462,7 @@ final class ProviderFields {
 		var chosen = provider.getSelectedItem() instanceof AgentProvider each ? each : null;
 		RecordEditorDialog.placeholder(executable, chosen == null ? "The provider's own command"
 				: chosen.defaultExecutable() + "  (default)");
-		effortNote.setText(chosen == null ? "Choose a provider first."
-				: "Passed to " + chosen.displayName() + " as " + chosen.effortSetting() + ".");
+		updateEffortNote();
 	}
 
 	private String modelText() {

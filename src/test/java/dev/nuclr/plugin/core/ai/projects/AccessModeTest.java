@@ -19,7 +19,6 @@ import dev.nuclr.plugin.core.ai.projects.profile.Profile;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileValidator;
 import dev.nuclr.plugin.core.ai.projects.provider.AccessMode;
 import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
-import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalogs;
 import dev.nuclr.plugin.core.ai.projects.ui.profile.ProfileForm;
 
 /** One access mode, mapped onto each provider's own flags - or refused. */
@@ -85,7 +84,7 @@ class AccessModeTest {
 		var before = new Profile[1];
 		var after = new Profile[1];
 		SwingUtilities.invokeAndWait(() -> {
-			forms[0] = new ProfileForm(profile, ModelCatalogs.answering(command -> ModelCatalogsTest.CODEX));
+			forms[0] = new ProfileForm(profile, ModelCatalogsTest.answering());
 			before[0] = forms[0].toProfile();
 			box(forms[0], AgentProvider.CLAUDE_CODE).setSelectedItem(AgentProvider.PI);
 			after[0] = forms[0].toProfile();
@@ -103,7 +102,7 @@ class AccessModeTest {
 		profile.getHarness().setAccessMode("read-only");
 		var after = new Profile[1];
 		SwingUtilities.invokeAndWait(() -> {
-			var form = new ProfileForm(profile, ModelCatalogs.answering(command -> ModelCatalogsTest.PI));
+			var form = new ProfileForm(profile, ModelCatalogsTest.answering());
 			box(form, AccessMode.READ_ONLY).setSelectedItem(AccessMode.ASK);
 			after[0] = form.toProfile();
 		});

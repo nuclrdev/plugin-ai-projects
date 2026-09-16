@@ -127,6 +127,21 @@ public final class Json {
 	}
 
 	/**
+	 * Serialise a value on one line, for line-delimited protocols where a line
+	 * break ends the message.
+	 *
+	 * @param value the value
+	 * @return its compact JSON form, with no line breaks
+	 */
+	public static String toJsonLine(Object value) {
+		try {
+			return MAPPER.writer().without(SerializationFeature.INDENT_OUTPUT).writeValueAsString(value);
+		} catch (RuntimeException e) {
+			throw new UncheckedIOException(new IOException(e.getMessage(), e));
+		}
+	}
+
+	/**
 	 * Parse a value from a string.
 	 *
 	 * @param <T>  the value type

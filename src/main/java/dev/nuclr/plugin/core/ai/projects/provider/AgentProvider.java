@@ -4,36 +4,39 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import dev.nuclr.plugin.core.ai.projects.connector.AgentConnector;
+import dev.nuclr.plugin.core.ai.projects.connector.AgentConnectors;
+
 /**
- * The agent CLIs a profile can target. Hard-coded on purpose: each one gets a
+ * The agent CLIs a profile can target. Hard-coded on purpose: each one has a
  * connector of its own, so the list grows with the connectors, not with
  * configuration.
  *
- * <p>The same three settings mean the same thing everywhere, and each provider
- * says how it spells them:
+ * <p>This is only the identity - id, name and command. What a CLI accepts and
+ * how it is told belongs to its {@link AgentConnector}; the methods here that
+ * answer those questions simply ask it.
+ *
+ * <p>The same settings mean the same thing for every provider, each spelled the
+ * provider's own way:
  * <ul>
  *   <li><b>model</b> - stored exactly as the CLI takes it. For Pi, which fronts
  *       many model providers, that is {@code provider/model}.</li>
- *   <li><b>reasoning effort</b> - stored as the CLI's own value: Claude Code's
- *       {@code --effort}, Codex's {@code model_reasoning_effort}, Pi's
- *       {@code --thinking}. The vocabularies differ, so no value is translated;
- *       changing provider clears it.</li>
+ *   <li><b>reasoning effort</b> - stored as the CLI's own value. The vocabularies
+ *       differ, so no value is translated; changing provider clears it.</li>
+ *   <li><b>access mode</b> - one of {@link AccessMode}, mapped by the connector.</li>
  *   <li>blank - let the CLI use its own default.</li>
  * </ul>
  */
 public enum AgentProvider {
 
 	/** Anthropic's Claude Code. */
-	CLAUDE_CODE("claude-code", "Claude Code", "claude", "--effort",
-			List.of("low", "medium", "high", "xhigh", "max")),
+	CLAUDE_CODE("claude-code", "Claude Code", "claude"),
 
 	/** OpenAI's Codex CLI. */
-	CODEX("codex", "Codex", "codex", "-c model_reasoning_effort",
-			List.of("low", "medium", "high", "xhigh", "max", "ultra")),
+	CODEX("codex", "Codex", "codex"),
 
 	/** Pi, the multi-provider coding agent. */
-	PI("pi", "Pi", "pi", "--thinking",
-			List.of("off", "minimal", "low", "medium", "high", "xhigh", "max"));
+	PI("pi", "Pi", "pi");
 
 	private static final Map<String, String> EFFORT_LABELS = Map.of(
 			"none", "None",
@@ -49,15 +52,11 @@ public enum AgentProvider {
 	private final String id;
 	private final String displayName;
 	private final String executable;
-	private final String effortSetting;
-	private final List<String> efforts;
 
-	AgentProvider(String id, String displayName, String executable, String effortSetting, List<String> efforts) {
+	AgentProvider(String id, String displayName, String executable) {
 		this.id = id;
 		this.displayName = displayName;
 		this.executable = executable;
-		this.effortSetting = effortSetting;
-		this.efforts = efforts;
 	}
 
 	/** The value stored in a profile; matches the terminal window kind's suffix. */
@@ -75,80 +74,44 @@ public enum AgentProvider {
 		return executable;
 	}
 
+	/** The connector that knows how to drive this CLI. */
+	public AgentConnector connector() {
+		return AgentConnectors.of(this);
+	}
+
 	/** How the CLI is told the reasoning effort, for the editor's hint. */
 	public String effortSetting() {
-		return effortSetting;
+		return connector().effortSetting();
 	}
 
 	/** Every reasoning effort the CLI accepts, lowest first; a model may allow fewer. */
 	public List<String> efforts() {
-		return efforts;
-	}
-
-	@Override
-	public String toString() {
-		return displayName;
+		return connector().efforts();
 	}
 
 	/**
 	 * The flags that put this CLI in an access mode.
 	 *
-	 * <ul>
-	 *   <li>Claude Code - {@code --permission-mode}: plan, manual, auto, bypassPermissions.</li>
-	 *   <li>Codex - a sandbox ({@code -s}) and an approval policy ({@code -a}), or the
-	 *       automatic reviewer ({@code --approve-for-me}).</li>
-	 *   <li>Pi - has neither approvals nor a sandbox. It can be made read-only by
-	 *       allowing only its reading tools; otherwise it has full access.</li>
-	 * </ul>
-	 *
 	 * @param mode the mode
-	 * @return the arguments, empty for {@link AccessMode#CUSTOM}; absent when this
-	 *         provider cannot honour the mode
+	 * @return the arguments, or empty when the CLI cannot honour the mode
 	 */
 	public Optional<List<String>> accessArguments(AccessMode mode) {
-		if (mode == AccessMode.CUSTOM) {
-			return Optional.of(List.of());
-		}
-		return Optional.ofNullable(switch (this) {
-			case CLAUDE_CODE -> switch (mode) {
-				case READ_ONLY -> List.of("--permission-mode", "plan");
-				case ASK -> List.of("--permission-mode", "manual");
-				case AUTO -> List.of("--permission-mode", "auto");
-				case FULL_ACCESS -> List.of("--permission-mode", "bypassPermissions");
-				case CUSTOM -> List.<String>of();
-			};
-			case CODEX -> switch (mode) {
-				case READ_ONLY -> List.of("--sandbox", "read-only");
-				case ASK -> List.of("--sandbox", "workspace-write", "--ask-for-approval", "on-request");
-				case AUTO -> List.of("--sandbox", "workspace-write", "--approve-for-me");
-				case FULL_ACCESS -> List.of("--dangerously-bypass-approvals-and-sandbox");
-				case CUSTOM -> List.<String>of();
-			};
-			case PI -> switch (mode) {
-				case READ_ONLY -> List.of("--tools", "read,grep,find,ls");
-				case FULL_ACCESS -> List.<String>of();
-				case ASK, AUTO -> null;
-				case CUSTOM -> List.<String>of();
-			};
-		});
+		return connector().accessArguments(mode);
 	}
 
 	/**
 	 * Whether this CLI can honour an access mode.
 	 *
 	 * @param mode the mode
-	 * @return whether {@link #accessArguments(AccessMode)} has an answer
+	 * @return whether it can
 	 */
 	public boolean supports(AccessMode mode) {
-		return accessArguments(mode).isPresent();
+		return connector().supports(mode);
 	}
 
-	/**
-	 * The mode a profile gets when it names none: Ask wherever the CLI can ask, so
-	 * nothing happens unseen by default. Pi cannot ask, and has full access.
-	 */
+	/** The mode a profile gets when it names none. */
 	public AccessMode defaultAccessMode() {
-		return supports(AccessMode.ASK) ? AccessMode.ASK : AccessMode.FULL_ACCESS;
+		return connector().defaultAccessMode();
 	}
 
 	/**
@@ -158,10 +121,12 @@ public enum AgentProvider {
 	 * @return one sentence
 	 */
 	public String unsupportedReason(AccessMode mode) {
-		return this == PI
-				? "Pi has no approval prompts or sandbox, so it cannot " + (mode == AccessMode.ASK ? "ask first" : "review actions")
-						+ ". Choose Read-only, or Full access in an isolated environment."
-				: displayName + " does not support " + mode.label() + ".";
+		return connector().unsupportedReason(mode);
+	}
+
+	@Override
+	public String toString() {
+		return displayName;
 	}
 
 	/**

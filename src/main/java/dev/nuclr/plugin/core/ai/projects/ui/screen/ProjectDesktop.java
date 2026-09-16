@@ -173,8 +173,9 @@ public final class ProjectDesktop extends JPanel
 	}
 
 	/**
-	 * The project toolbar: three dropdowns, each opening a menu built at the moment
-	 * it is clicked, so the window list and the ticks are never stale.
+	 * The project toolbar: Profiles, which opens straight away, then three dropdowns,
+	 * each opening a menu built at the moment it is clicked, so the window list and
+	 * the ticks are never stale.
 	 *
 	 * <p>Everything a dropdown does is also a keyboard shortcut or a function-bar
 	 * command; Start all, Stop all, Broadcast and Close live on the function bar.
@@ -184,6 +185,11 @@ public final class ProjectDesktop extends JPanel
 		var bar = new JPanel(new WrapLayout(4, 2));
 		bar.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
 
+		var profiles = RibbonButtons.large(Glyphs.PROFILE, "Profiles",
+				"Shared profiles: harness and context reusable across projects");
+		profiles.addActionListener(event -> ProfilesDialog.show(this,
+				ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome())));
+		bar.add(profiles);
 		bar.add(dropdownButton(Glyphs.CONFIGURE, "Configuration",
 				"Project configuration and agents", this::fillConfigurationMenu));
 		bar.add(dropdownButton(Glyphs.BACKGROUND, "UI",
@@ -214,8 +220,6 @@ public final class ProjectDesktop extends JPanel
 	private void fillConfigurationMenu(JPopupMenu menu) {
 
 		menu.add(menuItem(Glyphs.CONFIGURE, "Project configuration...", this::editConfiguration));
-		menu.add(menuItem(Glyphs.PROFILE, "Profiles...", () -> ProfilesDialog.show(this,
-				ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome()))));
 		menu.addSeparator();
 
 		var newAgent = Glyphs.decorate(new javax.swing.JMenu(), Glyphs.NEW, "New agent");

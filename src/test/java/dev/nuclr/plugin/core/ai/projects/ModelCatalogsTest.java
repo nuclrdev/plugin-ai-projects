@@ -3,45 +3,55 @@ package dev.nuclr.plugin.core.ai.projects;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
 
+import javax.swing.JComboBox;
 import javax.swing.SwingUtilities;
 
 import org.junit.jupiter.api.Test;
 
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileValidator;
+import dev.nuclr.plugin.core.ai.projects.provider.AccessMode;
 import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
+import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalog;
 import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalogs;
 import dev.nuclr.plugin.core.ai.projects.ui.profile.ProfileForm;
 
-/** Providers, the model lists read from their CLIs, and the profile fields built on them. */
+/** Providers, the catalogues their connectors answer with, and the profile fields built on them. */
 class ModelCatalogsTest {
 
-	static final String CODEX = """
-			{"models":[
-			  {"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list","default_reasoning_level":"low",
-			   "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"ultra"}]},
-			  {"slug":"gpt-reserve","display_name":"GPT-Reserve","visibility":"hide",
-			   "supported_reasoning_levels":[{"effort":"low"}]},
-			  {"slug":"gpt-5.5","display_name":"GPT-5.5","visibility":"list","default_reasoning_level":"medium",
-			   "supported_reasoning_levels":[{"effort":"low"},{"effort":"xhigh"}]}
-			]}""";
+	static ModelCatalog codex() {
+		return new ModelCatalog(AgentProvider.CODEX, List.of(
+				new ModelCatalog.Model("gpt-6-astra", "GPT-6-Astra", null, List.of("low", "medium", "ultra"), "low", null),
+				new ModelCatalog.Model("gpt-5.5", "GPT-5.5", null, List.of("low", "xhigh"), "medium", null)),
+				true, "codex");
+	}
 
-	static final String PI = """
-			provider    model                          context  max-out  thinking  images
-			anthropic   claude-opus-5                  1M       128K     yes       yes
-			openrouter  amazon/nova-lite-v1            300K     5.1K     no        yes
-			openrouter  ~openai/gpt-latest             1.1M     128K     yes       yes
-			""";
+	static ModelCatalog claude() {
+		var noAuto = EnumSet.allOf(AccessMode.class);
+		noAuto.remove(AccessMode.AUTO);
+		return new ModelCatalog(AgentProvider.CLAUDE_CODE, List.of(
+				new ModelCatalog.Model("opus", "Opus", null, List.of("low", "high", "max"), null,
+						EnumSet.allOf(AccessMode.class)),
+				new ModelCatalog.Model("haiku", "Haiku", null, List.of(), null, noAuto)),
+				true, "claude");
+	}
+
+	static ModelCatalogs answering() {
+		return ModelCatalogs.answering((provider, executable) -> switch (provider) {
+			case CODEX -> codex();
+			case CLAUDE_CODE -> claude();
+			case PI -> new ModelCatalog(provider, List.of(ModelCatalog.Model.named("anthropic/claude-opus-5", "Opus")),
+					true, "pi");
+		});
+	}
 
 	private static void onEdt(Runnable work) throws InterruptedException, InvocationTargetException {
 		SwingUtilities.invokeAndWait(work);
@@ -63,53 +73,25 @@ class ModelCatalogsTest {
 	}
 
 	@Test
-	void codexModelsComeWithTheirOwnEffortsAndHiddenOnesAreLeftOut() throws IOException {
-		var models = ModelCatalogs.parseCodex(CODEX);
-
-		assertEquals(List.of("gpt-6-astra", "gpt-5.5"), models.stream().map(model -> model.id()).toList());
-		assertEquals(List.of("low", "medium", "ultra"), models.getFirst().efforts());
-		assertEquals("low", models.getFirst().defaultEffort());
-		assertEquals("GPT-5.5", models.get(1).label());
-		assertThrows(IOException.class, () -> ModelCatalogs.parseCodex("{\"nope\":1}"));
-	}
-
-	@Test
-	void piModelsAreProviderQualifiedAndNonThinkingOnesOnlyTurnThinkingOff() throws IOException {
-		var models = ModelCatalogs.parsePi(PI);
-
-		assertEquals(List.of("anthropic/claude-opus-5", "openrouter/amazon/nova-lite-v1",
-				"openrouter/~openai/gpt-latest"), models.stream().map(model -> model.id()).toList());
-		assertTrue(models.getFirst().efforts().isEmpty(), "unknown per model: the provider's levels apply");
-		assertEquals(List.of("off"), models.get(1).efforts());
-		assertThrows(IOException.class, () -> ModelCatalogs.parsePi("no table here"));
-	}
-
-	@Test
-	void eachProviderIsAskedWithItsOwnCommandAndAnswersAreCached() throws Exception {
-		var calls = new ArrayList<List<String>>();
-		var catalogs = ModelCatalogs.answering(command -> {
-			calls.add(command);
-			return command.contains("debug") ? CODEX : PI;
+	void eachProviderIsAskedOnceAndRefreshAsksAgain() throws Exception {
+		var calls = new ArrayList<String>();
+		var catalogs = ModelCatalogs.answering((provider, executable) -> {
+			calls.add(provider.id() + " " + executable);
+			return codex();
 		});
 
-		var codex = catalogs.catalog(AgentProvider.CODEX, "").get();
 		catalogs.catalog(AgentProvider.CODEX, "").get();
-		var pi = catalogs.catalog(AgentProvider.PI, "/opt/pi").get();
-
-		assertEquals(List.of(List.of("codex", "debug", "models"), List.of("/opt/pi", "--list-models")), calls);
-		assertTrue(codex.live());
-		assertEquals(List.of("low", "xhigh"), codex.effortsFor("gpt-5.5"));
-		assertEquals(AgentProvider.CODEX.efforts(), codex.effortsFor("typed-by-hand"));
-		assertEquals(3, pi.models().size());
-
+		catalogs.catalog(AgentProvider.CODEX, "").get();
+		catalogs.catalog(AgentProvider.CODEX, "/opt/codex").get();
 		catalogs.refresh(AgentProvider.CODEX, "").get();
-		assertEquals(3, calls.size());
+
+		assertEquals(List.of("codex codex", "codex /opt/codex", "codex codex"), calls);
 	}
 
 	@Test
-	void aCliThatCannotBeAskedFallsBackToTheBuiltInListWithAReason() throws Exception {
-		var catalogs = ModelCatalogs.answering(command -> {
-			throw new UncheckedIOException(new IOException("exit code 1: not logged in"));
+	void aCliThatCannotBeAskedFallsBackToTheConnectorsBuiltInListWithAReason() throws Exception {
+		var catalogs = ModelCatalogs.answering((provider, executable) -> {
+			throw new IOException("exit code 1: not logged in");
 		});
 
 		var codex = catalogs.catalog(AgentProvider.CODEX, "").get();
@@ -122,7 +104,6 @@ class ModelCatalogsTest {
 
 	@Test
 	void theFormOffersTheProvidersModelsAndClearsModelAndEffortWhenTheProviderChanges() throws Exception {
-		var catalogs = ModelCatalogs.answering(command -> CODEX);
 		var profile = new Profile();
 		profile.setName("P");
 		profile.getHarness().setProvider("codex");
@@ -130,7 +111,7 @@ class ModelCatalogsTest {
 		profile.getHarness().setEffort("xhigh");
 
 		var forms = new ProfileForm[1];
-		onEdt(() -> forms[0] = new ProfileForm(profile, catalogs));
+		onEdt(() -> forms[0] = new ProfileForm(profile, answering()));
 		flushEdt();
 
 		var before = new Profile[1];
@@ -140,15 +121,36 @@ class ModelCatalogsTest {
 		assertEquals("xhigh", before[0].getHarness().getEffort());
 
 		var after = new Profile[1];
-		onEdt(() -> {
-			var tabs = findProviderBox(forms[0]);
-			tabs.setSelectedItem(AgentProvider.CLAUDE_CODE);
-		});
+		onEdt(() -> box(forms[0], AgentProvider.CLAUDE_CODE).setSelectedItem(AgentProvider.CLAUDE_CODE));
 		flushEdt();
 		onEdt(() -> after[0] = forms[0].toProfile());
 		assertEquals("claude-code", after[0].getHarness().getProvider());
 		assertNull(after[0].getHarness().getModel());
 		assertNull(after[0].getHarness().getEffort());
+	}
+
+	@Test
+	void choosingAModelWithoutAutoModeLetsGoOfAuto() throws Exception {
+		var profile = new Profile();
+		profile.setName("P");
+		profile.getHarness().setProvider("claude-code");
+		profile.getHarness().setModel("opus");
+		profile.getHarness().setAccessMode("auto");
+
+		var forms = new ProfileForm[1];
+		onEdt(() -> forms[0] = new ProfileForm(profile, answering()));
+		flushEdt();
+		var results = new Object[3];
+		onEdt(() -> {
+			results[0] = forms[0].toProfile().getHarness().getAccessMode();
+			box(forms[0], "haiku-model-box").setSelectedItem("haiku");
+			var read = forms[0].toProfile().getHarness();
+			results[1] = read.getAccessMode();
+			results[2] = box(forms[0], "effort-box").isEnabled();
+		});
+		assertEquals("auto", results[0]);
+		assertNull(results[1], "Haiku has no auto mode, so the default applies");
+		assertEquals(false, results[2], "and no effort setting");
 	}
 
 	@Test
@@ -159,21 +161,34 @@ class ModelCatalogsTest {
 		assertEquals(1, ProfileValidator.validate(profile, List.of()).size());
 
 		var read = new Profile[1];
-		onEdt(() -> read[0] = new ProfileForm(profile, ModelCatalogs.answering(command -> "")).toProfile());
+		onEdt(() -> read[0] = new ProfileForm(profile, answering()).toProfile());
 		assertEquals("anthropic", read[0].getHarness().getProvider());
 	}
 
+	/**
+	 * A combo box on the form: the provider box (marker is a provider), the model box
+	 * ("haiku-model-box") or the effort box ("effort-box").
+	 */
 	@SuppressWarnings("unchecked")
-	private static javax.swing.JComboBox<Object> findProviderBox(java.awt.Container root) {
-		var found = new AtomicInteger();
+	static JComboBox<Object> box(java.awt.Container root, Object marker) {
 		var result = new Object[1];
 		walk(root, component -> {
-			if (component instanceof javax.swing.JComboBox<?> box && box.getItemCount() > 0
-					&& box.getItemAt(1) == AgentProvider.CLAUDE_CODE && found.getAndIncrement() == 0) {
+			if (result[0] != null || !(component instanceof JComboBox<?> box)) {
+				return;
+			}
+			var matches = switch (marker) {
+				case AgentProvider provider -> box.getItemCount() > 1 && box.getItemAt(1) == AgentProvider.CLAUDE_CODE;
+				case String name when name.equals("haiku-model-box") -> box.isEditable();
+				case String name when name.equals("effort-box") ->
+						!box.isEditable() && box.getItemCount() > 0 && box.getItemAt(0) instanceof String
+								&& (box.getItemCount() == 1 || box.getItemAt(1) instanceof String);
+				default -> box.getItemCount() > 1 && box.getItemAt(1) == marker;
+			};
+			if (matches) {
 				result[0] = box;
 			}
 		});
-		return (javax.swing.JComboBox<Object>) result[0];
+		return (JComboBox<Object>) result[0];
 	}
 
 	private static void walk(java.awt.Component component, java.util.function.Consumer<java.awt.Component> visit) {

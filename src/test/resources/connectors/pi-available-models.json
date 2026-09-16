@@ -1,0 +1,80 @@
+{
+ "id": "1",
+ "type": "response",
+ "command": "get_available_models",
+ "success": true,
+ "data": {
+  "models": [
+   {
+    "id": "claude-fable-5-1",
+    "name": "Claude Fable 5.1",
+    "api": "anthropic-messages",
+    "provider": "anthropic",
+    "baseUrl": "https://api.anthropic.com",
+    "reasoning": true,
+    "input": [
+     "text",
+     "image"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 128000,
+    "thinkingLevelMap": {
+     "off": null,
+     "xhigh": "xhigh",
+     "max": "max"
+    }
+   },
+   {
+    "id": "claude-haiku-4-5",
+    "name": "Claude Haiku 4.5 (latest)",
+    "api": "anthropic-messages",
+    "provider": "anthropic",
+    "baseUrl": "https://api.anthropic.com",
+    "reasoning": true,
+    "input": [
+     "text",
+     "image"
+    ],
+    "contextWindow": 200000,
+    "maxTokens": 64000
+   },
+   {
+    "id": "anthropic/claude-3-haiku",
+    "name": "Anthropic: Claude 3 Haiku",
+    "api": "anthropic-messages",
+    "baseUrl": "https://openrouter.ai/api",
+    "provider": "openrouter",
+    "reasoning": false,
+    "input": [
+     "text",
+     "image"
+    ],
+    "contextWindow": 200000,
+    "maxTokens": 4096
+   },
+   {
+    "id": "anthropic/claude-fable-5",
+    "name": "Anthropic: Claude Fable 5",
+    "api": "anthropic-messages",
+    "baseUrl": "https://openrouter.ai/api",
+    "provider": "openrouter",
+    "reasoning": true,
+    "thinkingLevelMap": {
+     "off": null,
+     "minimal": null,
+     "low": "low",
+     "medium": "medium",
+     "high": "high",
+     "xhigh": "xhigh",
+     "max": "max"
+    },
+    "input": [
+     "text",
+     "image"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 128000
+   }
+  ]
+ }
+}
