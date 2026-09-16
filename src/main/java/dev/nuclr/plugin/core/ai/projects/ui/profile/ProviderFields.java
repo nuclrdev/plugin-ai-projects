@@ -1,6 +1,7 @@
 package dev.nuclr.plugin.core.ai.projects.ui.profile;
 
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Component;
 import java.util.ArrayList;
 import java.util.List;
@@ -46,6 +47,9 @@ final class ProviderFields {
 	private final JTextField executable = new JTextField(28);
 	private final JComboBox<String> model = new JComboBox<>();
 	private final JButton refresh;
+	private final BusySpinner spinner = new BusySpinner();
+	private final CardLayout refreshCards = new CardLayout();
+	private final JPanel refreshSlot = new JPanel(refreshCards);
 	private final WrappingNote modelNote = new WrappingNote();
 	private final JComboBox<String> effort = new JComboBox<>();
 	private final WrappingNote effortNote = new WrappingNote();
@@ -114,8 +118,18 @@ final class ProviderFields {
 		refresh = Glyphs.decorate(new JButton(), Glyphs.REFRESH, "");
 		refresh.setToolTipText("Ask the provider for its models again");
 		refresh.addActionListener(event -> requestCatalog(true));
+		// The spinner takes the refresh button's place while a lookup runs, so the row
+		// never changes width and the one control that would start another lookup is
+		// out of the way.
+		spinner.setToolTipText("Asking the provider for its models");
+		var busy = new JPanel(new java.awt.GridBagLayout());
+		busy.setOpaque(false);
+		busy.add(spinner);
+		refreshSlot.setOpaque(false);
+		refreshSlot.add(refresh, "idle");
+		refreshSlot.add(busy, "busy");
 		modelRow.add(model, BorderLayout.CENTER);
-		modelRow.add(refresh, BorderLayout.EAST);
+		modelRow.add(refreshSlot, BorderLayout.EAST);
 
 		effort.setRenderer(new DefaultListCellRenderer() {
 			private static final long serialVersionUID = 1L;
@@ -375,20 +389,55 @@ final class ProviderFields {
 		var chosen = provider.getSelectedItem() instanceof AgentProvider each ? each : null;
 		var generation = ++request;
 		if (chosen == null) {
+			setLoading(null);
 			refresh.setEnabled(false);
 			modelNote.setText("Choose a provider to pick from its models.");
 			return;
 		}
-		refresh.setEnabled(false);
-		modelNote.setText("Asking " + chosen.displayName() + " for its models...");
 		var command = executable.getText();
 		var future = again ? catalogs.refresh(chosen, command) : catalogs.catalog(chosen, command);
+		if (!future.isDone()) {
+			// A cached answer arrives at once; only a real wait gets a spinner, so it never flickers.
+			setLoading(chosen);
+		}
 		future.thenAccept(result -> SwingUtilities.invokeLater(() -> {
 			// A slow answer for a provider that is no longer chosen is ignored.
 			if (generation == request) {
 				showCatalog(result);
 			}
 		}));
+	}
+
+	/**
+	 * Show or clear the loading state: a spinner where the refresh button was, a
+	 * placeholder in the empty model box, and a note naming who is being asked.
+	 *
+	 * @param asking the provider being asked, or {@code null} when nothing is loading
+	 */
+	private void setLoading(AgentProvider asking) {
+		var editor = modelEditor();
+		if (asking == null) {
+			spinner.stop();
+			refreshCards.show(refreshSlot, "idle");
+			refresh.setEnabled(selectedProvider() != null);
+			editor.putClientProperty("JTextField.placeholderText", null);
+			model.putClientProperty("JTextField.placeholderText", null);
+		} else {
+			refreshCards.show(refreshSlot, "busy");
+			spinner.start();
+			// FlatLaf reads an editable combo box's placeholder from the box, not its editor.
+			model.putClientProperty("JTextField.placeholderText", "Loading models...");
+			editor.putClientProperty("JTextField.placeholderText", "Loading models...");
+			modelNote.setText("Asking " + asking.displayName() + " for its models...");
+			modelNote.setToolTipText(null);
+		}
+		editor.repaint();
+		model.repaint();
+	}
+
+	/** Whether a lookup is running, for tests. */
+	boolean isLoading() {
+		return spinner.isRunning();
 	}
 
 	private void showCatalog(ModelCatalog result) {
@@ -404,7 +453,7 @@ final class ProviderFields {
 		} finally {
 			updating = false;
 		}
-		refresh.setEnabled(true);
+		setLoading(null);
 		modelNote.setText(result.note());
 		modelNote.setToolTipText(result.note());
 		modelChanged();
