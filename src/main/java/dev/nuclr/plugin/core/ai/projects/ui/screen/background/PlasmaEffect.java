@@ -1,6 +1,5 @@
 package dev.nuclr.plugin.core.ai.projects.ui.screen.background;
 
-import java.awt.AlphaComposite;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RadialGradientPaint;
@@ -22,10 +21,9 @@ import java.util.stream.IntStream;
  * handed to {@code drawImage} with bilinear filtering, which the Direct3D and
  * OpenGL pipelines turn into one filtered textured quad. Scaling on the CPU meant
  * building and uploading a full-desktop image every frame.
- * <li>The plasma drifts slowly, so it is only rendered every {@link #KEYFRAME_MILLIS}
- * and the frames between are crossfades of the two latest keyframes. The images
- * are written through the raster rather than a stolen data array, so Java2D keeps
- * them managed: each keyframe is uploaded once and blended as a cached texture.
+ * <li>A frame that small renders in about a millisecond, so every paint gets a fresh
+ * one. Crossfading sparse keyframes was tried and looked jerky: a dissolve between
+ * two poses is not motion.
  * <li>The vignette and scanlines never change and sit in a cached overlay, which
  * the pipeline also keeps as a texture.
  * </ul>
@@ -41,10 +39,8 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 	/** Framebuffer pixels per desktop pixel, per axis. The GPU's bilinear filter hides the rest. */
 	private static final int DIVISOR = 6;
 	private static final int MAX_FRAME_WIDTH = 320;
-	/** Paint rate. Each paint also redraws the agent windows above, so fewer is better. */
-	private static final int FRAME_DELAY_MILLIS = 80;
-	/** How often a new plasma frame is computed; paints in between crossfade. */
-	private static final int KEYFRAME_MILLIS = 240;
+	/** Paint rate. Each paint also redraws the agent windows above, so no faster than this. */
+	private static final int FRAME_DELAY_MILLIS = 40;
 	/** Softens the radial fields' centres, which are otherwise a visible cusp. */
 	private static final double RADIAL_SOFTNESS = 6.0;
 	private static final int TABLE_BITS = 12;
@@ -79,17 +75,11 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 	private int[] pixels;
 	/** Per framebuffer column, 7 doubles: planar sin/cos of x, of warped field 2, of field 3, and the warp. */
 	private double[] columns;
-	/** The keyframe being faded out and the one being faded in. */
-	private BufferedImage older;
-	private BufferedImage newer;
-	/** Which keyframe {@link #newer} holds, or {@code Long.MIN_VALUE} for none. */
-	private long newerKey = Long.MIN_VALUE;
+	private BufferedImage frame;
 
 	// Software fallback only, allocated on first use.
 	private BufferedImage softwareOutput;
 	private int[] softwarePixels;
-	/** The two keyframes crossfaded at framebuffer size. */
-	private int[] blended;
 	private int[] wideRows;
 	/** Per output column: the source column to its left and the 8-bit blend towards the next. */
 	private int[] sourceColumn;
@@ -124,12 +114,9 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 	public void reset() {
 		pixels = null;
 		columns = null;
-		older = null;
-		newer = null;
-		newerKey = Long.MIN_VALUE;
+		frame = null;
 		softwareOutput = null;
 		softwarePixels = null;
-		blended = null;
 		wideRows = null;
 		finishLayer.discard();
 	}
@@ -138,22 +125,9 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 	public void paint(Graphics2D graphics, int width, int height, long elapsedMillis) {
 		if (width <= 0 || height <= 0) return;
 		ensureFrame(width, height);
-
-		// Fade from keyframe n to n + 1 across slot n. The picture runs one keyframe
-		// ahead of the clock, which nobody can see in something this slow.
-		var key = Math.floorDiv(elapsedMillis, KEYFRAME_MILLIS);
-		if (key != newerKey) {
-			if (key == newerKey + 1) {
-				var swap = older;
-				older = newer;
-				newer = swap;
-			} else {
-				renderInto(older, key);
-			}
-			renderInto(newer, key + 1);
-			newerKey = key + 1;
-		}
-		var fade = (float) (elapsedMillis - key * KEYFRAME_MILLIS) / KEYFRAME_MILLIS;
+		// The plasma runs on a clock six times slower than real time: a slow drift
+		// rather than a demo-party strobe, since it sits behind people's work.
+		render(elapsedMillis / 6_000.0);
 
 		var g = (Graphics2D) graphics.create();
 		try {
@@ -161,7 +135,7 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 				// A software surface - remote desktop, a disabled pipeline, or an image.
 				// There Java2D's bilinear scale and alpha blend cost 45ms a frame at
 				// 2560x1400, so blend and scale here instead and hand over a plain blit.
-				paintInSoftware(g, width, height, fade);
+				paintInSoftware(g, width, height);
 				return;
 			}
 			g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
@@ -169,12 +143,8 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 			// overhang past the desktop is clipped.
 			var scaledWidth = frameWidth * divisor;
 			var scaledHeight = frameHeight * divisor;
-			g.drawImage(older, 0, 0, scaledWidth, scaledHeight, null);
-			if (fade > 0) {
-				g.setComposite(AlphaComposite.SrcOver.derive(Math.min(1f, fade)));
-				g.drawImage(newer, 0, 0, scaledWidth, scaledHeight, null);
-				g.setComposite(AlphaComposite.SrcOver);
-			}
+			frame.getRaster().setDataElements(0, 0, frameWidth, frameHeight, pixels);
+			g.drawImage(frame, 0, 0, scaledWidth, scaledHeight, null);
 			finishLayer.paint(g, width, height, PlasmaEffect::paintFinish);
 		} finally {
 			g.dispose();
@@ -182,22 +152,15 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 	}
 
 	/**
-	 * The fallback path: crossfade the keyframes at framebuffer size, then a separable
+	 * The fallback path: a separable
 	 * fixed-point bilinear upscale - widen each framebuffer row once, then give each
 	 * desktop row one blend of two widened rows - into a full-size image for a 1:1 blit.
 	 */
-	private void paintInSoftware(Graphics2D g, int width, int height, float fade) {
+	private void paintInSoftware(Graphics2D g, int width, int height) {
 		ensureSoftwareBuffers(width, height);
 		var w = frameWidth;
 		var h = frameHeight;
-		// Copies, not the backing arrays, so the keyframes stay managed for the GPU path.
-		var source = (int[]) older.getRaster().getDataElements(0, 0, w, h, blended);
-		var next = (int[]) newer.getRaster().getDataElements(0, 0, w, h, pixels);
-		blended = source;
-		var blend = Math.round(Math.min(1f, fade) * 256);
-		for (var i = 0; i < source.length; i++) {
-			source[i] = mix(source[i], next[i], blend);
-		}
+		var source = pixels;
 		var wide = wideRows;
 		var target = softwarePixels;
 		IntStream.range(0, h).parallel().forEach(row -> {
@@ -271,26 +234,14 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 		var d = Math.max(DIVISOR, (width + MAX_FRAME_WIDTH - 1) / MAX_FRAME_WIDTH);
 		var w = Math.max(1, (width + d - 1) / d);
 		var h = Math.max(1, (height + d - 1) / d);
-		if (older != null && w == frameWidth && h == frameHeight && d == divisor) return;
+		if (frame != null && w == frameWidth && h == frameHeight && d == divisor) return;
 		divisor = d;
 		frameWidth = w;
 		frameHeight = h;
 		pixels = new int[w * h];
-		blended = null;
 		softwareOutput = null;
 		columns = new double[w * 7];
-		older = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
-		newer = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
-		newerKey = Long.MIN_VALUE;
-	}
-
-	private void renderInto(BufferedImage image, long key) {
-		// The plasma runs on a clock six times slower than real time: a slow drift
-		// rather than a demo-party strobe, since it sits behind people's work.
-		render(key * KEYFRAME_MILLIS / 6_000.0);
-		// Through the raster, not DataBufferInt.getData(): taking the array would make
-		// the image unmanaged and re-uploaded on every draw instead of once.
-		image.getRaster().setDataElements(0, 0, frameWidth, frameHeight, pixels);
+		frame = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
 	}
 
 	/**
