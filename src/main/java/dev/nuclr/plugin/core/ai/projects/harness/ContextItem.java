@@ -41,7 +41,28 @@ public record ContextItem(Kind kind, String label, String detail, Provenance sou
 		ALLOWED_ROOT("Allowed roots"),
 
 		/** A free-form context variable. */
-		VARIABLE("Context variables");
+		VARIABLE("Context variables"),
+
+		/** Project knowledge the agent is pointed at: a document, folder or URL. */
+		KNOWLEDGE("Project knowledge"),
+
+		/** A rule for what the agent loads into its context. */
+		LOADING_RULE("Context-loading rules"),
+
+		/** A built-in tool the harness grants. */
+		TOOL("Tools"),
+
+		/** Software the agent may drive. */
+		SOFTWARE("Software access"),
+
+		/** Hardware the agent may reach. */
+		HARDWARE("Hardware access"),
+
+		/** A host or network the agent may reach. */
+		NETWORK("Network access"),
+
+		/** The sandbox, or a limit on a run. */
+		LIMIT("Runtime and limits");
 
 		private final String groupLabel;
 

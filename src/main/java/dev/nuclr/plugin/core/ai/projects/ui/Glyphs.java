@@ -120,6 +120,22 @@ public final class Glyphs {
 	public static final String HARNESS = pick("⚙️", "⚙");
 	/** The shared context. */
 	public static final String CONTEXT = pick("💡", "◇");
+	/** A built-in tool the harness grants. */
+	public static final String TOOLS = pick("🔧", "⚙");
+	/** Software the agent may drive. */
+	public static final String SOFTWARE = pick("📦", "▣");
+	/** Hardware the agent may reach. */
+	public static final String HARDWARE = pick("🖥️", "▭");
+	/** Network access. */
+	public static final String NETWORK = pick("🌐", "◎");
+	/** An execution limit or the sandbox. */
+	public static final String LIMIT = pick("⏱️", "◷");
+	/** Project knowledge. */
+	public static final String KNOWLEDGE = pick("📚", "¶");
+	/** A context-loading rule. */
+	public static final String RULE = pick("📏", "※");
+	/** The project configuration. */
+	public static final String CONFIGURE = pick("🛠️", "⚒");
 
 	// Commands.
 	/** Create something. */
@@ -439,6 +455,13 @@ public final class Glyphs {
 			case PERMISSION -> PERMISSION;
 			case ALLOWED_ROOT -> ROOT;
 			case VARIABLE -> VARIABLE;
+			case KNOWLEDGE -> KNOWLEDGE;
+			case LOADING_RULE -> RULE;
+			case TOOL -> TOOLS;
+			case SOFTWARE -> SOFTWARE;
+			case HARDWARE -> HARDWARE;
+			case NETWORK -> NETWORK;
+			case LIMIT -> LIMIT;
 		};
 	}
 

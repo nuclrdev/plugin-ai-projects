@@ -90,12 +90,40 @@ public final class HarnessPanel extends JPanel {
 		for (var root : harness.allowedRoots()) {
 			rows.add(new Row(new GlyphText(Glyphs.ROOT, "Allowed root"), root, rootSource));
 		}
+		if (harness.sandbox() != null) {
+			rows.add(new Row(new GlyphText(Glyphs.LIMIT, "Sandbox"), text(harness.sandbox()),
+					harness.source(EffectiveHarness.SANDBOX).label()));
+		}
+		addAll(rows, Glyphs.TOOLS, "Tool", harness.tools(), harness.source(EffectiveHarness.TOOLS).label());
+		addAll(rows, Glyphs.SOFTWARE, "Software", harness.software(),
+				harness.source(EffectiveHarness.SOFTWARE).label());
+		addAll(rows, Glyphs.HARDWARE, "Hardware", harness.hardware(),
+				harness.source(EffectiveHarness.HARDWARE).label());
+		addAll(rows, Glyphs.NETWORK, "Network", harness.network(), harness.source(EffectiveHarness.NETWORK).label());
+		if (harness.maxTurns() != null) {
+			rows.add(new Row(new GlyphText(Glyphs.LIMIT, "Max turns"), String.valueOf(harness.maxTurns()),
+					harness.source(EffectiveHarness.MAX_TURNS).label()));
+		}
+		if (harness.timeoutMinutes() != null) {
+			rows.add(new Row(new GlyphText(Glyphs.LIMIT, "Timeout"), harness.timeoutMinutes() + " min",
+					harness.source(EffectiveHarness.TIMEOUT_MINUTES).label()));
+		}
+		if (harness.maxBudgetUsd() != null) {
+			rows.add(new Row(new GlyphText(Glyphs.LIMIT, "Max budget"), "$" + harness.maxBudgetUsd(),
+					harness.source(EffectiveHarness.MAX_BUDGET_USD).label()));
+		}
 		var instructionSource = harness.source(EffectiveHarness.SHARED_INSTRUCTIONS).label();
 		for (var instruction : harness.sharedInstructions()) {
 			rows.add(new Row(new GlyphText(Glyphs.INSTRUCTION, "Shared instruction"), instruction,
 					instructionSource));
 		}
 		return rows;
+	}
+
+	private static void addAll(List<Row> rows, String glyph, String field, List<String> values, String source) {
+		for (var value : values) {
+			rows.add(new Row(new GlyphText(glyph, field), value, source));
+		}
 	}
 
 	private static String text(String value) {

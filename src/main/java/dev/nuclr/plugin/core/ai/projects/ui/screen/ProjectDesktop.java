@@ -199,6 +199,9 @@ public final class ProjectDesktop extends JPanel
 				"Discard the saved layout and cascade afresh", this::resetLayout));
 		bar.add(ribbonButton(Glyphs.BROADCAST, "Broadcast...",
 				"Send one instruction to several agents (Ctrl+Shift+B)", this::broadcast));
+		bar.add(ribbonButton(Glyphs.CONFIGURE, "Configure...",
+				"Project configuration: the harness (what agents can do) and context (what they know)",
+				this::editConfiguration));
 		bar.add(ribbonButton(Glyphs.CONTEXT, "Context...",
 				"Show and edit the project's shared context", () -> showResolvedContext(null)));
 		bar.add(ribbonButton(Glyphs.HARNESS, "Harness...",
@@ -678,6 +681,27 @@ public final class ProjectDesktop extends JPanel
 				() -> editHarness(agentId));
 		showUtilityFrame(Glyphs.HARNESS, "Harness - " + label,
 				panel, edit, new Dimension(780, 500));
+	}
+
+	/**
+	 * Edit the whole project configuration - name, harness and context - in one
+	 * tabbed dialog.
+	 */
+	public void editConfiguration() {
+
+		var edited = ProjectConfigurationDialog.edit(this, store.project());
+		if (edited == null) {
+			return;
+		}
+		var project = store.project();
+		project.setName(edited.name());
+		project.setDescription(edited.description());
+		project.setHarness(edited.harness());
+		project.setContext(edited.context());
+		store.markProjectDirty();
+		notifier.setBaseTitle(title());
+		afterProjectChanged();
+		warnAboutRunningAgents("The project configuration changed.");
 	}
 
 	/**

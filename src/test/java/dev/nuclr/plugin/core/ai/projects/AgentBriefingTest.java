@@ -109,4 +109,20 @@ class AgentBriefingTest {
 		assertTrue(briefing.isEmpty(), briefing.text());
 		assertEquals("", briefing.text());
 	}
+
+	@Test
+	void projectKnowledgeAndLoadingRulesAreListedWithoutTheirContent() throws IOException {
+
+		Files.writeString(root.resolve("ARCHITECTURE.md"), "Should not be pasted in.");
+		store.project().getContext().getKnowledge().add("ARCHITECTURE.md");
+		store.project().getContext().getLoadingRules().add("exclude: target/**");
+
+		var briefing = briefing(agent(null));
+
+		assertTrue(briefing.text().contains("## Project knowledge"), briefing.text());
+		assertTrue(briefing.text().contains("- ARCHITECTURE.md"), briefing.text());
+		assertTrue(briefing.text().contains("- exclude: target/**"), briefing.text());
+		assertTrue(!briefing.text().contains("Should not be pasted in."), briefing.text());
+		assertEquals(2, briefing.references());
+	}
 }

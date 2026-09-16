@@ -228,4 +228,43 @@ class HarnessResolverTest {
 		assertEquals(java.util.Map.of("VALID", "yes"), resolved.env());
 		assertEquals(List.of("--valid"), resolved.mcpServers().getFirst().getArgs());
 	}
+
+	@Test
+	void capabilitiesAndLimitsInheritAndOverrideLikeEveryOtherField() {
+
+		var project = project();
+		var harness = project.getHarness();
+		harness.setSandbox("docker");
+		harness.setTools(List.of("Bash", "Edit"));
+		harness.setSoftware(List.of("git"));
+		harness.setHardware(List.of("gpu"));
+		harness.setNetwork(List.of("github.com"));
+		harness.setMaxTurns(40);
+		harness.setTimeoutMinutes(30);
+		harness.setMaxBudgetUsd(5.0);
+
+		var agent = agent(project, null);
+		agent.getHarness().setTools(List.of());
+		agent.getHarness().setMaxTurns(10);
+
+		var resolved = HarnessResolver.resolve(project, agent);
+
+		assertEquals("docker", resolved.sandbox());
+		assertEquals(List.of(), resolved.tools());
+		assertEquals(Provenance.AGENT, resolved.source(EffectiveHarness.TOOLS));
+		assertEquals(List.of("git"), resolved.software());
+		assertEquals(List.of("gpu"), resolved.hardware());
+		assertEquals(List.of("github.com"), resolved.network());
+		assertEquals(10, resolved.maxTurns());
+		assertEquals(Provenance.AGENT, resolved.source(EffectiveHarness.MAX_TURNS));
+		assertEquals(30, resolved.timeoutMinutes());
+		assertEquals(5.0, resolved.maxBudgetUsd());
+		assertEquals(Provenance.PROJECT, resolved.source(EffectiveHarness.MAX_BUDGET_USD));
+
+		var flattened = HarnessResolver.flatten(harness, agent.getHarness());
+		assertEquals(List.of(), flattened.getTools());
+		assertEquals(10, flattened.getMaxTurns());
+		assertEquals("docker", flattened.getSandbox());
+		assertEquals(List.of("github.com"), flattened.getNetwork());
+	}
 }

@@ -7,9 +7,9 @@ import java.util.Map;
 import lombok.Data;
 
 /**
- * The explicit description of <em>how</em> an agent is run: which executable,
- * which model and provider, with what environment, permissions, tools and
- * roots.
+ * The explicit description of <em>how</em> an agent is run and what it can do:
+ * which executable, model and provider, with what environment, permissions,
+ * tools, software, hardware and network access, and within which limits.
  *
  * <p>The same type is used in three places, which is why every field is
  * nullable rather than defaulted:
@@ -69,6 +69,30 @@ public class HarnessSpec {
 	 */
 	private List<String> sharedInstructions;
 
+	/** Sandbox or runtime the agent runs in, e.g. {@code local}, {@code docker}, {@code devcontainer}. */
+	private String sandbox;
+
+	/** Built-in tools the agent may use, in the harness's own vocabulary, e.g. {@code Bash}, {@code Edit}. */
+	private List<String> tools;
+
+	/** Software the agent may drive: programs, package managers, services. */
+	private List<String> software;
+
+	/** Hardware the agent may reach: GPUs, devices, ports. */
+	private List<String> hardware;
+
+	/** Hosts or networks the agent may reach; an empty list means no network. */
+	private List<String> network;
+
+	/** Most agentic turns a run may take. */
+	private Integer maxTurns;
+
+	/** Longest a run may take, in minutes. */
+	private Integer timeoutMinutes;
+
+	/** Most a run may spend, in US dollars. */
+	private Double maxBudgetUsd;
+
 	/** Creates an all-inherit spec: every field {@code null}. */
 	public HarnessSpec() {}
 
@@ -76,7 +100,9 @@ public class HarnessSpec {
 	public boolean isEmpty() {
 		return executable == null && startupArgs == null && provider == null && model == null
 				&& env == null && permissions == null && mcpServers == null
-				&& allowedRoots == null && sharedInstructions == null;
+				&& allowedRoots == null && sharedInstructions == null
+				&& sandbox == null && tools == null && software == null && hardware == null
+				&& network == null && maxTurns == null && timeoutMinutes == null && maxBudgetUsd == null;
 	}
 
 	/** A deep copy; mutating the result never touches the original. */
@@ -92,6 +118,14 @@ public class HarnessSpec {
 				.filter(java.util.Objects::nonNull).map(McpServerSpec::copy).toList();
 		copy.allowedRoots = copyValues(allowedRoots);
 		copy.sharedInstructions = copyValues(sharedInstructions);
+		copy.sandbox = sandbox;
+		copy.tools = copyValues(tools);
+		copy.software = copyValues(software);
+		copy.hardware = copyValues(hardware);
+		copy.network = copyValues(network);
+		copy.maxTurns = maxTurns;
+		copy.timeoutMinutes = timeoutMinutes;
+		copy.maxBudgetUsd = maxBudgetUsd;
 		return copy;
 	}
 

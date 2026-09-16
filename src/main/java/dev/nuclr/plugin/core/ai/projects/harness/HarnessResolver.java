@@ -72,6 +72,14 @@ public final class HarnessResolver {
 		List<String> permissions = List.of();
 		List<String> allowedRoots = List.of();
 		List<String> sharedInstructions = List.of();
+		String sandbox = null;
+		List<String> tools = List.of();
+		List<String> software = List.of();
+		List<String> hardware = List.of();
+		List<String> network = List.of();
+		Integer maxTurns = null;
+		Integer timeoutMinutes = null;
+		Double maxBudgetUsd = null;
 		var env = new LinkedHashMap<String, String>();
 		var mcpServers = new LinkedHashMap<String, McpServerSpec>();
 		var sources = new LinkedHashMap<String, Provenance>();
@@ -106,6 +114,38 @@ public final class HarnessResolver {
 				sharedInstructions = copyValues(spec.getSharedInstructions());
 				sources.put(EffectiveHarness.SHARED_INSTRUCTIONS, level.provenance());
 			}
+			if (spec.getSandbox() != null) {
+				sandbox = spec.getSandbox();
+				sources.put(EffectiveHarness.SANDBOX, level.provenance());
+			}
+			if (spec.getTools() != null) {
+				tools = copyValues(spec.getTools());
+				sources.put(EffectiveHarness.TOOLS, level.provenance());
+			}
+			if (spec.getSoftware() != null) {
+				software = copyValues(spec.getSoftware());
+				sources.put(EffectiveHarness.SOFTWARE, level.provenance());
+			}
+			if (spec.getHardware() != null) {
+				hardware = copyValues(spec.getHardware());
+				sources.put(EffectiveHarness.HARDWARE, level.provenance());
+			}
+			if (spec.getNetwork() != null) {
+				network = copyValues(spec.getNetwork());
+				sources.put(EffectiveHarness.NETWORK, level.provenance());
+			}
+			if (spec.getMaxTurns() != null) {
+				maxTurns = spec.getMaxTurns();
+				sources.put(EffectiveHarness.MAX_TURNS, level.provenance());
+			}
+			if (spec.getTimeoutMinutes() != null) {
+				timeoutMinutes = spec.getTimeoutMinutes();
+				sources.put(EffectiveHarness.TIMEOUT_MINUTES, level.provenance());
+			}
+			if (spec.getMaxBudgetUsd() != null) {
+				maxBudgetUsd = spec.getMaxBudgetUsd();
+				sources.put(EffectiveHarness.MAX_BUDGET_USD, level.provenance());
+			}
 			if (spec.getEnv() != null) {
 				for (var entry : spec.getEnv().entrySet()) {
 					if (entry.getKey() != null && entry.getValue() != null) {
@@ -139,6 +179,14 @@ public final class HarnessResolver {
 				List.copyOf(mcpServers.values()),
 				allowedRoots,
 				sharedInstructions,
+				sandbox,
+				tools,
+				software,
+				hardware,
+				network,
+				maxTurns,
+				timeoutMinutes,
+				maxBudgetUsd,
 				sources);
 	}
 
@@ -176,6 +224,30 @@ public final class HarnessResolver {
 		}
 		if (override.getSharedInstructions() != null) {
 			merged.setSharedInstructions(copyValues(override.getSharedInstructions()));
+		}
+		if (override.getSandbox() != null) {
+			merged.setSandbox(override.getSandbox());
+		}
+		if (override.getTools() != null) {
+			merged.setTools(copyValues(override.getTools()));
+		}
+		if (override.getSoftware() != null) {
+			merged.setSoftware(copyValues(override.getSoftware()));
+		}
+		if (override.getHardware() != null) {
+			merged.setHardware(copyValues(override.getHardware()));
+		}
+		if (override.getNetwork() != null) {
+			merged.setNetwork(copyValues(override.getNetwork()));
+		}
+		if (override.getMaxTurns() != null) {
+			merged.setMaxTurns(override.getMaxTurns());
+		}
+		if (override.getTimeoutMinutes() != null) {
+			merged.setTimeoutMinutes(override.getTimeoutMinutes());
+		}
+		if (override.getMaxBudgetUsd() != null) {
+			merged.setMaxBudgetUsd(override.getMaxBudgetUsd());
 		}
 		if (override.getEnv() != null) {
 			var env = merged.getEnv() == null ? new LinkedHashMap<String, String>()

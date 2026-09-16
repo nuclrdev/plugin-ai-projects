@@ -9,8 +9,8 @@ import lombok.Data;
 
 /**
  * What an agent is <em>told</em>, as opposed to how it is run: instruction
- * documents, skills, files injected into its context, and free-form context
- * variables.
+ * documents, skills, project knowledge, files injected into its context,
+ * context-loading rules and free-form context variables.
  *
  * <p>Unlike {@link HarnessSpec}, context is <strong>additive</strong>. The
  * project's context applies to every agent and an agent's own context is
@@ -41,12 +41,22 @@ public class ContextSpec {
 	/** Free-form context variables shown verbatim in the resolved-context view. */
 	private Map<String, String> variables = new LinkedHashMap<>();
 
+	/**
+	 * Project knowledge the agent is pointed at rather than handed: documents,
+	 * folders or URLs it should consult when relevant.
+	 */
+	private List<String> knowledge = new ArrayList<>();
+
+	/** Rules for what the agent loads into its context, e.g. {@code exclude: target/**}. */
+	private List<String> loadingRules = new ArrayList<>();
+
 	/** Creates an empty context. */
 	public ContextSpec() {}
 
 	/** {@code true} when this context contributes nothing. */
 	public boolean isEmpty() {
 		return isBlank(instructions) && isBlank(skills) && isBlank(injectedFiles)
+				&& isBlank(knowledge) && isBlank(loadingRules)
 				&& (variables == null || variables.isEmpty());
 	}
 
@@ -57,6 +67,8 @@ public class ContextSpec {
 		copy.skills = new ArrayList<>(nullToEmpty(skills));
 		copy.injectedFiles = new ArrayList<>(nullToEmpty(injectedFiles));
 		copy.variables = variables == null ? new LinkedHashMap<>() : new LinkedHashMap<>(variables);
+		copy.knowledge = new ArrayList<>(nullToEmpty(knowledge));
+		copy.loadingRules = new ArrayList<>(nullToEmpty(loadingRules));
 		return copy;
 	}
 

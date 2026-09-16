@@ -7,8 +7,9 @@ import java.nio.file.Path;
 
 /**
  * The document an agent is actually handed at launch: the content of every
- * resolved instruction, skill and injected file, the context variables, and a
- * note of anything referenced but missing.
+ * resolved instruction, skill and injected file, the context variables, the
+ * project knowledge and context-loading rules, and a note of anything referenced
+ * but missing.
  *
  * <p>Resolving context only describes it. Until this existed a terminal agent
  * was started with a command line and an environment, and an instruction such as
@@ -20,16 +21,17 @@ import java.nio.file.Path;
  * @param text      the briefing, empty when there is nothing to tell the agent
  * @param documents how many documents it carries
  * @param variables how many context variables it carries
+ * @param references how many project-knowledge references and context-loading rules it carries
  * @param missing   how many referenced documents could not be read
  */
-public record AgentBriefing(String text, int documents, int variables, int missing) {
+public record AgentBriefing(String text, int documents, int variables, int references, int missing) {
 
 	/** Longest single document included in full; a runaway file must not swamp the agent. */
 	static final int DOCUMENT_LIMIT = 100_000;
 
 	/** Whether there is nothing to deliver. */
 	public boolean isEmpty() {
-		return documents == 0 && variables == 0 && missing == 0;
+		return documents == 0 && variables == 0 && references == 0 && missing == 0;
 	}
 
 	/**
@@ -73,6 +75,26 @@ public record AgentBriefing(String text, int documents, int variables, int missi
 			body.append('\n');
 		}
 
+		var knowledge = context.of(ContextItem.Kind.KNOWLEDGE);
+		if (!knowledge.isEmpty()) {
+			body.append("## ").append(ContextItem.Kind.KNOWLEDGE.groupLabel()).append("\n\n")
+					.append("Consult these when they are relevant; they are not included here.\n\n");
+			for (var item : knowledge) {
+				body.append("- ").append(item.label()).append('\n');
+			}
+			body.append('\n');
+		}
+
+		var rules = context.of(ContextItem.Kind.LOADING_RULE);
+		if (!rules.isEmpty()) {
+			body.append("## ").append(ContextItem.Kind.LOADING_RULE.groupLabel()).append("\n\n")
+					.append("Follow these when deciding what to read into your context.\n\n");
+			for (var item : rules) {
+				body.append("- ").append(item.label()).append('\n');
+			}
+			body.append('\n');
+		}
+
 		if (missing > 0) {
 			body.append("## Not found\n\n")
 					.append("These were configured for you but could not be read. Mention it if they matter.\n\n");
@@ -90,13 +112,13 @@ public record AgentBriefing(String text, int documents, int variables, int missi
 		}
 
 		if (body.isEmpty()) {
-			return new AgentBriefing("", 0, 0, 0);
+			return new AgentBriefing("", 0, 0, 0, 0);
 		}
 		var text = "# Briefing for " + agentName + " in " + projectName + "\n\n"
 				+ "Provided by Nuclr Commander from this project's configuration. Follow these instructions\n"
 				+ "for the whole session; where they conflict with a later request, say so before acting.\n\n"
 				+ body.toString().stripTrailing() + "\n";
-		return new AgentBriefing(text, documents, variables.size(), missing);
+		return new AgentBriefing(text, documents, variables.size(), knowledge.size() + rules.size(), missing);
 	}
 
 	/** A document's text, truncated if enormous; {@code null} when it cannot be read. */

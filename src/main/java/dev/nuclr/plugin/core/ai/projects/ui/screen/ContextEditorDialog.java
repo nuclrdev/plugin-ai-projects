@@ -82,7 +82,7 @@ public final class ContextEditorDialog {
 	 * Put a "Link Markdown file..." button under a list, so a document from another
 	 * project can be picked rather than its path typed out.
 	 */
-	private static JPanel withLinkButton(ListEditor editor, String chooserTitle) {
+	static JPanel withLinkButton(ListEditor editor, String chooserTitle) {
 
 		var link = new JButton("Link Markdown file...");
 		link.setToolTipText("Add a Markdown document from another project or folder by its absolute path");

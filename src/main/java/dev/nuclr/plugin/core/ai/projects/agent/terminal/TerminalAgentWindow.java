@@ -982,6 +982,24 @@ public final class TerminalAgentWindow implements AgentWindow {
 		if (!harness.allowedRoots().isEmpty()) {
 			unsupported.add("filesystem access policy");
 		}
+		if (harness.sandbox() != null && !harness.sandbox().isBlank()) {
+			unsupported.add("sandbox");
+		}
+		if (!harness.tools().isEmpty()) {
+			unsupported.add("tools");
+		}
+		if (!harness.software().isEmpty()) {
+			unsupported.add("software access");
+		}
+		if (!harness.hardware().isEmpty()) {
+			unsupported.add("hardware access");
+		}
+		if (!harness.network().isEmpty()) {
+			unsupported.add("network access");
+		}
+		if (harness.maxTurns() != null || harness.timeoutMinutes() != null || harness.maxBudgetUsd() != null) {
+			unsupported.add("execution limits");
+		}
 		if (!briefing.isEmpty() && !delivery.delivered()) {
 			unsupported.add("context files and variables (this CLI has no known way to receive them; the briefing is at "
 					+ context.briefingFile() + ")");
@@ -989,7 +1007,9 @@ public final class TerminalAgentWindow implements AgentWindow {
 		var notes = new ArrayList<String>();
 		if (delivery.delivered()) {
 			notes.add(delivery.description() + ": " + briefing.documents() + " documents, "
-					+ briefing.variables() + " variables" + (briefing.missing() > 0 ? ", " + briefing.missing() + " missing" : ""));
+					+ briefing.variables() + " variables"
+					+ (briefing.references() > 0 ? ", " + briefing.references() + " knowledge references and rules" : "")
+					+ (briefing.missing() > 0 ? ", " + briefing.missing() + " missing" : ""));
 		}
 		if (!unsupported.isEmpty()) {
 			notes.add("Not applied by the terminal CLI: " + String.join(", ", unsupported));

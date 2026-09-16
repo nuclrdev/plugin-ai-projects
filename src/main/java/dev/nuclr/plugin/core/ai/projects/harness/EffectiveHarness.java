@@ -24,6 +24,14 @@ import dev.nuclr.plugin.core.ai.projects.model.McpServerSpec;
  * @param mcpServers         MCP servers and tool providers exposed to the agent
  * @param allowedRoots       directories the agent may touch
  * @param sharedInstructions instruction documents every agent under this harness receives
+ * @param sandbox            sandbox or runtime the agent runs in, or {@code null}
+ * @param tools              built-in tools the agent may use
+ * @param software           software the agent may drive
+ * @param hardware           hardware the agent may reach
+ * @param network            hosts or networks the agent may reach
+ * @param maxTurns           most agentic turns per run, or {@code null} for no limit
+ * @param timeoutMinutes     longest run in minutes, or {@code null} for no limit
+ * @param maxBudgetUsd       most a run may spend in US dollars, or {@code null} for no limit
  * @param sources            per-field provenance, keyed by the field names above
  */
 public record EffectiveHarness(
@@ -36,6 +44,14 @@ public record EffectiveHarness(
 		List<McpServerSpec> mcpServers,
 		List<String> allowedRoots,
 		List<String> sharedInstructions,
+		String sandbox,
+		List<String> tools,
+		List<String> software,
+		List<String> hardware,
+		List<String> network,
+		Integer maxTurns,
+		Integer timeoutMinutes,
+		Double maxBudgetUsd,
 		Map<String, Provenance> sources) {
 
 	/** Field key for {@link #executable}. */
@@ -56,6 +72,22 @@ public record EffectiveHarness(
 	public static final String ALLOWED_ROOTS = "allowedRoots";
 	/** Field key for {@link #sharedInstructions}. */
 	public static final String SHARED_INSTRUCTIONS = "sharedInstructions";
+	/** Field key for {@link #sandbox}. */
+	public static final String SANDBOX = "sandbox";
+	/** Field key for {@link #tools}. */
+	public static final String TOOLS = "tools";
+	/** Field key for {@link #software}. */
+	public static final String SOFTWARE = "software";
+	/** Field key for {@link #hardware}. */
+	public static final String HARDWARE = "hardware";
+	/** Field key for {@link #network}. */
+	public static final String NETWORK = "network";
+	/** Field key for {@link #maxTurns}. */
+	public static final String MAX_TURNS = "maxTurns";
+	/** Field key for {@link #timeoutMinutes}. */
+	public static final String TIMEOUT_MINUTES = "timeoutMinutes";
+	/** Field key for {@link #maxBudgetUsd}. */
+	public static final String MAX_BUDGET_USD = "maxBudgetUsd";
 
 	/** Defensive copies, so a resolved harness really is immutable. */
 	public EffectiveHarness {
@@ -65,6 +97,10 @@ public record EffectiveHarness(
 		mcpServers = List.copyOf(mcpServers);
 		allowedRoots = List.copyOf(allowedRoots);
 		sharedInstructions = List.copyOf(sharedInstructions);
+		tools = List.copyOf(tools);
+		software = List.copyOf(software);
+		hardware = List.copyOf(hardware);
+		network = List.copyOf(network);
 		sources = Map.copyOf(sources);
 	}
 
