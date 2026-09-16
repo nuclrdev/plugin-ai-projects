@@ -283,6 +283,12 @@ Arcade Starfield. The selected effect is saved with the project's desktop
 layout. Effects are isolated behind a paint-only background interface, so new
 visuals can be added without coupling them to agent windows or project logic.
 
+**Rainy Sanctuary** is a procedural midnight shrine with clouded moonlight,
+misty mountain silhouettes, wet stone, maple branches and a torii reflected in
+moving water. Layered rain, refracting lens droplets, candle bloom and an animated
+incense density field provide motion. Static scenery is cached and the software
+water and smoke buffers have fixed resolutions to bound rendering work.
+
 ## Relationship to workspaces
 
 An AI project is a domain object that owns its own persistent desktop; a
