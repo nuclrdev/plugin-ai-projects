@@ -73,6 +73,86 @@ final class PiConnector implements AgentConnector {
 				+ ". Choose Read-only, or Full access in an isolated environment.";
 	}
 
+	/** Pi's built-in tools, as its README lists them. */
+	private static final List<Tool> TOOLS = List.of(
+			new Tool("read", "Reads files"),
+			new Tool("bash", "Executes shell commands"),
+			new Tool("powershell", "Executes PowerShell commands (Windows)"),
+			new Tool("edit", "Edits files"),
+			new Tool("write", "Creates or overwrites files"),
+			new Tool("grep", "Searches file contents"),
+			new Tool("find", "Finds files"),
+			new Tool("ls", "Lists directories"));
+
+	/** The tools Read-only mode keeps. */
+	private static final List<String> READ_ONLY_TOOLS = List.of("read", "grep", "find", "ls");
+
+	@Override
+	public List<Tool> tools() {
+		return TOOLS;
+	}
+
+	@Override
+	public boolean canRestrictTools() {
+		return true;
+	}
+
+	@Override
+	public String allowedToolsMeaning() {
+		return "Only these tools are available, extension tools included. Every other one - including tools "
+				+ "a later Pi adds - is not.";
+	}
+
+	@Override
+	public String blockedToolsMeaning() {
+		return "These tools are disabled, including extension tools.";
+	}
+
+	@Override
+	public List<String> allowedToolArguments(List<String> names) {
+		return names.isEmpty() ? List.of() : List.of("--tools", String.join(",", names));
+	}
+
+	@Override
+	public List<String> blockedToolArguments(List<String> names) {
+		return names.isEmpty() ? List.of() : List.of("--exclude-tools", String.join(",", names));
+	}
+
+	@Override
+	public List<String> toolProblems(List<String> allowed, List<String> blocked, AccessMode mode) {
+		var problems = new ArrayList<String>();
+		for (var name : concat(allowed, blocked)) {
+			if (name.isBlank() || name.contains(",") || name.contains("(") || name.chars().anyMatch(Character::isWhitespace)) {
+				problems.add("Tools: \"" + name + "\" - Pi takes plain tool names, without spaces, commas or patterns.");
+			}
+		}
+		if (mode == AccessMode.READ_ONLY) {
+			for (var name : allowed) {
+				if (!READ_ONLY_TOOLS.contains(name)) {
+					problems.add("Tools: Read-only access keeps only " + String.join(", ", READ_ONLY_TOOLS)
+							+ ", so \"" + name + "\" cannot be allowed. Remove it or choose another access mode.");
+				}
+			}
+		}
+		return problems;
+	}
+
+	@Override
+	public Optional<List<String>> accessArguments(AccessMode mode, List<String> allowed) {
+		// Read-only is itself a tool list; an allowed list can only narrow it, and
+		// passing both would give Pi two --tools flags.
+		if (mode == AccessMode.READ_ONLY && !allowed.isEmpty()) {
+			return Optional.of(List.of());
+		}
+		return accessArguments(mode);
+	}
+
+	private static List<String> concat(List<String> first, List<String> second) {
+		var all = new ArrayList<>(first);
+		all.addAll(second);
+		return all;
+	}
+
 	@Override
 	public ModelCatalog discover(String executable, Duration timeout) throws IOException {
 		// --no-session keeps discovery from leaving a session behind; --offline skips

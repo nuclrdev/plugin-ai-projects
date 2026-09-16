@@ -63,6 +63,7 @@ final class ProviderFields {
 	private int request;
 	private boolean updating;
 	private Object lastProvider;
+	private final List<java.util.function.Consumer<AgentProvider>> providerListeners = new ArrayList<>();
 
 	ProviderFields(Profile.Harness harness, ModelCatalogs catalogs) {
 
@@ -267,6 +268,7 @@ final class ProviderFields {
 			return;
 		}
 		lastProvider = chosen;
+		providerListeners.forEach(listener -> listener.accept(selectedProvider()));
 		var hadChoices = !modelText().isBlank() || !selectedEffort().isBlank();
 		updating = true;
 		try {
@@ -381,7 +383,17 @@ final class ProviderFields {
 		access.repaint();
 	}
 
-	private AgentProvider selectedProvider() {
+	/**
+	 * Be told when the user chooses another provider.
+	 *
+	 * @param listener receives the provider now chosen, or {@code null} when none is
+	 */
+	void addProviderListener(java.util.function.Consumer<AgentProvider> listener) {
+		providerListeners.add(listener);
+	}
+
+	/** The provider chosen, or {@code null} when none or an unsupported one is. */
+	AgentProvider selectedProvider() {
 		return provider.getSelectedItem() instanceof AgentProvider each ? each : null;
 	}
 

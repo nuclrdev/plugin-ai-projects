@@ -6,6 +6,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import dev.nuclr.plugin.core.ai.projects.model.McpServerSpec;
 import dev.nuclr.plugin.core.ai.projects.store.Json;
 import lombok.Data;
@@ -58,7 +60,8 @@ public class Profile {
 		for (var section : ProfileSection.values()) {
 			count += section.records(this).size();
 		}
-		return count + nullToEmpty(harness.getMcpServers()).size();
+		return count + nullToEmpty(harness.getMcpServers()).size() + nullToEmpty(harness.getAllowedTools()).size()
+				+ nullToEmpty(harness.getBlockedTools()).size();
 	}
 
 	/** A deep copy, through the same JSON form the profile is stored in. */
@@ -103,8 +106,21 @@ public class Profile {
 		/** Arguments appended to the executable. */
 		private List<String> startupArgs = new ArrayList<>();
 
-		/** Built-in tools agents may use. */
-		private List<ProfileRecord> tools = new ArrayList<>();
+		/**
+		 * {@code only} when agents are limited to {@link #allowedTools}; blank when every
+		 * tool is available. Explicit, so that "only these" with nothing chosen is caught
+		 * rather than read as "all".
+		 */
+		private String toolAccess;
+
+		/**
+		 * The tools agents are limited to when {@link #toolAccess} is {@code only}; for a
+		 * provider that cannot be limited (Codex), the optional tools switched on.
+		 */
+		private List<String> allowedTools = new ArrayList<>();
+
+		/** Built-in tools, or tool patterns, agents may not use. */
+		private List<String> blockedTools = new ArrayList<>();
 
 		/** MCP servers and tool providers. */
 		private List<McpServerSpec> mcpServers = new ArrayList<>();
@@ -136,8 +152,40 @@ public class Profile {
 		/** Most a run may spend, in US dollars. */
 		private Double maxBudgetUsd;
 
+		/** The {@link #toolAccess} value that limits agents to the allowed tools. */
+		public static final String TOOL_ACCESS_ONLY = "only";
+
 		/** Creates an empty harness. */
 		public Harness() {}
+
+		/** Whether agents are limited to the allowed tools. */
+		public boolean restrictsTools() {
+			return TOOL_ACCESS_ONLY.equalsIgnoreCase(toolAccess == null ? "" : toolAccess.trim());
+		}
+
+		/**
+		 * Reads the free-text tool records profiles held before the allowed and blocked
+		 * lists existed. They were meant as the tools agents may use, so the enabled
+		 * ones become the allowed list rather than being silently dropped.
+		 *
+		 * @param records the old records
+		 */
+		@JsonProperty("tools")
+		@SuppressWarnings("unused")
+		private void readLegacyTools(List<ProfileRecord> records) {
+			if (records == null || !allowedTools.isEmpty()) {
+				return;
+			}
+			if (toolAccess == null) {
+				toolAccess = TOOL_ACCESS_ONLY;
+			}
+			for (var record : records) {
+				if (record != null && record.isEnabled() && record.getText() != null && !record.getText().isBlank()
+						&& !allowedTools.contains(record.getText().strip())) {
+					allowedTools.add(record.getText().strip());
+				}
+			}
+		}
 	}
 
 	/** The information half. */

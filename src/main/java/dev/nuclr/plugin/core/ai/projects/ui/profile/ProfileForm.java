@@ -62,6 +62,8 @@ public final class ProfileForm extends JPanel {
 	private final Map<ProfileSection, Integer> tabIndex = new EnumMap<>(ProfileSection.class);
 	private int limitsTab;
 	private int mcpTab;
+	private int toolsTab;
+	private final ToolListsPanel tools;
 
 	/**
 	 * Build the form, asking the installed CLIs for their models.
@@ -114,7 +116,15 @@ public final class ProfileForm extends JPanel {
 				noted("Reasoning effort", providerFields.effort(), providerFields.effortNote()),
 				row("Sandbox / runtime", sandbox, (String) null),
 				block("Startup arguments", startupArgs))));
-		addSection(harnessTabs, ProfileSection.TOOLS, Glyphs.TOOLS);
+		tools = new ToolListsPanel(harness.restrictsTools(),
+				harness.getAllowedTools() == null ? List.of() : harness.getAllowedTools(),
+				harness.getBlockedTools() == null ? List.of() : harness.getBlockedTools(),
+				providerFields.selectedProvider());
+		providerFields.addProviderListener(tools::setProvider);
+		toolsTab = harnessTabs.getTabCount();
+		harnessTabs.addTab("Tools", Glyphs.icon(Glyphs.TOOLS), tools);
+		tools.addChangeListener(this::updateToolsTitle);
+		updateToolsTitle();
 		mcpTab = harnessTabs.getTabCount();
 		harnessTabs.addTab("MCP servers", Glyphs.icon(Glyphs.TOOL), padded(mcpServers));
 		addSection(harnessTabs, ProfileSection.SOFTWARE, Glyphs.SOFTWARE);
@@ -197,6 +207,9 @@ public final class ProfileForm extends JPanel {
 		harness.setTimeoutMinutes(parseInteger(timeoutMinutes, "", new ArrayList<>()));
 		harness.setMaxBudgetUsd(parseDecimal(maxBudgetUsd, "", new ArrayList<>()));
 		sections.forEach((section, editor) -> section.setRecords(profile, editor.records()));
+		harness.setToolAccess(tools.restrictsTools() ? Profile.Harness.TOOL_ACCESS_ONLY : null);
+		harness.setAllowedTools(new ArrayList<>(tools.allowedTools()));
+		harness.setBlockedTools(new ArrayList<>(tools.blockedTools()));
 		return profile;
 	}
 
@@ -221,7 +234,9 @@ public final class ProfileForm extends JPanel {
 	public void reveal(ProfileValidator.Problem problem) {
 		if (problem.section() == null) {
 			var message = problem.message();
-			if (message.startsWith("Access mode")) {
+			if (message.startsWith("Tools")) {
+				showTab(harnessTabs, toolsTab);
+			} else if (message.startsWith("Access mode")) {
 				showTab(harnessTabs, tabIndex.get(ProfileSection.PERMISSIONS));
 			} else if (message.startsWith("Provider")) {
 				showTab(harnessTabs, 0);
@@ -274,6 +289,11 @@ public final class ProfileForm extends JPanel {
 		panel.add(top, BorderLayout.NORTH);
 		panel.add(bottom, BorderLayout.SOUTH);
 		return panel;
+	}
+
+	private void updateToolsTitle() {
+		var count = tools.count();
+		harnessTabs.setTitleAt(toolsTab, count == 0 ? "Tools" : "Tools (" + count + ")");
 	}
 
 	private void updateTitle(ProfileSection section) {

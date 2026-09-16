@@ -73,6 +73,85 @@ final class CodexConnector implements AgentConnector {
 		return "Codex does not support " + mode.label() + ".";
 	}
 
+	/**
+	 * The Codex tools that can be switched on or off: live web search, which has a
+	 * flag of its own, and the stable features that are tools.
+	 */
+	private static final List<Tool> TOOLS = List.of(
+			new Tool("web_search", "Live web search; off unless allowed"),
+			new Tool("shell_tool", "Runs shell commands"),
+			new Tool("image_generation", "Generates images"),
+			new Tool("browser_use", "Drives a browser"),
+			new Tool("computer_use", "Controls the computer"),
+			new Tool("multi_agent", "Delegates work to sub-agents"));
+
+	private static final String WEB_SEARCH = "web_search";
+
+	@Override
+	public List<Tool> tools() {
+		return TOOLS;
+	}
+
+	@Override
+	public boolean canRestrictTools() {
+		return false;
+	}
+
+	@Override
+	public String allowedToolsMeaning() {
+		return "These optional tools are switched on; every other tool keeps its default.";
+	}
+
+	@Override
+	public String blockedToolsMeaning() {
+		return "These tools are switched off.";
+	}
+
+	@Override
+	public List<String> allowedToolArguments(List<String> names) {
+		var arguments = new ArrayList<String>();
+		for (var name : names) {
+			if (WEB_SEARCH.equals(name)) {
+				arguments.add("--search");
+			} else {
+				arguments.add("--enable");
+				arguments.add(name);
+			}
+		}
+		return arguments;
+	}
+
+	@Override
+	public List<String> blockedToolArguments(List<String> names) {
+		var arguments = new ArrayList<String>();
+		for (var name : names) {
+			// Web search is off unless --search is given, so blocking it needs no flag.
+			if (!WEB_SEARCH.equals(name)) {
+				arguments.add("--disable");
+				arguments.add(name);
+			}
+		}
+		return arguments;
+	}
+
+	@Override
+	public List<String> toolProblems(List<String> allowed, List<String> blocked, AccessMode mode) {
+		var problems = new ArrayList<String>();
+		for (var name : allowed) {
+			if (!isBuiltInTool(name) || name.contains("(")) {
+				problems.add("Tools: Codex has no tool called \"" + name + "\" that can be switched on.");
+			} else if (blocked.contains(name)) {
+				problems.add("Tools: \"" + name + "\" is both allowed and blocked.");
+			}
+		}
+		for (var name : blocked) {
+			if (!isBuiltInTool(name) || name.contains("(")) {
+				problems.add("Tools: Codex has no tool called \"" + name + "\" that can be switched off.");
+			}
+		}
+		return problems;
+	}
+
 	@Override
 	public ModelCatalog discover(String executable, Duration timeout) throws IOException {
 		var deadline = System.nanoTime() + timeout.toNanos();

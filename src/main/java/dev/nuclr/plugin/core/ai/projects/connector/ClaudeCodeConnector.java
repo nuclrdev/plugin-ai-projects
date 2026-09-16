@@ -72,6 +72,105 @@ final class ClaudeCodeConnector implements AgentConnector {
 				: "Claude Code does not support " + mode.label() + ".";
 	}
 
+	/** Claude Code's documented built-in tools (tools reference, Claude Code 2.1). */
+	private static final List<Tool> TOOLS = List.of(
+			new Tool("Agent", "Spawns a subagent with its own context window"),
+			new Tool("Artifact", "Publishes an HTML or Markdown file as a private page"),
+			new Tool("AskUserQuestion", "Asks multiple-choice questions to clarify requirements"),
+			new Tool("Bash", "Executes shell commands"),
+			new Tool("CronCreate", "Schedules a recurring or one-shot prompt in the session"),
+			new Tool("CronDelete", "Cancels a scheduled task"),
+			new Tool("CronList", "Lists scheduled tasks"),
+			new Tool("Edit", "Makes targeted edits to files"),
+			new Tool("EndConversation", "Ends the session on sustained abusive input"),
+			new Tool("EnterPlanMode", "Switches to plan mode"),
+			new Tool("EnterWorktree", "Creates an isolated git worktree and switches into it"),
+			new Tool("ExitPlanMode", "Presents a plan for approval and leaves plan mode"),
+			new Tool("ExitWorktree", "Leaves a worktree session"),
+			new Tool("Glob", "Finds files by pattern"),
+			new Tool("Grep", "Searches file contents"),
+			new Tool("ListAgents", "Lists the agents it can message"),
+			new Tool("ListMcpResourcesTool", "Lists resources from MCP servers"),
+			new Tool("LSP", "Code intelligence through language servers"),
+			new Tool("Monitor", "Runs a command in the background and watches its output"),
+			new Tool("NotebookEdit", "Modifies Jupyter notebook cells"),
+			new Tool("PowerShell", "Executes PowerShell commands"),
+			new Tool("PushNotification", "Sends a desktop and phone notification"),
+			new Tool("Read", "Reads files"),
+			new Tool("ReadMcpResourceTool", "Reads an MCP resource"),
+			new Tool("RemoteTrigger", "Manages Routines on claude.ai"),
+			new Tool("ReportFindings", "Reports code-review findings"),
+			new Tool("ScheduleWakeup", "Reschedules a self-paced loop"),
+			new Tool("SendFeedback", "Drafts a feedback report about Claude Code"),
+			new Tool("SendMessage", "Messages another agent or session"),
+			new Tool("SendUserFile", "Sends files to your device"),
+			new Tool("ShareOnboardingGuide", "Uploads an onboarding guide and returns a link"),
+			new Tool("Skill", "Runs a skill"),
+			new Tool("SubagentHandback", "Delivers a subagent's final report"),
+			new Tool("TaskCreate", "Creates a task in the task list"),
+			new Tool("TaskGet", "Reads a task"),
+			new Tool("TaskList", "Lists tasks"),
+			new Tool("TaskOutput", "Reads a background task's output"),
+			new Tool("TaskStop", "Stops a background task"),
+			new Tool("TaskUpdate", "Updates or deletes a task"),
+			new Tool("TodoWrite", "Manages the session checklist"),
+			new Tool("ToolSearch", "Finds and loads deferred tools"),
+			new Tool("WaitForMcpServers", "Waits for MCP servers still connecting"),
+			new Tool("WebFetch", "Fetches a URL"),
+			new Tool("WebSearch", "Searches the web"),
+			new Tool("Workflow", "Runs a workflow of many subagents"),
+			new Tool("Write", "Creates or overwrites files"));
+
+	@Override
+	public List<Tool> tools() {
+		return TOOLS;
+	}
+
+	@Override
+	public boolean canRestrictTools() {
+		return true;
+	}
+
+	@Override
+	public String allowedToolsMeaning() {
+		return "Only these built-in tools are available. Every other one - including tools a later "
+				+ "Claude Code adds - is not.";
+	}
+
+	@Override
+	public String blockedToolsMeaning() {
+		return "These are denied. A pattern narrows it, e.g. Bash(git push *), WebFetch(domain:example.com); "
+				+ "MCP tools can be named as mcp__server__tool.";
+	}
+
+	@Override
+	public List<String> allowedToolArguments(List<String> names) {
+		return names.isEmpty() ? List.of() : List.of("--tools", String.join(",", names));
+	}
+
+	@Override
+	public List<String> blockedToolArguments(List<String> names) {
+		return names.isEmpty() ? List.of() : List.of("--disallowedTools", String.join(",", names));
+	}
+
+	@Override
+	public List<String> toolProblems(List<String> allowed, List<String> blocked, AccessMode mode) {
+		var problems = new ArrayList<String>();
+		for (var name : allowed) {
+			if (name.contains("(") || name.contains(",") || name.isBlank() || name.chars().anyMatch(Character::isWhitespace)) {
+				problems.add("Tools: \"" + name + "\" - the allowed list takes plain tool names; patterns belong in Blocked.");
+			}
+		}
+		for (var name : blocked) {
+			if (name.isBlank() || name.contains(",")) {
+				problems.add("Tools: \"" + name + "\" cannot contain a comma.");
+			} else if (name.contains("(") && !name.strip().endsWith(")")) {
+				problems.add("Tools: \"" + name + "\" - a pattern must end with a closing parenthesis.");
+			}
+		}
+		return problems;
+	}
+
 	@Override
 	public ModelCatalog discover(String executable, Duration timeout) throws IOException {
 		try (var process = JsonLineProcess.start(List.of(executable, "-p",

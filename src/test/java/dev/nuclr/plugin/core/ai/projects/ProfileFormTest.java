@@ -39,7 +39,11 @@ class ProfileFormTest {
 		harness.setMcpServers(List.of(McpServerSpec.of("files", "mcp-files", List.of("/srv"))));
 		harness.setMaxTurns(20);
 		harness.setMaxBudgetUsd(2.5);
-		harness.getTools().add(ProfileRecord.text(null, "Bash"));
+		harness.setProvider("claude-code");
+		harness.setToolAccess(Profile.Harness.TOOL_ACCESS_ONLY);
+		harness.getAllowedTools().add("Bash");
+		harness.getBlockedTools().add("Bash(git push *)");
+		harness.getSoftware().add(ProfileRecord.text(null, "git"));
 		harness.getEnvironment().add(ProfileRecord.file(null, "/srv/.env"));
 		var disabled = ProfileRecord.text("TOKEN", "x");
 		disabled.setEnabled(false);
@@ -55,7 +59,7 @@ class ProfileFormTest {
 		var results = new Profile[1];
 		var changed = new boolean[1];
 		onEdt(() -> {
-			var form = new ProfileForm(profile);
+			var form = new ProfileForm(profile, ModelCatalogsTest.answering());
 			var baseline = form.toProfile();
 			results[0] = baseline;
 			changed[0] = form.differsFrom(baseline);
@@ -68,7 +72,7 @@ class ProfileFormTest {
 	void anEditIsNoticedAndALimitThatIsNotANumberIsReported() throws Exception {
 		var outcome = new Object[3];
 		onEdt(() -> {
-			var form = new ProfileForm(full());
+			var form = new ProfileForm(full(), ModelCatalogsTest.answering());
 			var baseline = form.toProfile();
 			form.nameField().setText("Renamed");
 			outcome[0] = form.differsFrom(baseline);
@@ -85,7 +89,7 @@ class ProfileFormTest {
 		var original = ProfileRecord.text(null, "Bash");
 		var records = new List<?>[1];
 		onEdt(() -> {
-			var editor = new RecordListEditor(ProfileSection.TOOLS, List.of(original));
+			var editor = new RecordListEditor(ProfileSection.SOFTWARE, List.of(original));
 			var copy = editor.records();
 			copy.getFirst().setText("changed");
 			records[0] = editor.records();

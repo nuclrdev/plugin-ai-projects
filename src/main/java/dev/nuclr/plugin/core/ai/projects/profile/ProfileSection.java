@@ -9,18 +9,15 @@ import java.util.function.Function;
 /**
  * Every record list a profile holds, with what each one accepts.
  *
- * <p>Not every source makes sense everywhere. A tool is a name, so it is plain
+ * <p>Not every source makes sense everywhere. A software entry is a name, so it is plain
  * text; an allowed root is a folder, so it is a file link; an instruction can
  * be written in place, linked from disk or taken from a repository. The editor
  * offers exactly what is listed here and the validator enforces it.
  */
 public enum ProfileSection {
 
-	// Harness - what agents can do.
-	TOOLS(Group.HARNESS, "Tools", "tool", "Built-in tools agents may use, in the harness's own vocabulary.",
-			TextStyle.VALUE, Browse.NONE, Set.of(RecordKind.TEXT),
-			profile -> profile.getHarness().getTools(), (profile, records) -> profile.getHarness().setTools(records)),
-
+	// Harness - what agents can do. Built-in tools are not records: they are plain
+	// allowed and blocked name lists that a connector turns into flags.
 	SOFTWARE(Group.HARNESS, "Software", "software entry",
 			"Programs, package managers and services agents may drive, e.g. git, docker, npm.",
 			TextStyle.VALUE, Browse.NONE, Set.of(RecordKind.TEXT),

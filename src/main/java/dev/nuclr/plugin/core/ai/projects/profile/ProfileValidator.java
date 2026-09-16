@@ -80,6 +80,9 @@ public final class ProfileValidator {
 			}
 		}
 		if (harness != null) {
+			problems.addAll(toolProblems(harness));
+		}
+		if (harness != null) {
 			positive(problems, harness.getMaxTurns(), "Max turns");
 			positive(problems, harness.getTimeoutMinutes(), "Timeout");
 			if (harness.getMaxBudgetUsd() != null
@@ -116,6 +119,55 @@ public final class ProfileValidator {
 			}
 		}
 		return problems;
+	}
+
+	/** Tool lists only mean something to a provider, which also knows which names and patterns it takes. */
+	private static List<Problem> toolProblems(Profile.Harness harness) {
+		var problems = new ArrayList<Problem>();
+		var allowed = nullToEmpty(harness.getAllowedTools());
+		var blocked = nullToEmpty(harness.getBlockedTools());
+		var restricted = harness.restrictsTools();
+		if (allowed.isEmpty() && blocked.isEmpty() && !restricted) {
+			return problems;
+		}
+		var provider = AgentProvider.byId(harness.getProvider());
+		if (provider.isPresent()) {
+			var connector = provider.get().connector();
+			if (restricted && !connector.canRestrictTools()) {
+				problems.add(new Problem(null, -1, "Tools: " + provider.get().displayName()
+						+ " cannot be limited to selected tools. Choose All tools."));
+				return problems;
+			}
+			if (restricted && allowed.isEmpty()) {
+				problems.add(new Problem(null, -1,
+						"Tools: \"Only selected tools\" is chosen but no tool is selected. Add tools, or choose All tools."));
+				return problems;
+			}
+			if (connector.canRestrictTools() && !restricted) {
+				// A list left over from "Only selected tools" is not in force.
+				allowed = List.of();
+			}
+		}
+		if (provider.isEmpty()) {
+			problems.add(new Problem(null, -1,
+					"Tools: choose a provider first - tool names are specific to each provider."));
+			return problems;
+		}
+		var mode = AccessMode.byId(harness.getAccessMode()).orElse(provider.get().defaultAccessMode());
+		for (var message : provider.get().connector().toolProblems(allowed, blocked, mode)) {
+			problems.add(new Problem(null, -1, message));
+		}
+		for (var name : allowed) {
+			if (java.util.Collections.frequency(allowed, name) > 1) {
+				problems.add(new Problem(null, -1, "Tools: \"" + name + "\" is allowed more than once."));
+				break;
+			}
+		}
+		return problems;
+	}
+
+	private static List<String> nullToEmpty(List<String> values) {
+		return values == null ? List.of() : values;
 	}
 
 	/**

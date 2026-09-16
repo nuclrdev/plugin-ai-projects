@@ -71,6 +71,75 @@ public interface AgentConnector {
 	String unsupportedReason(AccessMode mode);
 
 	/**
+	 * One built-in tool.
+	 *
+	 * @param name        the name the CLI's tool flags take
+	 * @param description one line about what it does
+	 */
+	record Tool(String name, String description) {
+	}
+
+	/** The CLI's built-in tools, for suggestions; tools from MCP servers or extensions are not listed. */
+	List<Tool> tools();
+
+	/**
+	 * Whether the CLI can be limited to a chosen set of tools. When it cannot, the
+	 * allowed list only switches optional tools on.
+	 */
+	boolean canRestrictTools();
+
+	/** What the allowed list means for this CLI, one or two sentences. */
+	String allowedToolsMeaning();
+
+	/** What the blocked list means for this CLI, one sentence. */
+	String blockedToolsMeaning();
+
+	/**
+	 * The flags for an allowed-tools list.
+	 *
+	 * @param names the tools, already validated; empty for none
+	 * @return the arguments, empty when the list is empty
+	 */
+	List<String> allowedToolArguments(List<String> names);
+
+	/**
+	 * The flags for a blocked-tools list.
+	 *
+	 * @param names the tools, already validated; empty for none
+	 * @return the arguments, empty when the list is empty
+	 */
+	List<String> blockedToolArguments(List<String> names);
+
+	/**
+	 * Everything that would make these tool lists wrong for this CLI.
+	 *
+	 * @param allowed the allowed tools
+	 * @param blocked the blocked tools
+	 * @param mode    the access mode in force
+	 * @return messages, empty when the lists can be used
+	 */
+	List<String> toolProblems(List<String> allowed, List<String> blocked, AccessMode mode);
+
+	/**
+	 * Whether a name - ignoring any {@code (pattern)} after it - is one of {@link #tools()}.
+	 *
+	 * @param name the entry
+	 * @return whether the CLI documents it as a built-in tool
+	 */
+	default boolean isBuiltInTool(String name) {
+		if (name == null) {
+			return false;
+		}
+		var bare = name.strip();
+		var open = bare.indexOf('(');
+		if (open > 0) {
+			bare = bare.substring(0, open).strip();
+		}
+		var wanted = bare;
+		return tools().stream().anyMatch(tool -> tool.name().equals(wanted));
+	}
+
+	/**
 	 * Ask the installed CLI what it offers.
 	 *
 	 * @param executable the resolved executable to run
@@ -113,6 +182,22 @@ public interface AgentConnector {
 	 * @throws IllegalArgumentException when the CLI cannot honour the access mode
 	 */
 	default List<String> launchArguments(String model, String effort, AccessMode mode) {
+		return launchArguments(model, effort, mode, List.of(), List.of());
+	}
+
+	/**
+	 * The flags for a model, effort, access mode and tool lists together.
+	 *
+	 * @param model   the model, or blank for the CLI's default
+	 * @param effort  the effort, or blank for the model's default
+	 * @param mode    the access mode, or {@code null} for {@link #defaultAccessMode()}
+	 * @param allowed the allowed tools, possibly empty
+	 * @param blocked the blocked tools, possibly empty
+	 * @return the arguments, in that order
+	 * @throws IllegalArgumentException when the access mode or the tool lists cannot be honoured
+	 */
+	default List<String> launchArguments(String model, String effort, AccessMode mode, List<String> allowed,
+			List<String> blocked) {
 		var arguments = new ArrayList<String>();
 		if (model != null && !model.isBlank()) {
 			arguments.addAll(modelArguments(model.trim()));
@@ -121,8 +206,39 @@ public interface AgentConnector {
 			arguments.addAll(effortArguments(effort.trim()));
 		}
 		var access = mode == null ? defaultAccessMode() : mode;
-		arguments.addAll(accessArguments(access)
+		var problems = toolProblems(allowed, blocked, access);
+		if (!problems.isEmpty()) {
+			throw new IllegalArgumentException(problems.getFirst());
+		}
+		arguments.addAll(accessArguments(access, allowed)
 				.orElseThrow(() -> new IllegalArgumentException(unsupportedReason(access))));
+		arguments.addAll(allowedToolArguments(allowed));
+		arguments.addAll(blockedToolArguments(blocked));
 		return List.copyOf(arguments);
+	}
+
+	/**
+	 * The access flags when an allowed-tools list is also in force. Most CLIs keep
+	 * the two apart; one whose access mode is itself a tool list (Pi) folds them
+	 * together here.
+	 *
+	 * @param mode    the mode
+	 * @param allowed the allowed tools
+	 * @return the arguments, or empty when the mode is unsupported
+	 */
+	default Optional<List<String>> accessArguments(AccessMode mode, List<String> allowed) {
+		return accessArguments(mode);
+	}
+
+	/**
+	 * Split a tool entry into its name and, when present, its {@code (pattern)}.
+	 *
+	 * @param entry the entry
+	 * @return the bare name
+	 */
+	static String toolName(String entry) {
+		var bare = entry.strip();
+		var open = bare.indexOf('(');
+		return open > 0 ? bare.substring(0, open).strip() : bare;
 	}
 }

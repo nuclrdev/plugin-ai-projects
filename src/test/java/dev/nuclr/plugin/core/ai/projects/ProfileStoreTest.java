@@ -36,7 +36,8 @@ class ProfileStoreTest {
 		var profile = new Profile();
 		profile.setName(name);
 		profile.getHarness().setModel("model-a");
-		profile.getHarness().getTools().add(ProfileRecord.text(null, "Bash"));
+		profile.getHarness().getSoftware().add(ProfileRecord.text(null, "git"));
+		profile.getHarness().getAllowedTools().add("Bash");
 		profile.getContext().getInstructions().add(ProfileRecord.git("Conventions",
 				"https://github.com/org/conventions.git", "main", "docs/JAVA.md"));
 		return profile;
@@ -61,7 +62,8 @@ class ProfileStoreTest {
 		var read = listed.getFirst();
 		assertEquals("Company default", read.getName());
 		assertEquals("model-a", read.getHarness().getModel());
-		assertEquals("Bash", read.getHarness().getTools().getFirst().getText());
+		assertEquals("git", read.getHarness().getSoftware().getFirst().getText());
+		assertEquals(List.of("Bash"), read.getHarness().getAllowedTools());
 		var instruction = read.getContext().getInstructions().getFirst();
 		assertEquals("https://github.com/org/conventions.git", instruction.getRepository());
 		assertEquals("docs/JAVA.md", instruction.getPath());

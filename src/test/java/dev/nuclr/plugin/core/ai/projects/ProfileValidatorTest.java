@@ -43,7 +43,7 @@ class ProfileValidatorTest {
 
 	@Test
 	void aSectionOnlyAcceptsTheSourcesThatMakeSenseThere() {
-		assertFalse(messages(ProfileSection.TOOLS, ProfileRecord.git(null, "https://x/y.git", null, null)).isEmpty());
+		assertFalse(messages(ProfileSection.SOFTWARE, ProfileRecord.git(null, "https://x/y.git", null, null)).isEmpty());
 		assertFalse(messages(ProfileSection.ALLOWED_ROOTS, ProfileRecord.text(null, "/tmp")).isEmpty());
 		assertTrue(messages(ProfileSection.ALLOWED_ROOTS, ProfileRecord.file(null, "/tmp")).isEmpty());
 		assertTrue(messages(ProfileSection.SKILLS, ProfileRecord.git(null, "https://x/y.git", null, null)).isEmpty());
@@ -51,9 +51,9 @@ class ProfileValidatorTest {
 
 	@Test
 	void plainTextIsCheckedAgainstItsSectionsShape() {
-		assertFalse(messages(ProfileSection.TOOLS, ProfileRecord.text(null, "")).isEmpty());
-		assertFalse(messages(ProfileSection.TOOLS, ProfileRecord.text(null, "Bash\nEdit")).isEmpty());
-		assertTrue(messages(ProfileSection.TOOLS, ProfileRecord.text(null, "Bash")).isEmpty());
+		assertFalse(messages(ProfileSection.SOFTWARE, ProfileRecord.text(null, "")).isEmpty());
+		assertFalse(messages(ProfileSection.SOFTWARE, ProfileRecord.text(null, "git\nnpm")).isEmpty());
+		assertTrue(messages(ProfileSection.SOFTWARE, ProfileRecord.text(null, "git")).isEmpty());
 
 		assertFalse(messages(ProfileSection.ENVIRONMENT, ProfileRecord.text("MY VAR", "x")).isEmpty());
 		assertTrue(messages(ProfileSection.ENVIRONMENT, ProfileRecord.text("MY_VAR", "")).isEmpty());
@@ -81,13 +81,13 @@ class ProfileValidatorTest {
 	@Test
 	void theSameEntryTwiceInOneSectionIsReportedAtTheSecond() {
 		var profile = named("P");
-		profile.getHarness().getTools().add(ProfileRecord.text(null, "Bash"));
-		profile.getHarness().getTools().add(ProfileRecord.text(null, "bash"));
+		profile.getHarness().getSoftware().add(ProfileRecord.text(null, "git"));
+		profile.getHarness().getSoftware().add(ProfileRecord.text(null, "Git"));
 
 		var problems = ProfileValidator.validate(profile, List.of());
 
 		assertEquals(1, problems.size());
-		assertEquals(ProfileSection.TOOLS, problems.getFirst().section());
+		assertEquals(ProfileSection.SOFTWARE, problems.getFirst().section());
 		assertEquals(1, problems.getFirst().index());
 	}
 
