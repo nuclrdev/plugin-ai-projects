@@ -1,12 +1,14 @@
 package dev.nuclr.plugin.core.ai.projects.ui.screen;
 
 import java.awt.BorderLayout;
+import java.awt.KeyboardFocusManager;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -18,6 +20,7 @@ import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 
 import dev.nuclr.platform.NuclrThemeScheme;
+import dev.nuclr.platform.events.NuclrEventListener;
 import dev.nuclr.platform.plugin.BaseNuclrPlugin;
 import dev.nuclr.platform.plugin.FullscreenNuclrPlugin;
 import dev.nuclr.platform.plugin.NuclrMenuResource;
@@ -47,7 +50,7 @@ import lombok.extern.slf4j.Slf4j;
  * host contract; everything the user does belongs to the desktop.
  */
 @Slf4j
-public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
+public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin, NuclrEventListener {
 
 	/** Manifest id. */
 	public static final String PLUGIN_ID = "dev.nuclr.plugin.core.ai.projects.screen";
@@ -57,6 +60,23 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 
 	/** Workspace state key: the id of the project that was open. */
 	public static final String STATE_PROJECT_ID = "projectId";
+
+	/**
+	 * The function-bar commands. Commander delivers a screen's function keys over the
+	 * event bus, not through {@link #act}, so these are what this screen listens for.
+	 */
+	private static final Set<String> SCREEN_COMMANDS = Set.of(
+			AiProjectEvents.SCREEN_NEW_AGENT,
+			AiProjectEvents.SCREEN_NEW_TERMINAL,
+			AiProjectEvents.SCREEN_START_ALL,
+			AiProjectEvents.SCREEN_STOP_ALL,
+			AiProjectEvents.SCREEN_TILE,
+			AiProjectEvents.SCREEN_CASCADE,
+			AiProjectEvents.SCREEN_SAVE_LAYOUT,
+			AiProjectEvents.SCREEN_RESET_LAYOUT,
+			AiProjectEvents.SCREEN_BROADCAST,
+			AiProjectEvents.SCREEN_TOGGLE_SIDEBAR,
+			AiProjectEvents.SCREEN_CLOSE);
 
 	private final String uuid = UUID.randomUUID().toString();
 	private final AgentWindowRegistry registry = new AgentWindowRegistry();
@@ -114,6 +134,9 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 	public void preinit(NuclrPluginContext context) {
 		this.context = context;
 		this.catalog = new ProjectCatalog(context.getSettings(), ProjectPaths.defaultCommanderHome());
+		if (context.getEventBus() != null) {
+			context.getEventBus().subscribe(this);
+		}
 	}
 
 	@Override
@@ -324,9 +347,32 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin {
 
 	@Override
 	public void unload() {
+		if (context != null && context.getEventBus() != null) {
+			context.getEventBus().unsubscribe(this);
+		}
 		closeDesktop();
 		currentResource = null;
 		context = null;
+	}
+
+	@Override
+	public boolean isMessageSupported(String type) {
+		return SCREEN_COMMANDS.contains(type);
+	}
+
+	@Override
+	public void handleMessage(Object source, String type, Map<String, Object> eventData,
+			NuclrPluginCallback callback) {
+		SwingUtilities.invokeLater(() -> {
+			// The bus is application-wide and every workspace has its own screen, so only
+			// the one on screen in the window the user is typing into answers.
+			if (desktop == null || !root.isShowing()
+					|| SwingUtilities.getWindowAncestor(root)
+							!= KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow()) {
+				return;
+			}
+			act(null, type, List.of(), null, eventData, callback);
+		});
 	}
 
 	/**
