@@ -223,6 +223,57 @@ public interface AgentConnector {
 		return Optional.empty();
 	}
 
+	// ------------------------------------------------------------------ Network
+
+	/**
+	 * What letting sandboxed commands reach the network means for this CLI in an access mode.
+	 *
+	 * @param mode the access mode in force
+	 * @return one or two sentences
+	 */
+	String sandboxNetworkMeaning(AccessMode mode);
+
+	/**
+	 * The flags that let sandboxed commands reach the network.
+	 *
+	 * @param mode the access mode in force
+	 * @return the arguments, empty when the CLI needs none in that mode
+	 */
+	List<String> sandboxNetworkArguments(AccessMode mode);
+
+	// ------------------------------------------------------------------ Extra folders
+
+	/**
+	 * What extra folders mean for this CLI in an access mode, one or two sentences.
+	 *
+	 * @param mode the access mode in force
+	 * @return the meaning
+	 */
+	String extraFoldersMeaning(AccessMode mode);
+
+	/**
+	 * The flags that let agents also work in these folders.
+	 *
+	 * @param folders the folders, already expanded; empty for none
+	 * @return the arguments, empty when the list is empty or the CLI needs none
+	 */
+	List<String> extraFolderArguments(List<String> folders);
+
+	/**
+	 * Each folder after its own {@code --add-dir}, the flag Claude Code and Codex share.
+	 *
+	 * @param folders the folders
+	 * @return the arguments
+	 */
+	static List<String> addDirArguments(List<String> folders) {
+		var arguments = new ArrayList<String>();
+		for (var folder : folders) {
+			arguments.add("--add-dir");
+			arguments.add(folder);
+		}
+		return arguments;
+	}
+
 	// ------------------------------------------------------------------ MCP servers
 
 	/** Whether the CLI can use MCP servers at all. */

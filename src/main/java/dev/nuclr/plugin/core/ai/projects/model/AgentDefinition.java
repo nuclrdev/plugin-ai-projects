@@ -34,6 +34,13 @@ public class AgentDefinition {
 	 */
 	private String workingDirectory;
 
+	/**
+	 * The shared profile this agent starts from, by id, or {@code null} for none. A
+	 * profile decides the whole launch - provider, executable, arguments and
+	 * environment - in place of the harness; the project's context is still added.
+	 */
+	private String profileId;
+
 	/** Harness overrides applied on top of template and project harness. */
 	private HarnessSpec harness = new HarnessSpec();
 

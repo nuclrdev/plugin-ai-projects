@@ -171,6 +171,31 @@ final class ClaudeCodeConnector implements AgentConnector {
 		return problems;
 	}
 
+	@Override
+	public String sandboxNetworkMeaning(AccessMode mode) {
+		// Blocking WebFetch and WebSearch is not isolation: curl, wget, Python and the like still run in the shell.
+		return "Claude Code does not sandbox commands by default, so they already reach the network. A profile "
+				+ "cannot guarantee network isolation for Claude Code: blocking WebFetch and WebSearch still leaves "
+				+ "curl, wget, scripts and every other command free to connect. That needs the shell tools (Bash, "
+				+ "PowerShell) blocked on the Tools tab, or an OS-level sandbox or firewall.";
+	}
+
+	@Override
+	public List<String> sandboxNetworkArguments(AccessMode mode) {
+		return List.of();
+	}
+
+	@Override
+	public String extraFoldersMeaning(AccessMode mode) {
+		return "Claude Code's file tools can work in these as they do in the project folder; "
+				+ "the access mode still decides what they may change.";
+	}
+
+	@Override
+	public List<String> extraFolderArguments(List<String> folders) {
+		return AgentConnector.addDirArguments(folders);
+	}
+
 	/** The tools that run commands; a command rule is written for each. */
 	private static final List<String> SHELL_TOOLS = List.of("Bash", "PowerShell");
 

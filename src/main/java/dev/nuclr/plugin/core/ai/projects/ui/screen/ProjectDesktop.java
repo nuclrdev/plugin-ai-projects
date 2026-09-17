@@ -113,6 +113,7 @@ public final class ProjectDesktop extends JPanel
 	private final JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
 	private final Runnable onCloseRequested;
 	private final dev.nuclr.platform.NuclrCredentialStore credentials;
+	private final ProfileStore profiles = ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome());
 	private final javax.swing.Timer liveRefresh;
 
 	private boolean closed;
@@ -204,7 +205,7 @@ public final class ProjectDesktop extends JPanel
 		var profiles = RibbonButtons.large(Glyphs.PROFILE, "Profiles",
 				"Shared profiles: harness and context reusable across projects");
 		profiles.addActionListener(event -> ProfilesDialog.show(this,
-				ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome()), credentials));
+				this.profiles, credentials));
 		bar.add(profiles);
 		bar.add(dropdownButton(Glyphs.CONFIGURE, "Configuration",
 				"Project configuration and agents", this::fillConfigurationMenu));
@@ -486,7 +487,8 @@ public final class ProjectDesktop extends JPanel
 
 	private AgentFrame openFrame(AgentDefinition agent, WindowState state) {
 
-		var context = new AgentWindowContext(store, agent, this, RuntimeStamp.CURRENT);
+		var context = new AgentWindowContext(store, agent, this, RuntimeStamp.CURRENT, profiles,
+				new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(credentials));
 		var window = registry.createWindow(context);
 		var frame = new AgentFrame(agent, window, this);
 
@@ -730,7 +732,8 @@ public final class ProjectDesktop extends JPanel
 	@Override
 	public void newAgent(String templateId) {
 
-		var definition = AgentDialogs.editAgent(this, store.project(), registry, null, templateId);
+		var definition = AgentDialogs.editAgent(this, store.project(), registry, null, templateId,
+				profiles.list().profiles());
 		if (definition == null) {
 			return;
 		}
@@ -750,7 +753,8 @@ public final class ProjectDesktop extends JPanel
 		if (existing == null) {
 			return;
 		}
-		var edited = AgentDialogs.editAgent(this, store.project(), registry, existing, null);
+		var edited = AgentDialogs.editAgent(this, store.project(), registry, existing, null,
+				profiles.list().profiles());
 		if (edited == null) {
 			return;
 		}
@@ -760,6 +764,7 @@ public final class ProjectDesktop extends JPanel
 		existing.setTemplateId(edited.getTemplateId());
 		existing.setWindowKind(edited.getWindowKind());
 		existing.setWorkingDirectory(edited.getWorkingDirectory());
+		existing.setProfileId(edited.getProfileId());
 		existing.setHarness(edited.getHarness());
 		existing.setContext(edited.getContext());
 		store.markProjectDirty();

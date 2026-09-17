@@ -86,12 +86,6 @@ public final class ProfileValidator {
 			problems.addAll(mcpProblems(harness));
 		}
 		if (harness != null) {
-			positive(problems, harness.getMaxTurns(), "Max turns");
-			positive(problems, harness.getTimeoutMinutes(), "Timeout");
-			if (harness.getMaxBudgetUsd() != null
-					&& !(harness.getMaxBudgetUsd() > 0 && Double.isFinite(harness.getMaxBudgetUsd()))) {
-				problems.add(new Problem(null, -1, "Max budget must be greater than zero."));
-			}
 			if (harness.getMcpServers() != null) {
 				var names = new HashSet<String>();
 				for (var server : harness.getMcpServers()) {
@@ -292,6 +286,9 @@ public final class ProfileValidator {
 				if (blank(record.getPath())) {
 					problems.add(noun + ": choose a " + (section.browse() == ProfileSection.Browse.DIRECTORIES
 							? "folder." : "file."));
+				} else if (section == ProfileSection.EXTRA_FOLDERS && !ExtraFolders.isUsable(record.getPath())) {
+					problems.add(noun + ": \"" + record.getPath().strip() + "\" is relative. Use a full path, "
+							+ "or start it with ~ for a folder under the home folder.");
 				}
 			}
 			case GIT -> {
@@ -357,12 +354,6 @@ public final class ProfileValidator {
 							+ "@" + (blank(record.getRef()) ? "" : record.getRef().trim())
 							+ ":" + (blank(record.getPath()) ? "" : record.getPath().trim());
 		};
-	}
-
-	private static void positive(List<Problem> problems, Integer value, String label) {
-		if (value != null && value <= 0) {
-			problems.add(new Problem(null, -1, label + " must be greater than zero."));
-		}
 	}
 
 	private static boolean blank(String value) {

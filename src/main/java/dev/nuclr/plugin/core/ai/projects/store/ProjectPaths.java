@@ -126,6 +126,15 @@ public final class ProjectPaths {
 		return metadataDirectory.resolve("sessions").resolve(safe(agentId) + ".briefing.md");
 	}
 
+	/**
+	 * Per-agent folder for files a launch needs, such as an MCP configuration -
+	 * runtime only, rewritten on every start. Holds no secrets: those travel in the
+	 * agent's environment.
+	 */
+	public Path runtimeDirectory(String agentId) {
+		return metadataDirectory.resolve("sessions").resolve(safe(agentId) + ".runtime");
+	}
+
 	/** Per-agent terminal transcript — runtime only, but deliberately kept across restarts. */
 	public Path transcriptFile(String agentId) {
 		return metadataDirectory.resolve("transcripts").resolve(safe(agentId) + ".log");

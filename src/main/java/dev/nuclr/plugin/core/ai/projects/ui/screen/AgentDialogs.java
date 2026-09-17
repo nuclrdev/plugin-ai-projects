@@ -34,6 +34,8 @@ import dev.nuclr.plugin.core.ai.projects.model.AgentTemplate;
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
 import dev.nuclr.plugin.core.ai.projects.model.ContextSpec;
 import dev.nuclr.plugin.core.ai.projects.model.HarnessSpec;
+import dev.nuclr.plugin.core.ai.projects.profile.Profile;
+import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
 
 /**
  * The desktop's modal dialogs: defining an agent, sending it an instruction, and
@@ -57,10 +59,11 @@ public final class AgentDialogs {
 	 * @param registry  the available window kinds
 	 * @param existing  the agent to edit, or {@code null} to define a new one
 	 * @param template  the template to preselect for a new agent, or {@code null}
+	 * @param profiles  the shared profiles an agent can start from
 	 * @return the edited copy, or {@code null} when cancelled
 	 */
 	public static AgentDefinition editAgent(Component parent, AiProject project, AgentWindowRegistry registry,
-			AgentDefinition existing, String template) {
+			AgentDefinition existing, String template, List<Profile> profiles) {
 
 		var draft = copyOf(existing);
 
@@ -92,6 +95,44 @@ public final class AgentDialogs {
 				draft.getHarness().getModel() == null ? "" : draft.getHarness().getModel(), 26);
 		model.setToolTipText("Leave blank to inherit the project harness.");
 
+		// A profile decides the launch, so the harness overrides step aside while one is chosen.
+		var profileChoices = new ArrayList<Object>();
+		profileChoices.add(NO_PROFILE);
+		profiles.stream().sorted(java.util.Comparator.comparing(Profile::displayName, String.CASE_INSENSITIVE_ORDER))
+				.forEach(profileChoices::add);
+		var currentProfile = draft.getProfileId();
+		if (currentProfile != null && profiles.stream().noneMatch(each -> currentProfile.equals(each.getId()))) {
+			profileChoices.add(new MissingProfile(currentProfile));
+		}
+		var profileChoice = new JComboBox<>(profileChoices.toArray());
+		profileChoice.setRenderer(renderer(value -> value instanceof Profile profile
+				? profile.displayName() + AgentProvider.byId(profile.getHarness().getProvider())
+						.map(provider -> "  (" + provider.displayName() + ")").orElse("")
+				: value instanceof MissingProfile missing ? "(missing profile " + missing.id() + ")"
+						: "(none - use the project harness)"));
+		for (var choice : profileChoices) {
+			if (choice instanceof Profile profile && profile.getId().equals(currentProfile)
+					|| choice instanceof MissingProfile missing && missing.id().equals(currentProfile)) {
+				profileChoice.setSelectedItem(choice);
+			}
+		}
+		Runnable profileChanged = () -> {
+			var chosen = profileChoice.getSelectedItem();
+			var usesProfile = chosen != NO_PROFILE;
+			executable.setEnabled(!usesProfile);
+			model.setEnabled(!usesProfile);
+			var note = usesProfile ? "The profile decides this." : "Leave blank to inherit the project harness.";
+			executable.setToolTipText(note);
+			model.setToolTipText(note);
+			if (chosen instanceof Profile profile) {
+				// Show the profile's CLI in a window of its kind, when there is one.
+				AgentProvider.byId(profile.getHarness().getProvider())
+						.ifPresent(provider -> selectKind(kindChoice, providers, "terminal." + provider.id(), null));
+			}
+		};
+		profileChanged.run();
+		profileChoice.addActionListener(event -> profileChanged.run());
+
 		var form = new JPanel(new GridBagLayout());
 		form.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 		var constraints = new GridBagConstraints();
@@ -101,6 +142,7 @@ public final class AgentDialogs {
 
 		var row = 0;
 		addRow(form, constraints, row++, "Name", nameField);
+		addRow(form, constraints, row++, "Profile", profileChoice);
 		addRow(form, constraints, row++, "Template", templateChoice);
 		addRow(form, constraints, row++, "Window kind", kindChoice);
 		addRow(form, constraints, row++, "Working directory", workingDirectory);
@@ -126,6 +168,9 @@ public final class AgentDialogs {
 			draft.setTemplateId(chosenTemplate == null ? null : chosenTemplate.getId());
 			draft.setWindowKind(chosenKind == null ? registry.defaultKind() : chosenKind.kind());
 			draft.setWorkingDirectory(blankToNull(workingDirectory.getText()));
+			var chosenProfile = profileChoice.getSelectedItem();
+			draft.setProfileId(chosenProfile instanceof Profile profile ? profile.getId()
+					: chosenProfile instanceof MissingProfile missing ? missing.id() : null);
 			draft.getHarness().setExecutable(blankToNull(executable.getText()));
 			draft.getHarness().setModel(blankToNull(model.getText()));
 			return draft;
@@ -282,6 +327,7 @@ public final class AgentDialogs {
 		copy.setWindowKind(existing.getWindowKind());
 		copy.setTemplateId(existing.getTemplateId());
 		copy.setWorkingDirectory(existing.getWorkingDirectory());
+		copy.setProfileId(existing.getProfileId());
 		copy.setCreatedAt(existing.getCreatedAt());
 		copy.setHarness(existing.getHarness() == null ? new HarnessSpec() : existing.getHarness().copy());
 		copy.setContext(existing.getContext() == null ? new ContextSpec() : existing.getContext().copy());
@@ -299,6 +345,13 @@ public final class AgentDialogs {
 				return;
 			}
 		}
+	}
+
+	/** The choice of starting from no profile. */
+	private static final Object NO_PROFILE = new Object();
+
+	/** A profile the agent refers to that is no longer there, kept so OK does not silently drop it. */
+	private record MissingProfile(String id) {
 	}
 
 	private static void selectKind(JComboBox<AgentWindowProvider> choice, List<AgentWindowProvider> providers,

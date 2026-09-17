@@ -6,13 +6,13 @@ import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
 import javax.swing.BorderFactory;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -20,7 +20,9 @@ import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTextField;
 
+import dev.nuclr.plugin.core.ai.projects.profile.ExtraFolders;
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;
+import dev.nuclr.plugin.core.ai.projects.provider.AccessMode;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileSection;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileValidator;
 import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalogs;
@@ -46,12 +48,10 @@ public final class ProfileForm extends JPanel {
 	private final JTextField description = new JTextField(32);
 
 	private final ProviderFields providerFields;
-	private final JTextField sandbox = new JTextField(28);
 	private final ListEditor startupArgs;
 	private final McpServerListEditor mcpServers;
-	private final JTextField maxTurns = new JTextField(10);
-	private final JTextField timeoutMinutes = new JTextField(10);
-	private final JTextField maxBudgetUsd = new JTextField(10);
+	private final JCheckBox sandboxNetwork = new JCheckBox("Let sandboxed commands reach the network");
+	private final WrappingNote sandboxNetworkNote = new WrappingNote();
 
 	private final Map<ProfileSection, RecordListEditor> sections = new EnumMap<>(ProfileSection.class);
 
@@ -59,12 +59,12 @@ public final class ProfileForm extends JPanel {
 	private final JTabbedPane harnessTabs = new JTabbedPane(JTabbedPane.LEFT);
 	private final JTabbedPane contextTabs = new JTabbedPane(JTabbedPane.LEFT);
 	private final Map<ProfileSection, Integer> tabIndex = new EnumMap<>(ProfileSection.class);
-	private int limitsTab;
 	private int accessTab;
 	private int mcpTab;
 	private McpServersPanel mcp;
 	private int toolsTab;
 	private final ToolListsPanel tools;
+	private final WrappingNote extraFoldersNote = new WrappingNote();
 	private int commandsTab;
 	private final CommandListsPanel commands;
 
@@ -108,16 +108,9 @@ public final class ProfileForm extends JPanel {
 		RecordEditorDialog.placeholder(description, "Optional, e.g. Claude with a sandbox and our Java conventions");
 
 		providerFields = new ProviderFields(harness, catalogs);
-		sandbox.setText(text(harness.getSandbox()));
-		RecordEditorDialog.placeholder(sandbox, "e.g. local, docker, devcontainer");
 		startupArgs = new ListEditor("One argument per line.", 5, harness.getStartupArgs());
 		mcpServers = new McpServerListEditor(harness.getMcpServers(), session, () -> providerFields.selectedProvider());
-		maxTurns.setText(number(harness.getMaxTurns()));
-		timeoutMinutes.setText(number(harness.getTimeoutMinutes()));
-		maxBudgetUsd.setText(number(harness.getMaxBudgetUsd()));
-		for (var field : new JTextField[] { maxTurns, timeoutMinutes, maxBudgetUsd }) {
-			RecordEditorDialog.placeholder(field, "No limit");
-		}
+		sandboxNetwork.setSelected(harness.isSandboxNetworkAccess());
 
 		for (var section : ProfileSection.values()) {
 			var editor = new RecordListEditor(section, section.records(original));
@@ -130,7 +123,6 @@ public final class ProfileForm extends JPanel {
 				row("Executable", providerFields.executable(), "Blank uses the provider's own command."),
 				noted("Model", providerFields.modelRow(), providerFields.modelNote()),
 				noted("Reasoning effort", providerFields.effort(), providerFields.effortNote()),
-				row("Sandbox / runtime", sandbox, (String) null),
 				block("Startup arguments", startupArgs))));
 		tools = new ToolListsPanel(harness.restrictsTools(),
 				harness.getAllowedTools() == null ? List.of() : harness.getAllowedTools(),
@@ -160,15 +152,19 @@ public final class ProfileForm extends JPanel {
 		accessTab = harnessTabs.getTabCount();
 		harnessTabs.addTab("Access", Glyphs.icon(Glyphs.PERMISSION), scroll(form(
 				noted("Access mode", providerFields.access(), stack(providerFields.accessNote(),
-						providerFields.accessWarning())))));
-		addSection(harnessTabs, ProfileSection.ALLOWED_ROOTS, Glyphs.ROOT);
-		addSection(harnessTabs, ProfileSection.NETWORK, Glyphs.NETWORK);
+						providerFields.accessWarning())),
+				noted("Network", sandboxNetwork, sandboxNetworkNote))));
+		sandboxNetwork.addActionListener(event -> updateSandboxNetworkNote());
+		providerFields.addProviderListener(provider -> updateSandboxNetworkNote());
+		providerFields.access().addActionListener(event -> updateSandboxNetworkNote());
+		updateSandboxNetworkNote();
+		extraFoldersNote.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
+		addSection(harnessTabs, ProfileSection.EXTRA_FOLDERS, Glyphs.ROOT, extraFoldersNote);
+		sections.get(ProfileSection.EXTRA_FOLDERS).addChangeListener(this::updateExtraFoldersNote);
+		providerFields.addProviderListener(provider -> updateExtraFoldersNote());
+		providerFields.access().addActionListener(event -> updateExtraFoldersNote());
+		updateExtraFoldersNote();
 		addSection(harnessTabs, ProfileSection.ENVIRONMENT, Glyphs.ENVIRONMENT);
-		limitsTab = harnessTabs.getTabCount();
-		harnessTabs.addTab("Execution limits", Glyphs.icon(Glyphs.LIMIT), scroll(form(
-				row("Max turns", maxTurns, null),
-				row("Timeout (minutes)", timeoutMinutes, null),
-				row("Max budget (USD)", maxBudgetUsd, null))));
 
 		for (var tabs : new JTabbedPane[] { harnessTabs, contextTabs }) {
 			tabs.putClientProperty("JTabbedPane.tabAlignment", "leading");
@@ -178,9 +174,6 @@ public final class ProfileForm extends JPanel {
 		addSection(contextTabs, ProfileSection.INSTRUCTIONS, Glyphs.INSTRUCTION);
 		addSection(contextTabs, ProfileSection.SKILLS, Glyphs.SKILL);
 		addSection(contextTabs, ProfileSection.KNOWLEDGE, Glyphs.KNOWLEDGE);
-		addSection(contextTabs, ProfileSection.FILES, Glyphs.INJECTED);
-		addSection(contextTabs, ProfileSection.LOADING_RULES, Glyphs.RULE);
-		addSection(contextTabs, ProfileSection.VARIABLES, Glyphs.VARIABLE);
 
 		groups.addTab("Harness", Glyphs.icon(Glyphs.HARNESS),
 				group("<b>Harness</b> &mdash; what agents <i>can do</i>.", harnessTabs));
@@ -200,22 +193,7 @@ public final class ProfileForm extends JPanel {
 	}
 
 	/**
-	 * Problems with what was typed that the model cannot even hold, such as a
-	 * limit that is not a number.
-	 *
-	 * @return messages, empty when every field parses
-	 */
-	public List<String> inputProblems() {
-		var problems = new ArrayList<String>();
-		parseInteger(maxTurns, "Max turns", problems);
-		parseInteger(timeoutMinutes, "Timeout", problems);
-		parseDecimal(maxBudgetUsd, "Max budget", problems);
-		return problems;
-	}
-
-	/**
-	 * The profile as edited: the original with every field replaced. Fields that
-	 * do not parse are left unset; {@link #inputProblems()} reports them.
+	 * The profile as edited: the original with every field replaced.
 	 *
 	 * @return a new profile
 	 */
@@ -225,14 +203,11 @@ public final class ProfileForm extends JPanel {
 		profile.setDescription(trimToNull(description.getText()));
 		var harness = profile.getHarness();
 		providerFields.apply(harness);
-		harness.setSandbox(trimToNull(sandbox.getText()));
 		harness.setStartupArgs(new ArrayList<>(startupArgs.values()));
 		harness.setMcpServers(new ArrayList<>(mcpServers.servers()));
 		harness.setMcpAccess(mcp.restrictsMcpServers() ? Profile.Harness.TOOL_ACCESS_ONLY : null);
 		harness.setSwitchedOffMcpServers(new ArrayList<>(mcp.switchedOffServers()));
-		harness.setMaxTurns(parseInteger(maxTurns, "", new ArrayList<>()));
-		harness.setTimeoutMinutes(parseInteger(timeoutMinutes, "", new ArrayList<>()));
-		harness.setMaxBudgetUsd(parseDecimal(maxBudgetUsd, "", new ArrayList<>()));
+		harness.setSandboxNetworkAccess(sandboxNetwork.isSelected());
 		sections.forEach((section, editor) -> section.setRecords(profile, editor.records()));
 		harness.setToolAccess(tools.restrictsTools() ? Profile.Harness.TOOL_ACCESS_ONLY : null);
 		harness.setAllowedTools(new ArrayList<>(tools.allowedTools()));
@@ -249,9 +224,6 @@ public final class ProfileForm extends JPanel {
 	 * @return whether the user changed something
 	 */
 	public boolean differsFrom(Profile baseline) {
-		if (!inputProblems().isEmpty()) {
-			return true;
-		}
 		return !Json.toJson(toProfile()).equals(Json.toJson(baseline));
 	}
 
@@ -273,8 +245,6 @@ public final class ProfileForm extends JPanel {
 				showTab(harnessTabs, 0);
 			} else if (message.contains("MCP")) {
 				showTab(harnessTabs, mcpTab);
-			} else if (message.startsWith("Max") || message.startsWith("Timeout")) {
-				showTab(harnessTabs, limitsTab);
 			} else {
 				name.requestFocusInWindow();
 				name.selectAll();
@@ -291,20 +261,26 @@ public final class ProfileForm extends JPanel {
 		showTab(harnessTabs, mcpTab);
 	}
 
-	/** Bring the limits tab forward, for a limit that does not parse. */
-	public void revealLimits() {
-		showTab(harnessTabs, limitsTab);
-		maxTurns.requestFocusInWindow();
-	}
-
 	private void showTab(JTabbedPane tabs, int index) {
 		groups.setSelectedComponent(tabs.getParent());
 		tabs.setSelectedIndex(index);
 	}
 
 	private void addSection(JTabbedPane tabs, ProfileSection section, String glyph) {
+		addSection(tabs, section, glyph, null);
+	}
+
+	/** A section tab, optionally with something above its list. */
+	private void addSection(JTabbedPane tabs, ProfileSection section, String glyph, JComponent header) {
 		tabIndex.put(section, tabs.getTabCount());
-		tabs.addTab(section.title(), Glyphs.icon(glyph), sections.get(section));
+		Component content = sections.get(section);
+		if (header != null) {
+			var panel = new JPanel(new BorderLayout());
+			panel.add(header, BorderLayout.NORTH);
+			panel.add(content, BorderLayout.CENTER);
+			content = panel;
+		}
+		tabs.addTab(section.title(), Glyphs.icon(glyph), content);
 		updateTitle(section);
 	}
 
@@ -313,6 +289,40 @@ public final class ProfileForm extends JPanel {
 		panel.add(top, BorderLayout.NORTH);
 		panel.add(bottom, BorderLayout.SOUTH);
 		return panel;
+	}
+
+	/** Say what the extra folders mean for the provider and access mode chosen now, and what is passed. */
+	private void updateExtraFoldersNote() {
+		var provider = providerFields.selectedProvider();
+		if (provider == null) {
+			extraFoldersNote.setText("Choose a provider on Model / runtime to see how these are passed.");
+			return;
+		}
+		var connector = provider.connector();
+		var chosen = providerFields.access().getSelectedItem();
+		var mode = chosen instanceof AccessMode each ? each : connector.defaultAccessMode();
+		var harness = new Profile.Harness();
+		harness.setExtraFolders(sections.get(ProfileSection.EXTRA_FOLDERS).records());
+		var arguments = connector.extraFolderArguments(ExtraFolders.resolve(harness, System.getProperty("user.home")));
+		extraFoldersNote.setText(connector.extraFoldersMeaning(mode) + " A folder starting with ~ is under the home "
+				+ "folder of whoever starts the agent.\n" + (arguments.isEmpty() ? "Nothing is passed."
+						: "Passed to " + provider.displayName() + " as " + String.join(" ",
+								arguments.stream().map(each -> each.contains(" ") ? "\"" + each + "\"" : each).toList())));
+	}
+
+	/** Say what the network choice does for the provider and access mode chosen now, and what is passed. */
+	private void updateSandboxNetworkNote() {
+		var provider = providerFields.selectedProvider();
+		if (provider == null) {
+			sandboxNetworkNote.setText("Choose a provider on Model / runtime to see what this does.");
+			return;
+		}
+		var connector = provider.connector();
+		var chosen = providerFields.access().getSelectedItem();
+		var mode = chosen instanceof AccessMode each ? each : connector.defaultAccessMode();
+		var arguments = sandboxNetwork.isSelected() ? connector.sandboxNetworkArguments(mode) : List.<String>of();
+		sandboxNetworkNote.setText(connector.sandboxNetworkMeaning(mode) + "\n"
+				+ (arguments.isEmpty() ? "Nothing is passed." : "Passed as " + String.join(" ", arguments)));
 	}
 
 	private void updateMcpTitle() {
@@ -449,48 +459,6 @@ public final class ProfileForm extends JPanel {
 		constraints.weighty = 1;
 		form.add(new JPanel(), constraints);
 		return form;
-	}
-
-	private static Integer parseInteger(JTextField field, String label, List<String> problems) {
-		var value = field.getText().trim();
-		if (value.isEmpty()) {
-			return null;
-		}
-		try {
-			var parsed = Integer.parseInt(value);
-			if (parsed > 0) {
-				return parsed;
-			}
-		} catch (NumberFormatException e) {
-			// Reported below.
-		}
-		problems.add(label + " must be a whole number greater than zero, or blank for no limit.");
-		return null;
-	}
-
-	private static Double parseDecimal(JTextField field, String label, List<String> problems) {
-		var value = field.getText().trim().replace("$", "").trim();
-		if (value.isEmpty()) {
-			return null;
-		}
-		try {
-			var parsed = Double.parseDouble(value);
-			if (parsed > 0 && Double.isFinite(parsed)) {
-				return parsed;
-			}
-		} catch (NumberFormatException e) {
-			// Reported below.
-		}
-		problems.add(label + " must be an amount greater than zero, or blank for no limit.");
-		return null;
-	}
-
-	private static String number(Number value) {
-		if (value == null) {
-			return "";
-		}
-		return value instanceof Double amount ? BigDecimal.valueOf(amount).stripTrailingZeros().toPlainString()
-				: value.toString();
 	}
 
 	private static String trimToNull(String value) {

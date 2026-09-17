@@ -148,6 +148,27 @@ final class PiConnector implements AgentConnector {
 	}
 
 	@Override
+	public String sandboxNetworkMeaning(AccessMode mode) {
+		return "Pi has no sandbox, so commands already reach the network. A profile cannot keep Pi off it: that "
+				+ "needs its bash and powershell tools blocked on the Tools tab, or an OS-level sandbox or firewall.";
+	}
+
+	@Override
+	public List<String> sandboxNetworkArguments(AccessMode mode) {
+		return List.of();
+	}
+
+	@Override
+	public String extraFoldersMeaning(AccessMode mode) {
+		return "Pi has no sandbox and can already reach every folder, so nothing is passed.";
+	}
+
+	@Override
+	public List<String> extraFolderArguments(List<String> folders) {
+		return List.of();
+	}
+
+	@Override
 	public boolean supportsCommandRules() {
 		return false;
 	}

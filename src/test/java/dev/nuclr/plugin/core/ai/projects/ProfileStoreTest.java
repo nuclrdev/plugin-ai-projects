@@ -183,6 +183,83 @@ class ProfileStoreTest {
 		assertThrows(IOException.class, () -> store.save(profile, true));
 	}
 
+	/** Write a profile file as a plugin of another schema would have. */
+	private Path writeRaw(String id, String json) throws IOException {
+		Files.createDirectories(store.directory());
+		var file = store.directory().resolve(id + ".json");
+		Files.writeString(file, json);
+		return file;
+	}
+
+	@Test
+	void aVersionOneProfileIsReadAndSavedAsTheCurrentVersion() throws Exception {
+		var id = "0b8c1f3e-0000-4000-8000-000000000001";
+		writeRaw(id, """
+				{"schemaVersion": 1, "id": "%s", "name": "Old", "updatedAt": "2026-01-01T00:00:00Z",
+				 "harness": {"allowedRoots": [{"kind": "FILE", "path": "/srv/shared"}],
+				             "software": [{"kind": "TEXT", "text": "git"}]}}""".formatted(id));
+
+		var read = store.require(id);
+		assertEquals(1, read.getSchemaVersion());
+		assertEquals("/srv/shared", read.getHarness().getExtraFolders().getFirst().getPath());
+
+		var saved = store.save(read, false);
+		assertEquals(Profile.SCHEMA_VERSION, saved.getSchemaVersion());
+		var onDisk = Files.readString(store.directory().resolve(id + ".json"));
+		assertTrue(onDisk.contains("\"schemaVersion\" : " + Profile.SCHEMA_VERSION)
+				|| onDisk.contains("\"schemaVersion\":" + Profile.SCHEMA_VERSION), onDisk);
+		assertTrue(onDisk.contains("extraFolders") && !onDisk.contains("allowedRoots"), onDisk);
+	}
+
+	@Test
+	void aProfileFromANewerPluginIsListedAsUnreadableAndNeverOverwritten() throws Exception {
+		var id = "0b8c1f3e-0000-4000-8000-000000000002";
+		var future = """
+				{"schemaVersion": %d, "id": "%s", "name": "Future", "harness": {"somethingNew": true}}"""
+				.formatted(Profile.SCHEMA_VERSION + 1, id);
+		var file = writeRaw(id, future);
+		store.create(profile("Current"));
+
+		var listing = store.list();
+		assertEquals(List.of("Current"), listing.profiles().stream().map(Profile::getName).toList());
+		assertEquals(1, listing.unreadable().size());
+		assertTrue(listing.unreadable().getFirst().error().contains("newer version"),
+				listing.unreadable().getFirst().error());
+
+		assertTrue(store.find(id).isEmpty());
+		var refused = assertThrows(IOException.class, () -> store.require(id));
+		assertTrue(refused.getMessage().contains("newer version"), refused.getMessage());
+
+		// Even a forced save, from an editor opened before the newer plugin wrote the file.
+		var stale = profile("Future");
+		stale.setId(id);
+		assertThrows(IOException.class, () -> store.save(stale, true));
+		assertEquals(future, Files.readString(file), "left as the newer plugin wrote it");
+	}
+
+	@Test
+	void importingAProfileFromANewerPluginIsRefused() throws IOException {
+		var file = home.resolve("future" + ProfileStore.EXPORT_SUFFIX);
+		Files.writeString(file, """
+				{"schemaVersion": %d, "name": "Future"}""".formatted(Profile.SCHEMA_VERSION + 1));
+
+		var refused = assertThrows(IOException.class, () -> store.importFrom(file));
+		assertTrue(refused.getMessage().contains("newer version"), refused.getMessage());
+		assertTrue(store.list().profiles().isEmpty());
+	}
+
+	@Test
+	void exportsAndCopiesAreWrittenInTheCurrentVersion() throws IOException {
+		var old = profile("Old");
+		old.setSchemaVersion(1);
+		assertEquals(Profile.SCHEMA_VERSION, store.create(old).getSchemaVersion());
+
+		var file = home.resolve("old" + ProfileStore.EXPORT_SUFFIX);
+		store.exportTo(old, file);
+		assertEquals(Profile.SCHEMA_VERSION, store.importFrom(file).getSchemaVersion());
+		assertEquals(1, old.getSchemaVersion(), "the profile passed in is not changed");
+	}
+
 	@Test
 	void uniqueNamesIgnoreCase() {
 		assertEquals("Base (2)", ProfileStore.uniqueName("Base", List.of("base")));

@@ -83,9 +83,9 @@ public final class ProjectStore implements AutoCloseable {
 		if (project == null) {
 			throw new IOException("Empty project definition at " + paths.projectFile());
 		}
-		if (project.getSchemaVersion() > 1) {
+		if (project.readSchemaVersion() > AiProject.SCHEMA_VERSION) {
 			throw new IOException("Project definition requires a newer AI Projects plugin (schema "
-					+ project.getSchemaVersion() + ")");
+					+ project.readSchemaVersion() + ")");
 		}
 		normalise(project, paths);
 		var desktop = Json.readOrDefault(paths.desktopFile(), DesktopState.class, new DesktopState());

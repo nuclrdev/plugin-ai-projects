@@ -334,6 +334,71 @@ class TerminalAgentWindowTest {
 		assertNotNull(store.session("a1").getEndedAt());
 	}
 
+	/**
+	 * A profile launch is prepared off the event thread; wait for it to report back.
+	 * It must say it is starting straight away, rather than look idle meanwhile.
+	 */
+	private static void awaitFailure(AgentWindow window) throws Exception {
+		var deadline = System.currentTimeMillis() + 10_000;
+		while (window.status() != AgentStatus.FAILED && System.currentTimeMillis() < deadline) {
+			assertTrue(window.status() == AgentStatus.STARTING, "status while preparing: " + window.status());
+			Thread.sleep(20);
+			onEdt(() -> {
+			});
+		}
+		assertEquals(AgentStatus.FAILED, window.status());
+	}
+
+	private AgentWindow windowWithProfiles(dev.nuclr.plugin.core.ai.projects.profile.ProfileStore profiles)
+			throws Exception {
+		var built = new AgentWindow[1];
+		SwingUtilities.invokeAndWait(() -> built[0] = new AgentWindowRegistry(command -> java.util.Optional.empty())
+				.createWindow(new AgentWindowContext(store, agent, host, RuntimeStamp.CURRENT, profiles,
+						new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(null))));
+		return built[0];
+	}
+
+	@Test
+	void anAgentWithAProfileStartsWhatTheProfileSaysInsteadOfTheHarness() throws Exception {
+
+		var profiles = new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(root.resolve("profiles"));
+		var draft = new dev.nuclr.plugin.core.ai.projects.profile.Profile();
+		draft.setName("Team");
+		draft.getHarness().setProvider("claude-code");
+		draft.getHarness().setExecutable("definitely-not-installed-claude");
+		var saved = profiles.create(draft);
+		project().getHarness().setExecutable("project-level-command");
+		agent.setProfileId(saved.getId());
+
+		var window = windowWithProfiles(profiles);
+		onEdt(window::start);
+
+		awaitFailure(window);
+		assertTrue(window.sessionSummary().contains("definitely-not-installed-claude"), window.sessionSummary());
+		onEdt(window::close);
+	}
+
+	@Test
+	void aProfileThatIsGoneOrUnusableStopsTheStartWithAReason() throws Exception {
+
+		var profiles = new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(root.resolve("profiles"));
+		agent.setProfileId("no-such-profile");
+		var window = windowWithProfiles(profiles);
+		onEdt(window::start);
+		awaitFailure(window);
+		assertTrue(window.sessionSummary().contains("no longer exists"), window.sessionSummary());
+		onEdt(window::close);
+
+		var draft = new dev.nuclr.plugin.core.ai.projects.profile.Profile();
+		draft.setName("Unfinished");
+		agent.setProfileId(profiles.create(draft).getId());
+		window = windowWithProfiles(profiles);
+		onEdt(window::start);
+		awaitFailure(window);
+		assertTrue(window.sessionSummary().contains("names no provider"), window.sessionSummary());
+		onEdt(window::close);
+	}
+
 	@Test
 	void theWindowUsesTheAgentOverrideRatherThanTheProjectExecutable() throws Exception {
 

@@ -39,6 +39,7 @@ import com.pty4j.PtyProcessBuilder;
 
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
+import dev.nuclr.plugin.core.ai.projects.connector.LaunchPlan;
 import dev.nuclr.plugin.core.ai.projects.harness.AgentBriefing;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
@@ -338,6 +339,12 @@ public final class TerminalAgentWindow implements AgentWindow {
 			return;
 		}
 
+		// A profile decides the whole launch; without one, the harness does.
+		if (context.profileId() != null) {
+			startFromProfile();
+			return;
+		}
+
 		var harness = context.harness();
 		var command = commandLine(harness);
 		if (command.isEmpty()) {
@@ -389,26 +396,154 @@ public final class TerminalAgentWindow implements AgentWindow {
 
 		var workingDirectory = context.workingDirectory();
 		var launchNotice = launchNotice(harness, briefing, delivery);
+		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId())
+				.start(() -> spawn(new Launch(command, launched, environment, launchNotice), workingDirectory));
+	}
+
+	/**
+	 * What to start: the command as shown and recorded, the command as run - with
+	 * the executable resolved and the briefing added - its environment, and a note
+	 * for the transcript.
+	 */
+	private record Launch(List<String> command, List<String> launched, java.util.Map<String, String> environment,
+			String notice) {
+	}
+
+	/** Thrown while preparing a launch off the event thread, with a message for the user. */
+	private static final class StartRefused extends Exception {
+
+		private static final long serialVersionUID = 1L;
+
+		StartRefused(String message) {
+			super(message);
+		}
+	}
+
+	/**
+	 * Start an agent from its profile. Everything that reads the project model is
+	 * gathered here, on the event thread; the rest - reading the profile and the files
+	 * it links, writing the briefing and MCP configuration, reading secrets - happens
+	 * on a background thread, since any of it may be slow or ask to unlock a store.
+	 */
+	private void startFromProfile() {
+
+		var workingDirectory = context.workingDirectory();
+		var commanderVariables = context.commanderVariables();
+		var projectBriefing = AgentBriefing.of(context.project().displayName(), context.agent().displayName(),
+				context.resolvedContext());
+		var briefingFile = context.briefingFile();
+		var runtimeDirectory = context.runtimeDirectory();
+		var home = System.getProperty("user.home");
+
+		stopRequested = false;
+		setStatus(AgentStatus.STARTING);
+		showStopped("Starting from its profile ...");
+		startButton.setEnabled(false);
 
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> {
-			PtyProcess started;
+			final Launch launch;
 			try {
-				started = new PtyProcessBuilder()
-						.setCommand(launched.toArray(String[]::new))
-						.setEnvironment(environment)
-						.setDirectory(workingDirectory.toString())
-						.setInitialColumns(COLUMNS)
-						.setInitialRows(ROWS)
-						.setConsole(false)
-						.setWindowsAnsiColorEnabled(true)
-						.start();
-			} catch (IOException | RuntimeException e) {
-				log.warn("Could not start agent {}: {}", context.agentId(), e.getMessage(), e);
-				SwingUtilities.invokeLater(() -> handleStartFailure("Could not start the agent: " + e.getMessage()));
+				launch = prepareProfileLaunch(workingDirectory, commanderVariables, projectBriefing, briefingFile,
+						runtimeDirectory, home);
+			} catch (StartRefused e) {
+				SwingUtilities.invokeLater(() -> handleStartFailure(e.getMessage()));
 				return;
 			}
-			SwingUtilities.invokeLater(() -> attach(started, command, workingDirectory.toString(), launchNotice));
+			spawn(launch, workingDirectory);
 		});
+	}
+
+	/** Build a profile launch. Off the event thread. */
+	private Launch prepareProfileLaunch(java.nio.file.Path workingDirectory,
+			java.util.Map<String, String> commanderVariables, AgentBriefing projectBriefing,
+			java.nio.file.Path briefingFile, java.nio.file.Path runtimeDirectory, String home) throws StartRefused {
+
+		final dev.nuclr.plugin.core.ai.projects.profile.Profile profile;
+		try {
+			profile = context.profile();
+		} catch (java.nio.file.NoSuchFileException e) {
+			throw new StartRefused("This agent starts from a profile that no longer exists. Edit the agent and choose another.");
+		} catch (IOException e) {
+			throw new StartRefused("This agent's profile cannot be read: " + e.getMessage());
+		}
+		final LaunchPlan plan;
+		try {
+			plan = LaunchPlan.of(profile, runtimeDirectory, home, workingDirectory);
+		} catch (IllegalArgumentException e) {
+			throw new StartRefused(e.getMessage());
+		}
+
+		var command = plan.commandLine();
+		var executable = command.getFirst();
+		final Optional<java.nio.file.Path> resolved;
+		try {
+			resolved = executableResolver.apply(executable);
+		} catch (RuntimeException e) {
+			throw new StartRefused("The profile's executable is not a valid path: " + e.getMessage());
+		}
+		if (resolved.isEmpty()) {
+			throw new StartRefused("Could not find '" + executable
+					+ "' on PATH. Install it, or point the profile at its full path.");
+		}
+
+		// The project harness's variables are not added: the profile decides the launch.
+		var environment = new LinkedHashMap<>(System.getenv());
+		putNamed(environment, plan.environment());
+		putNamed(environment, commanderVariables);
+		environment.put("TERM", environment.getOrDefault("TERM", "xterm-256color"));
+		var launched = new ArrayList<>(command);
+		launched.set(0, resolved.get().toString());
+
+		var briefingText = projectBriefing.text();
+		if (!plan.briefing().isEmpty()) {
+			briefingText = briefingText.isEmpty() ? plan.briefing() : briefingText + "\n" + plan.briefing();
+		}
+		var delivery = ContextDelivery.NONE;
+		if (!briefingText.isEmpty()) {
+			try {
+				Files.createDirectories(briefingFile.getParent());
+				Files.writeString(briefingFile, briefingText, StandardCharsets.UTF_8);
+			} catch (IOException | RuntimeException e) {
+				throw new StartRefused("Could not write the agent's briefing to " + briefingFile + ": " + e.getMessage()
+						+ ". Not starting an agent without its instructions.");
+			}
+			delivery = ContextDelivery.plan(executable, resolved.get(), briefingFile, briefingText, environment);
+			launched.addAll(delivery.arguments());
+			environment.putAll(delivery.environment());
+		}
+
+		try {
+			plan.writeConfigFile();
+		} catch (IOException | RuntimeException e) {
+			throw new StartRefused("Could not write the agent's MCP configuration: " + e.getMessage());
+		}
+		try {
+			environment.putAll(LaunchPlan.resolveSecrets(plan.secrets(), context.profileSecrets(), System.getenv()));
+		} catch (IllegalStateException e) {
+			throw new StartRefused(e.getMessage());
+		}
+		return new Launch(command, launched, environment, profileNotice(plan, delivery));
+	}
+
+	/** Start the process and hand it to the event thread. Off the event thread. */
+	private void spawn(Launch launch, java.nio.file.Path workingDirectory) {
+		PtyProcess started;
+		try {
+			started = new PtyProcessBuilder()
+					.setCommand(launch.launched().toArray(String[]::new))
+					.setEnvironment(launch.environment())
+					.setDirectory(workingDirectory.toString())
+					.setInitialColumns(COLUMNS)
+					.setInitialRows(ROWS)
+					.setConsole(false)
+					.setWindowsAnsiColorEnabled(true)
+					.start();
+		} catch (IOException | RuntimeException e) {
+			log.warn("Could not start agent {}: {}", context.agentId(), e.getMessage(), e);
+			SwingUtilities.invokeLater(() -> handleStartFailure("Could not start the agent: " + e.getMessage()));
+			return;
+		}
+		SwingUtilities.invokeLater(() -> attach(started, launch.command(), workingDirectory.toString(), launch.notice()));
 	}
 
 	private void attach(PtyProcess started, List<String> command, String workingDirectory, String launchNotice) {
@@ -953,6 +1088,19 @@ public final class TerminalAgentWindow implements AgentWindow {
 		putNamed(environment, context.commanderVariables());
 		environment.put("TERM", environment.getOrDefault("TERM", "xterm-256color"));
 		return environment;
+	}
+
+	/** Say which profile started the agent, how its briefing was delivered, and what was not applied. */
+	private static String profileNotice(LaunchPlan plan, ContextDelivery delivery) {
+		var notes = new ArrayList<String>();
+		notes.add("Started from a profile for " + plan.provider().displayName());
+		if (delivery.delivered()) {
+			notes.add(delivery.description());
+		}
+		if (!plan.notices().isEmpty()) {
+			notes.add("Not applied: " + String.join(", ", plan.notices()));
+		}
+		return String.join("; ", notes);
 	}
 
 	private static void putNamed(java.util.Map<String, String> target, java.util.Map<String, String> source) {

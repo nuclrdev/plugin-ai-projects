@@ -54,12 +54,15 @@ class ContextDeliveryTest {
 	}
 
 	@Test
-	void codexOpensTheSessionWithTheBriefing() {
+	void codexGetsTheBriefingAsDeveloperInstructionsNotAPrompt() {
 
-		var plan = ContextDelivery.plan("codex", Path.of("/bin/codex.exe"), FILE, TEXT, Map.of());
+		// Codex takes one [PROMPT], which the startup arguments may already use.
+		var text = "# Briefing\n\nSay \"hi\" \\ then\tstop.\n";
+		var plan = ContextDelivery.plan("codex", Path.of("/bin/codex.exe"), FILE, text, Map.of());
 
-		assertEquals(1, plan.arguments().size());
-		assertTrue(plan.arguments().getFirst().contains("No code changes."));
+		assertEquals(List.of("-c", "developer_instructions=\"# Briefing\\n\\nSay \\\"hi\\\" \\\\ then\\tstop.\\u0001\\n\""),
+				plan.arguments());
+		assertTrue(plan.delivered());
 	}
 
 	@Test

@@ -9,8 +9,8 @@ import java.util.function.Function;
 /**
  * Every record list a profile holds, with what each one accepts.
  *
- * <p>Not every source makes sense everywhere. A network rule is a host, so it is plain
- * text; an allowed root is a folder, so it is a file link; an instruction can
+ * <p>Not every source makes sense everywhere. An environment variable is a name and a
+ * value; an extra folder is a folder, so it is a file link; an instruction can
  * be written in place, linked from disk or taken from a repository. The editor
  * offers exactly what is listed here and the validator enforces it.
  */
@@ -18,25 +18,22 @@ public enum ProfileSection {
 
 	// Harness - what agents can do. Built-in tools and shell commands are not records:
 	// they are plain allowed and blocked lists that a connector turns into flags.
-	ALLOWED_ROOTS(Group.HARNESS, "Allowed roots", "allowed root", "Folders agents may read and write.",
+	EXTRA_FOLDERS(Group.HARNESS, "Extra folders", "extra folder",
+			"Folders agents may also work in, besides the project folder, e.g. ~/.m2 for Maven builds.",
 			TextStyle.VALUE, Browse.DIRECTORIES, Set.of(RecordKind.FILE),
-			profile -> profile.getHarness().getAllowedRoots(),
-			(profile, records) -> profile.getHarness().setAllowedRoots(records)),
-
-	NETWORK(Group.HARNESS, "Network", "network rule", "Hosts, domains or networks agents may reach.",
-			TextStyle.VALUE, Browse.NONE, Set.of(RecordKind.TEXT),
-			profile -> profile.getHarness().getNetwork(),
-			(profile, records) -> profile.getHarness().setNetwork(records)),
+			profile -> profile.getHarness().getExtraFolders(),
+			(profile, records) -> profile.getHarness().setExtraFolders(records)),
 
 	ENVIRONMENT(Group.HARNESS, "Environment", "environment variable",
-			"Variables set on the agent process, or a .env file to read them from.",
+			"Variables set on the agent process, or a .env file to read them from. Values are saved and exported "
+					+ "with the profile; keep secrets in a .env file on this machine.",
 			TextStyle.NAME_VALUE, Browse.FILES, Set.of(RecordKind.TEXT, RecordKind.FILE),
 			profile -> profile.getHarness().getEnvironment(),
 			(profile, records) -> profile.getHarness().setEnvironment(records)),
 
 	// Context - what agents know.
 	INSTRUCTIONS(Group.CONTEXT, "Instructions", "instruction",
-			"Instruction documents every agent is given.",
+			"Documents placed in full in every agent's context: conventions, rules, background.",
 			TextStyle.DOCUMENT, Browse.FILES, Set.of(RecordKind.TEXT, RecordKind.FILE, RecordKind.GIT),
 			profile -> profile.getContext().getInstructions(),
 			(profile, records) -> profile.getContext().setInstructions(records)),
@@ -53,23 +50,7 @@ public enum ProfileSection {
 			TextStyle.DOCUMENT, Browse.FILES_AND_DIRECTORIES,
 			Set.of(RecordKind.TEXT, RecordKind.FILE, RecordKind.GIT),
 			profile -> profile.getContext().getKnowledge(),
-			(profile, records) -> profile.getContext().setKnowledge(records)),
-
-	FILES(Group.CONTEXT, "Files", "file", "Content placed in full in the agent's context at launch.",
-			TextStyle.DOCUMENT, Browse.FILES, Set.of(RecordKind.TEXT, RecordKind.FILE, RecordKind.GIT),
-			profile -> profile.getContext().getFiles(),
-			(profile, records) -> profile.getContext().setFiles(records)),
-
-	LOADING_RULES(Group.CONTEXT, "Loading rules", "loading rule",
-			"Rules for what agents load into their context, e.g. exclude: target/**, or a file of rules.",
-			TextStyle.VALUE, Browse.FILES, Set.of(RecordKind.TEXT, RecordKind.FILE),
-			profile -> profile.getContext().getLoadingRules(),
-			(profile, records) -> profile.getContext().setLoadingRules(records)),
-
-	VARIABLES(Group.CONTEXT, "Variables", "variable", "Named values agents are told about.",
-			TextStyle.NAME_VALUE, Browse.NONE, Set.of(RecordKind.TEXT),
-			profile -> profile.getContext().getVariables(),
-			(profile, records) -> profile.getContext().setVariables(records));
+			(profile, records) -> profile.getContext().setKnowledge(records));
 
 	/** Which half of the configuration a section belongs to. */
 	public enum Group {

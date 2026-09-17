@@ -9,6 +9,9 @@ import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
 import dev.nuclr.plugin.core.ai.projects.harness.ResolvedContext;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
+import dev.nuclr.plugin.core.ai.projects.profile.Profile;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
 import dev.nuclr.plugin.core.ai.projects.runtime.SessionRecord;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
 import dev.nuclr.plugin.core.ai.projects.store.TranscriptStore;
@@ -28,6 +31,8 @@ public final class AgentWindowContext {
 	private final AgentDefinition agent;
 	private final AgentWindowHost host;
 	private final String runtimeStamp;
+	private final ProfileStore profiles;
+	private final ProfileSecrets secrets;
 
 	/**
 	 * Build a context for one agent.
@@ -39,10 +44,59 @@ public final class AgentWindowContext {
 	 *                     written by an earlier run is recognisable as stale
 	 */
 	public AgentWindowContext(ProjectStore store, AgentDefinition agent, AgentWindowHost host, String runtimeStamp) {
+		this(store, agent, host, runtimeStamp, null, new ProfileSecrets(null));
+	}
+
+	/**
+	 * Build a context for one agent that may start from a shared profile.
+	 *
+	 * @param store        the open project store
+	 * @param agent        the agent being given a window
+	 * @param host         where the window reports status and attention
+	 * @param runtimeStamp identifies this Commander run
+	 * @param profiles     where shared profiles are kept, or {@code null} when there are none
+	 * @param secrets      the secrets profiles refer to
+	 */
+	public AgentWindowContext(ProjectStore store, AgentDefinition agent, AgentWindowHost host, String runtimeStamp,
+			ProfileStore profiles, ProfileSecrets secrets) {
 		this.store = store;
 		this.agent = agent;
 		this.host = host;
 		this.runtimeStamp = runtimeStamp;
+		this.profiles = profiles;
+		this.secrets = secrets;
+	}
+
+	/** The id of the profile the agent starts from, or {@code null} when it uses the harness. */
+	public String profileId() {
+		var id = agent.getProfileId();
+		return id == null || id.isBlank() ? null : id.trim();
+	}
+
+	/**
+	 * The profile the agent starts from, read fresh so an edit made since the window
+	 * opened is used.
+	 *
+	 * @return the profile
+	 * @throws java.nio.file.NoSuchFileException when it no longer exists
+	 * @throws java.io.IOException               when it cannot be read, or was saved by a newer plugin
+	 */
+	public Profile profile() throws java.io.IOException {
+		var id = profileId();
+		if (id == null || profiles == null) {
+			throw new java.nio.file.NoSuchFileException(String.valueOf(id));
+		}
+		return profiles.require(id);
+	}
+
+	/** The secrets profiles refer to; reading one may block, so never on the event thread. */
+	public ProfileSecrets profileSecrets() {
+		return secrets;
+	}
+
+	/** Where files for this agent's launch are written. */
+	public Path runtimeDirectory() {
+		return store.paths().runtimeDirectory(agent.getId());
 	}
 
 	/** The owning project definition. */

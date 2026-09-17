@@ -114,11 +114,8 @@ public final class ProfileStore {
 		try (var files = Files.list(directory)) {
 			for (var file : files.filter(ProfileStore::isProfileFile).sorted().toList()) {
 				try {
-					var profile = Json.read(file, Profile.class);
+					var profile = read(file);
 					var expectedId = idOf(file);
-					if (profile == null) {
-						throw new IOException("the file is empty");
-					}
 					// The file name is the identity; an id edited by hand inside it is not trusted.
 					profile.setId(expectedId);
 					profiles.add(profile);
@@ -143,22 +140,56 @@ public final class ProfileStore {
 	 * @return the profile, or empty when absent or unreadable
 	 */
 	public Optional<Profile> find(String id) {
-		if (!isSafeId(id)) {
-			return Optional.empty();
-		}
-		var file = file(id);
-		if (!Files.isRegularFile(file)) {
-			return Optional.empty();
-		}
 		try {
-			var profile = Json.read(file, Profile.class);
-			if (profile == null) {
-				return Optional.empty();
-			}
-			profile.setId(id);
-			return Optional.of(profile);
+			return Optional.of(require(id));
 		} catch (IOException e) {
 			return Optional.empty();
+		}
+	}
+
+	/**
+	 * Read one profile, saying why when it cannot be.
+	 *
+	 * @param id the id
+	 * @return the profile
+	 * @throws java.nio.file.NoSuchFileException when there is no such profile
+	 * @throws IOException                        when it cannot be read, or was saved by a newer plugin
+	 */
+	public Profile require(String id) throws IOException {
+		var file = isSafeId(id) ? file(id) : null;
+		if (file == null || !Files.isRegularFile(file)) {
+			throw new java.nio.file.NoSuchFileException(String.valueOf(id), null, "no such profile");
+		}
+		var profile = read(file);
+		profile.setId(id);
+		return profile;
+	}
+
+	/**
+	 * Read a profile file this plugin can use.
+	 *
+	 * @param file the file
+	 * @return the profile
+	 * @throws IOException when it is empty, damaged, or of a newer schema
+	 */
+	private static Profile read(Path file) throws IOException {
+		var profile = Json.read(file, Profile.class);
+		if (profile == null) {
+			throw new IOException("the file is empty");
+		}
+		requireSupported(profile);
+		return profile;
+	}
+
+	/**
+	 * Refuse a profile from a newer plugin. Reading it would drop the fields this
+	 * version does not know, and saving it would then lose them for good.
+	 */
+	private static void requireSupported(Profile profile) throws IOException {
+		if (profile.getSchemaVersion() > Profile.SCHEMA_VERSION) {
+			throw new IOException("it was saved by a newer version of the AI Projects plugin (profile schema "
+					+ profile.getSchemaVersion() + "; this version reads up to " + Profile.SCHEMA_VERSION
+					+ "). Update the plugin to use it.");
 		}
 	}
 
@@ -192,6 +223,7 @@ public final class ProfileStore {
 		if (!isSafeId(edited.getId())) {
 			throw new IOException("Not a valid profile id: " + edited.getId());
 		}
+		newerOnDisk(edited);
 		if (!force) {
 			var onDisk = find(edited.getId());
 			if (onDisk.isEmpty()) {
@@ -245,9 +277,11 @@ public final class ProfileStore {
 	 * @throws IOException when it cannot be read or written
 	 */
 	public Profile importFrom(Path file) throws IOException {
-		var imported = Json.read(file, Profile.class);
-		if (imported == null) {
-			throw new IOException(file.getFileName() + " is empty.");
+		final Profile imported;
+		try {
+			imported = read(file);
+		} catch (IOException e) {
+			throw new IOException(file.getFileName() + " cannot be imported: " + e.getMessage(), e);
 		}
 		var name = imported.getName() == null || imported.getName().isBlank()
 				? stripSuffix(file.getFileName().toString())
@@ -269,6 +303,7 @@ public final class ProfileStore {
 	public void exportTo(Profile profile, Path file) throws IOException {
 		// Profiles are exported to be shared; the credential-store keys stay behind.
 		var exported = profile.copy();
+		exported.setSchemaVersion(Profile.SCHEMA_VERSION);
 		ProfileSecrets.forget(exported);
 		Json.write(file, exported);
 	}
@@ -321,8 +356,32 @@ public final class ProfileStore {
 		return safe + EXPORT_SUFFIX;
 	}
 
+	/** Write a profile in the current schema: whatever version it was read as, it now holds this version's fields. */
 	private void write(Profile profile) throws IOException {
+		profile.setSchemaVersion(Profile.SCHEMA_VERSION);
 		Json.write(file(profile.getId()), profile);
+	}
+
+	/**
+	 * Refuse to overwrite a profile a newer plugin saved, even when forced: forcing
+	 * settles a conflict between two edits, not a loss of fields this version cannot see.
+	 */
+	private void newerOnDisk(Profile edited) throws IOException {
+		var file = file(edited.getId());
+		if (!Files.isRegularFile(file)) {
+			return;
+		}
+		final Profile onDisk;
+		try {
+			onDisk = Json.read(file, Profile.class);
+		} catch (IOException | RuntimeException e) {
+			// A damaged file holds nothing to protect.
+			return;
+		}
+		if (onDisk != null && onDisk.getSchemaVersion() > Profile.SCHEMA_VERSION) {
+			throw new IOException("\"" + edited.displayName() + "\" was saved by a newer version of the AI Projects "
+					+ "plugin since you opened it. Update the plugin before saving it.");
+		}
 	}
 
 	private Path file(String id) {

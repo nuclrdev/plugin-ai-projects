@@ -153,6 +153,40 @@ final class CodexConnector implements AgentConnector {
 	}
 
 	@Override
+	public String sandboxNetworkMeaning(AccessMode mode) {
+		return switch (mode) {
+			case ASK, AUTO -> "Codex's sandbox blocks the network for commands unless this is on.";
+			case CUSTOM -> "Codex's sandbox blocks the network for commands unless this is on, "
+					+ "if the startup arguments choose the workspace-write sandbox.";
+			case READ_ONLY -> "Read-only keeps commands off the network whatever this says.";
+			case FULL_ACCESS -> "Full access has no sandbox, so commands already reach the network.";
+		};
+	}
+
+	@Override
+	public List<String> sandboxNetworkArguments(AccessMode mode) {
+		return switch (mode) {
+			case ASK, AUTO, CUSTOM -> List.of("-c", "sandbox_workspace_write.network_access=true");
+			case READ_ONLY, FULL_ACCESS -> List.of();
+		};
+	}
+
+	@Override
+	public String extraFoldersMeaning(AccessMode mode) {
+		return switch (mode) {
+			case ASK, AUTO -> "Codex's sandbox lets agents write to these as well as the project folder.";
+			case READ_ONLY -> "Read-only: nothing is writable, so these make no difference until Ask or Auto is chosen.";
+			case FULL_ACCESS -> "Full access: every folder is already writable, so these make no difference.";
+			case CUSTOM -> "Codex's sandbox lets agents write to these, if the startup arguments choose a sandbox that writes.";
+		};
+	}
+
+	@Override
+	public List<String> extraFolderArguments(List<String> folders) {
+		return AgentConnector.addDirArguments(folders);
+	}
+
+	@Override
 	public boolean supportsCommandRules() {
 		return false;
 	}

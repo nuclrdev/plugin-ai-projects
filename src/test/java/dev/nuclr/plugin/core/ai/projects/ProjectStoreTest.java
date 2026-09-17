@@ -197,9 +197,77 @@ class ProjectStoreTest {
 		try (var store = ProjectCreator.create(project, root.resolve("home"))) {
 			store.flush();
 		}
-		Files.writeString(paths.projectFile(), "{\"schemaVersion\":2,\"id\":\"future\"}");
+		Files.writeString(paths.projectFile(), "{\"schemaVersion\":" + (AiProject.SCHEMA_VERSION + 1)
+				+ ",\"id\":\"future\"}");
 
 		assertThrows(IOException.class, () -> ProjectStore.open(paths));
+	}
+
+	private static int writtenSchema(Path projectFile) throws IOException {
+		var node = dev.nuclr.plugin.core.ai.projects.store.Json.fromJson(Files.readString(projectFile),
+				tools.jackson.databind.JsonNode.class);
+		return node.path("schemaVersion").asInt(-1);
+	}
+
+	@Test
+	void aProjectWithoutProfilesStaysAtSchemaOneSoOlderPluginsStillOpenIt() throws IOException {
+
+		var project = definition(ProjectStorageMode.PROJECT_LOCAL);
+		var paths = ProjectPaths.of(root, ProjectStorageMode.PROJECT_LOCAL, project.getId(), root.resolve("home"));
+		try (var store = ProjectCreator.create(project, root.resolve("home"))) {
+			var agent = new dev.nuclr.plugin.core.ai.projects.model.AgentDefinition();
+			agent.setId("a1");
+			store.project().getAgents().add(agent);
+			store.markProjectDirty();
+			store.flush();
+		}
+		assertEquals(1, writtenSchema(paths.projectFile()));
+		assertFalse(Files.readString(paths.projectFile()).contains("profileId\" : \""));
+	}
+
+	@Test
+	void anAgentStartingFromAProfileMakesTheProjectSchemaTwoAndSurvivesAReopen() throws IOException {
+
+		var project = definition(ProjectStorageMode.PROJECT_LOCAL);
+		var paths = ProjectPaths.of(root, ProjectStorageMode.PROJECT_LOCAL, project.getId(), root.resolve("home"));
+		try (var store = ProjectCreator.create(project, root.resolve("home"))) {
+			var agent = new dev.nuclr.plugin.core.ai.projects.model.AgentDefinition();
+			agent.setId("a1");
+			agent.setProfileId("p-123");
+			store.project().getAgents().add(agent);
+			store.markProjectDirty();
+			store.flush();
+		}
+		// A version 1 plugin refuses anything above 1, so it cannot open this and drop profileId.
+		assertEquals(2, writtenSchema(paths.projectFile()));
+
+		try (var reopened = ProjectStore.open(paths)) {
+			assertEquals(2, reopened.project().readSchemaVersion());
+			assertEquals("p-123", reopened.project().getAgents().getFirst().getProfileId());
+
+			// No agent uses a profile any more: back to what every plugin reads.
+			reopened.project().getAgents().getFirst().setProfileId(null);
+			reopened.markProjectDirty();
+			reopened.flush();
+		}
+		assertEquals(1, writtenSchema(paths.projectFile()));
+	}
+
+	@Test
+	void aSchemaOneProjectFromAnOlderPluginStillOpens() throws IOException {
+
+		var project = definition(ProjectStorageMode.PROJECT_LOCAL);
+		var paths = ProjectPaths.of(root, ProjectStorageMode.PROJECT_LOCAL, project.getId(), root.resolve("home"));
+		try (var store = ProjectCreator.create(project, root.resolve("home"))) {
+			store.flush();
+		}
+		var text = Files.readString(paths.projectFile());
+		assertEquals(1, writtenSchema(paths.projectFile()));
+		Files.writeString(paths.projectFile(), text);
+
+		try (var reopened = ProjectStore.open(paths)) {
+			assertEquals(1, reopened.project().readSchemaVersion());
+		}
 	}
 
 	@Test

@@ -43,18 +43,14 @@ class ProfileValidatorTest {
 
 	@Test
 	void aSectionOnlyAcceptsTheSourcesThatMakeSenseThere() {
-		assertFalse(messages(ProfileSection.NETWORK, ProfileRecord.git(null, "https://x/y.git", null, null)).isEmpty());
-		assertFalse(messages(ProfileSection.ALLOWED_ROOTS, ProfileRecord.text(null, "/tmp")).isEmpty());
-		assertTrue(messages(ProfileSection.ALLOWED_ROOTS, ProfileRecord.file(null, "/tmp")).isEmpty());
+		assertFalse(messages(ProfileSection.EXTRA_FOLDERS, ProfileRecord.git(null, "https://x/y.git", null, null)).isEmpty());
+		assertFalse(messages(ProfileSection.EXTRA_FOLDERS, ProfileRecord.text(null, "/tmp")).isEmpty());
+		assertTrue(messages(ProfileSection.EXTRA_FOLDERS, ProfileRecord.file(null, "/tmp")).isEmpty());
 		assertTrue(messages(ProfileSection.SKILLS, ProfileRecord.git(null, "https://x/y.git", null, null)).isEmpty());
 	}
 
 	@Test
 	void plainTextIsCheckedAgainstItsSectionsShape() {
-		assertFalse(messages(ProfileSection.NETWORK, ProfileRecord.text(null, "")).isEmpty());
-		assertFalse(messages(ProfileSection.NETWORK, ProfileRecord.text(null, "git\nnpm")).isEmpty());
-		assertTrue(messages(ProfileSection.NETWORK, ProfileRecord.text(null, "github.com")).isEmpty());
-
 		assertFalse(messages(ProfileSection.ENVIRONMENT, ProfileRecord.text("MY VAR", "x")).isEmpty());
 		assertTrue(messages(ProfileSection.ENVIRONMENT, ProfileRecord.text("MY_VAR", "")).isEmpty());
 
@@ -81,23 +77,22 @@ class ProfileValidatorTest {
 	@Test
 	void theSameEntryTwiceInOneSectionIsReportedAtTheSecond() {
 		var profile = named("P");
-		profile.getHarness().getNetwork().add(ProfileRecord.text(null, "github.com"));
-		profile.getHarness().getNetwork().add(ProfileRecord.text(null, "GitHub.com"));
+		profile.getHarness().getEnvironment().add(ProfileRecord.text("TOKEN", "a"));
+		profile.getHarness().getEnvironment().add(ProfileRecord.text("token", "b"));
 
 		var problems = ProfileValidator.validate(profile, List.of());
 
 		assertEquals(1, problems.size());
-		assertEquals(ProfileSection.NETWORK, problems.getFirst().section());
+		assertEquals(ProfileSection.ENVIRONMENT, problems.getFirst().section());
 		assertEquals(1, problems.getFirst().index());
 	}
 
 	@Test
-	void mcpServersAndLimitsAreChecked() {
+	void mcpServerNamesAreChecked() {
 		var profile = named("P");
 		profile.getHarness().setMcpServers(List.of(McpServerSpec.of("files", "mcp-files", List.of()),
 				McpServerSpec.of("Files", "other", List.of())));
-		profile.getHarness().setMaxTurns(0);
-		assertEquals(2, ProfileValidator.validate(profile, List.of()).size());
+		assertEquals(1, ProfileValidator.validate(profile, List.of()).size());
 	}
 
 	@Test

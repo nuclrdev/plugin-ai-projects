@@ -6,6 +6,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import dev.nuclr.plugin.core.ai.projects.model.McpServerSpec;
@@ -22,8 +24,17 @@ import lombok.Data;
 @Data
 public class Profile {
 
+	/**
+	 * The schema this plugin writes and the newest it reads. Version 2 replaced
+	 * Software, Hardware, Permissions, Network, Sandbox, the execution limits, Files,
+	 * Loading rules and Variables, and renamed allowed roots to extra folders; version
+	 * 1 files are read and upgraded. A newer file is refused rather than read, since
+	 * the fields this version does not know would be dropped on the next save.
+	 */
+	public static final int SCHEMA_VERSION = 2;
+
 	/** Schema version of a profile file; bumped when the shape changes incompatibly. */
-	private int schemaVersion = 1;
+	private int schemaVersion = SCHEMA_VERSION;
 
 	/** Stable identifier; also the file name. */
 	private String id;
@@ -101,9 +112,6 @@ public class Profile {
 		 */
 		private String accessMode;
 
-		/** Sandbox or runtime, e.g. {@code docker}. */
-		private String sandbox;
-
 		/** Arguments appended to the executable. */
 		private List<String> startupArgs = new ArrayList<>();
 
@@ -143,23 +151,23 @@ public class Profile {
 		/** Shell commands that never run, as command prefixes. */
 		private List<String> blockedCommands = new ArrayList<>();
 
-		/** Folders agents may touch. */
-		private List<ProfileRecord> allowedRoots = new ArrayList<>();
+		/**
+		 * Folders agents may also work in, besides the project folder; see
+		 * {@link ExtraFolders}. Read from {@code allowedRoots}, its name before it was
+		 * passed to agents.
+		 */
+		@JsonAlias("allowedRoots")
+		private List<ProfileRecord> extraFolders = new ArrayList<>();
 
-		/** Hosts or networks agents may reach. */
-		private List<ProfileRecord> network = new ArrayList<>();
+		/**
+		 * Whether commands in a sandbox that blocks the network may reach it. Replaces
+		 * the old Network list of hosts, which no provider could enforce; that list,
+		 * the Sandbox / runtime field and the Execution limits are dropped on read.
+		 */
+		private boolean sandboxNetworkAccess;
 
 		/** Environment variables, or {@code .env} files. */
 		private List<ProfileRecord> environment = new ArrayList<>();
-
-		/** Most agentic turns per run. */
-		private Integer maxTurns;
-
-		/** Longest run, in minutes. */
-		private Integer timeoutMinutes;
-
-		/** Most a run may spend, in US dollars. */
-		private Double maxBudgetUsd;
 
 		/** The {@link #toolAccess} and {@link #mcpAccess} value that limits agents to what the profile lists. */
 		public static final String TOOL_ACCESS_ONLY = "only";
@@ -206,8 +214,18 @@ public class Profile {
 	@Data
 	public static class Context {
 
-		/** Instruction documents. */
+		/** Instruction documents, placed in full in every agent's context. */
 		private List<ProfileRecord> instructions = new ArrayList<>();
+
+		/**
+		 * Records read from the sections that became instructions - Files, which was
+		 * the same thing under another name, and Variables - waiting to be added
+		 * after whatever {@link #instructions} is read. Loading rules are dropped.
+		 */
+		@JsonIgnore
+		@lombok.EqualsAndHashCode.Exclude
+		@lombok.ToString.Exclude
+		private final List<ProfileRecord> legacyInstructions = new ArrayList<>();
 
 		/** Skills. */
 		private List<ProfileRecord> skills = new ArrayList<>();
@@ -215,16 +233,74 @@ public class Profile {
 		/** Project knowledge agents are pointed at. */
 		private List<ProfileRecord> knowledge = new ArrayList<>();
 
-		/** Files placed in the agent's context. */
-		private List<ProfileRecord> files = new ArrayList<>();
-
-		/** Rules for what agents load into their context. */
-		private List<ProfileRecord> loadingRules = new ArrayList<>();
-
-		/** Free-form context variables. */
-		private List<ProfileRecord> variables = new ArrayList<>();
-
 		/** Creates an empty context. */
 		public Context() {}
+
+		/** The instructions, including any carried over from an older profile. */
+		public List<ProfileRecord> getInstructions() {
+			if (!legacyInstructions.isEmpty()) {
+				if (instructions == null) {
+					instructions = new ArrayList<>();
+				}
+				for (var record : legacyInstructions) {
+					if (record.getKind() == RecordKind.TEXT && record.getName() != null) {
+						record.setName(unusedName(record.getName()));
+					}
+					instructions.add(record);
+				}
+				legacyInstructions.clear();
+			}
+			return instructions;
+		}
+
+		/**
+		 * Reads the Files section of older profiles: content placed in full in the
+		 * agent's context, which is what an instruction is.
+		 *
+		 * @param records the old records
+		 */
+		@JsonProperty("files")
+		@SuppressWarnings("unused")
+		private void readLegacyFiles(List<ProfileRecord> records) {
+			if (records != null) {
+				records.stream().filter(java.util.Objects::nonNull).forEach(legacyInstructions::add);
+			}
+		}
+
+		/**
+		 * Reads the Variables section of older profiles - named values agents were to
+		 * be told about - as one instruction listing them.
+		 *
+		 * @param records the old records
+		 */
+		@JsonProperty("variables")
+		@SuppressWarnings("unused")
+		private void readLegacyVariables(List<ProfileRecord> records) {
+			if (records == null) {
+				return;
+			}
+			var lines = new ArrayList<String>();
+			for (var record : records) {
+				if (record != null && record.isEnabled() && record.getName() != null && !record.getName().isBlank()) {
+					lines.add(record.getName().strip() + ": " + (record.getText() == null ? "" : record.getText().strip()));
+				}
+			}
+			if (!lines.isEmpty()) {
+				legacyInstructions.add(ProfileRecord.text("Variables", String.join("\n", lines)));
+			}
+		}
+
+		private String unusedName(String wanted) {
+			var candidate = wanted;
+			for (var suffix = 2; taken(candidate); suffix++) {
+				candidate = wanted + " (" + suffix + ")";
+			}
+			return candidate;
+		}
+
+		private boolean taken(String name) {
+			return instructions.stream().anyMatch(record -> record != null && record.getName() != null
+					&& record.getName().strip().equalsIgnoreCase(name));
+		}
 	}
 }

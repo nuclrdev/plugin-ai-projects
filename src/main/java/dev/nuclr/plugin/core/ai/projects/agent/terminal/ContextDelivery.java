@@ -13,8 +13,8 @@ import java.util.Map;
  * <ul>
  *   <li><b>Claude Code</b> - {@code --append-system-prompt <text>};</li>
  *   <li><b>Pi</b> - {@code --append-system-prompt <file>}, which it reads itself;</li>
- *   <li><b>Codex</b> - the initial {@code [PROMPT]}, the only documented entry
- *       point, so the briefing opens the session as its first message;</li>
+ *   <li><b>Codex</b> - {@code -c developer_instructions="..."}, which Codex sends
+ *       as a developer message, leaving its single {@code [PROMPT]} to the user;</li>
  *   <li><b>OpenCode</b> - {@code OPENCODE_CONFIG_CONTENT} naming the briefing as
  *       an instructions file, or {@code --prompt} when that variable is already
  *       the user's.</li>
@@ -84,13 +84,12 @@ public record ContextDelivery(List<String> arguments, Map<String, String> enviro
 			case "pi" -> new ContextDelivery(
 					List.of("--append-system-prompt", briefingFile.toString()), Map.of(),
 					"Briefing delivered with --append-system-prompt " + briefingFile);
+			// Not the [PROMPT]: Codex takes only one, and the startup arguments may already hold it.
 			case "codex" -> new ContextDelivery(
-					List.of(inline
-							? "Your instructions for this session follow. Reply only \"Ready\" and wait for my task.\n\n"
-									+ briefingText
-							: pointer + " Then reply only \"Ready\" and wait for my task."),
+					List.of("-c", "developer_instructions=" + tomlString(inline ? briefingText : pointer)),
 					Map.of(),
-					"Briefing delivered as the opening prompt" + (inline ? "" : " (as a pointer to " + briefingFile + ")"));
+					"Briefing delivered as Codex developer instructions"
+							+ (inline ? "" : " (as a pointer to " + briefingFile + ")"));
 			case "opencode" -> environment != null && environment.containsKey(OPENCODE_CONFIG_CONTENT)
 					? new ContextDelivery(List.of("--prompt", pointer), Map.of(),
 							"Briefing delivered as the opening prompt (" + OPENCODE_CONFIG_CONTENT + " was already set)")
@@ -123,6 +122,26 @@ public record ContextDelivery(List<String> arguments, Map<String, String> enviro
 		var name = resolvedExecutable == null || resolvedExecutable.getFileName() == null ? ""
 				: resolvedExecutable.getFileName().toString().toLowerCase(Locale.ROOT);
 		return !name.endsWith(".cmd") && !name.endsWith(".bat");
+	}
+
+	/**
+	 * A TOML basic string, on one line. Codex parses a {@code -c} value as TOML, so a
+	 * quoted value is taken exactly, where raw text could parse as something else.
+	 */
+	static String tomlString(String text) {
+		var escaped = new StringBuilder("\"");
+		for (var c : text.toCharArray()) {
+			switch (c) {
+				case '"' -> escaped.append("\\\"");
+				case '\\' -> escaped.append("\\\\");
+				case '\n' -> escaped.append("\\n");
+				case '\r' -> escaped.append("\\r");
+				case '\t' -> escaped.append("\\t");
+				// TOML allows no other control character in a basic string, DEL included.
+				default -> escaped.append(c < 0x20 || c == 0x7f ? String.format("\\u%04X", (int) c) : String.valueOf(c));
+			}
+		}
+		return escaped.append('"').toString();
 	}
 
 	private static String json(String text) {

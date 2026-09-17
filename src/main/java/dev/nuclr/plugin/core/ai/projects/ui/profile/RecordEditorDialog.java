@@ -42,6 +42,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.JTextComponent;
 
+import dev.nuclr.plugin.core.ai.projects.profile.ExtraFolders;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileRecord;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileSection;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileValidator;
@@ -62,6 +63,9 @@ public final class RecordEditorDialog {
 
 	/** Largest file "Load from file..." reads into a text record. */
 	static final long LOAD_LIMIT_BYTES = 1024 * 1024;
+
+	/** Where a leading ~ in a folder points, on this machine. */
+	private static final String HOME = System.getProperty("user.home");
 
 	private final ProfileSection section;
 	private final ProfileRecord original;
@@ -392,9 +396,12 @@ public final class RecordEditorDialog {
 		}
 		pathStatus.setForeground(UIManager.getColor("Label.disabledForeground"));
 		try {
-			var file = Path.of(text);
-			if (!file.isAbsolute()) {
-				pathStatus.setText(Glyphs.label(Glyphs.MISSING, "Relative path - it will be resolved where the profile is used."));
+			var file = Path.of(ExtraFolders.expandHome(text, HOME));
+			if (section == ProfileSection.EXTRA_FOLDERS && !ExtraFolders.isUsable(text)) {
+				pathStatus.setForeground(errorColor());
+				pathStatus.setText(Glyphs.label(Glyphs.MISSING, "Relative - use a full path, or start it with ~."));
+			} else if (!file.isAbsolute()) {
+				pathStatus.setText(Glyphs.label(Glyphs.MISSING, "Relative - resolved against the agent's working folder when it starts."));
 			} else if (!Files.exists(file)) {
 				pathStatus.setText(Glyphs.label(Glyphs.MISSING,
 						"Not found on this machine. Fine if it exists where the profile is used."));
@@ -423,7 +430,9 @@ public final class RecordEditorDialog {
 		});
 		startIn(chooser, path.getText());
 		if (chooser.showOpenDialog(dialog) == JFileChooser.APPROVE_OPTION) {
-			path.setText(chooser.getSelectedFile().toPath().toAbsolutePath().normalize().toString());
+			var chosen = chooser.getSelectedFile().toPath().toAbsolutePath().normalize().toString();
+			// Under the home folder, an extra folder is written as ~/... so the profile works on other machines.
+			path.setText(section == ProfileSection.EXTRA_FOLDERS ? ExtraFolders.collapseHome(chosen, HOME) : chosen);
 		}
 	}
 
@@ -459,7 +468,7 @@ public final class RecordEditorDialog {
 	private static void startIn(JFileChooser chooser, String current) {
 		try {
 			if (current != null && !current.isBlank()) {
-				var file = Path.of(current.trim());
+				var file = Path.of(ExtraFolders.expandHome(current, HOME));
 				if (Files.exists(file)) {
 					chooser.setSelectedFile(file.toFile());
 				} else if (file.getParent() != null && Files.isDirectory(file.getParent())) {

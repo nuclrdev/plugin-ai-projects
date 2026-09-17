@@ -5,7 +5,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+
+import lombok.AccessLevel;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.Setter;
 
 /**
  * An AI project: a root folder plus the harness, agents, templates and shared
@@ -17,10 +25,24 @@ import lombok.Data;
  * committed without generating a diff every time someone drags a window.
  */
 @Data
+@JsonPropertyOrder({ "schemaVersion" })
 public class AiProject {
 
-	/** Schema version of {@code project.json}; bumped when the shape changes incompatibly. */
-	private int schemaVersion = 1;
+	/** The newest {@code project.json} schema this plugin reads. */
+	public static final int SCHEMA_VERSION = 2;
+
+	/** The schema a project with none of the version 2 fields is written as. */
+	static final int BASE_SCHEMA_VERSION = 1;
+
+	/**
+	 * The schema of the file this project was read from. What is written is
+	 * {@link #getSchemaVersion()} instead, worked out from the content.
+	 */
+	@JsonIgnore
+	@EqualsAndHashCode.Exclude
+	@Getter(AccessLevel.NONE)
+	@Setter(AccessLevel.NONE)
+	private int schemaVersion = BASE_SCHEMA_VERSION;
 
 	/** Stable project identifier, generated at creation. */
 	private String id;
@@ -54,6 +76,36 @@ public class AiProject {
 
 	/** Creates an empty project. */
 	public AiProject() {}
+
+	/**
+	 * The schema this project is written as: the oldest that holds everything in it.
+	 *
+	 * <p>{@code project.json} is committed and shared, so a project that uses nothing
+	 * new stays at version 1, which every plugin still opens. Once an agent starts from
+	 * a profile it is version 2, which a version 1 plugin refuses instead of opening
+	 * it and dropping {@code profileId} on its next save.
+	 */
+	@JsonProperty("schemaVersion")
+	public int getSchemaVersion() {
+		var usesProfiles = agents != null && agents.stream()
+				.anyMatch(agent -> agent != null && agent.getProfileId() != null && !agent.getProfileId().isBlank());
+		return usesProfiles ? SCHEMA_VERSION : BASE_SCHEMA_VERSION;
+	}
+
+	/**
+	 * Record the schema of the file being read.
+	 *
+	 * @param version the version in the file
+	 */
+	@JsonProperty("schemaVersion")
+	public void setSchemaVersion(int version) {
+		this.schemaVersion = version;
+	}
+
+	/** The schema of the file this project was read from, for refusing one from a newer plugin. */
+	public int readSchemaVersion() {
+		return schemaVersion;
+	}
 
 	/**
 	 * Find an agent by id.

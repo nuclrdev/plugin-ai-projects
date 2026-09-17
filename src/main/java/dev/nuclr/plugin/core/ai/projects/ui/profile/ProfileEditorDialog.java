@@ -130,13 +130,6 @@ public final class ProfileEditorDialog {
 
 	private void save() {
 
-		var inputProblems = form.inputProblems();
-		if (!inputProblems.isEmpty()) {
-			form.revealLimits();
-			Dialogs.error(dialog, dialog.getTitle(), String.join("\n", inputProblems));
-			return;
-		}
-
 		var profile = form.toProfile();
 		var problems = ProfileValidator.validate(profile, otherNames);
 		if (!problems.isEmpty()) {
