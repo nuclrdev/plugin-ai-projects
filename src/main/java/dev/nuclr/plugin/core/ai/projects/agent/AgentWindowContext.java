@@ -1,15 +1,16 @@
 package dev.nuclr.plugin.core.ai.projects.agent;
 
+import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import dev.nuclr.plugin.core.ai.projects.harness.AgentEnvironment;
-import dev.nuclr.plugin.core.ai.projects.harness.ContextResolver;
-import dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness;
-import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
-import dev.nuclr.plugin.core.ai.projects.harness.ResolvedContext;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfileRef;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
 import dev.nuclr.plugin.core.ai.projects.runtime.SessionRecord;
@@ -17,13 +18,8 @@ import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
 import dev.nuclr.plugin.core.ai.projects.store.TranscriptStore;
 
 /**
- * Everything a window provider is given when it builds a window: which agent,
- * in which project, with which harness and context resolved, and where to
- * report back to.
- *
- * <p>The harness and context are resolved here rather than by the provider, so
- * that every kind of agent window - a terminal today, a log viewer or a task
- * board later - inherits and merges configuration the same way.
+ * Everything a window provider is given when it builds a window: which agent, in
+ * which project, where its profile is found, and where to report back to.
  */
 public final class AgentWindowContext {
 
@@ -31,11 +27,11 @@ public final class AgentWindowContext {
 	private final AgentDefinition agent;
 	private final AgentWindowHost host;
 	private final String runtimeStamp;
-	private final ProfileStore profiles;
+	private final ProfilePlaces profiles;
 	private final ProfileSecrets secrets;
 
 	/**
-	 * Build a context for one agent.
+	 * Build a context for one agent, with the project's own profiles and no library.
 	 *
 	 * @param store        the open project store
 	 * @param agent        the agent being given a window
@@ -44,21 +40,22 @@ public final class AgentWindowContext {
 	 *                     written by an earlier run is recognisable as stale
 	 */
 	public AgentWindowContext(ProjectStore store, AgentDefinition agent, AgentWindowHost host, String runtimeStamp) {
-		this(store, agent, host, runtimeStamp, null, new ProfileSecrets(null));
+		this(store, agent, host, runtimeStamp,
+				new ProfilePlaces(new ProfileStore(store.paths().profilesDirectory()), null), new ProfileSecrets(null));
 	}
 
 	/**
-	 * Build a context for one agent that may start from a shared profile.
+	 * Build a context for one agent.
 	 *
 	 * @param store        the open project store
 	 * @param agent        the agent being given a window
 	 * @param host         where the window reports status and attention
 	 * @param runtimeStamp identifies this Commander run
-	 * @param profiles     where shared profiles are kept, or {@code null} when there are none
+	 * @param profiles     where profiles are found: the project's and the user's library
 	 * @param secrets      the secrets profiles refer to
 	 */
 	public AgentWindowContext(ProjectStore store, AgentDefinition agent, AgentWindowHost host, String runtimeStamp,
-			ProfileStore profiles, ProfileSecrets secrets) {
+			ProfilePlaces profiles, ProfileSecrets secrets) {
 		this.store = store;
 		this.agent = agent;
 		this.host = host;
@@ -67,27 +64,23 @@ public final class AgentWindowContext {
 		this.secrets = secrets;
 	}
 
-	/** The id of the profile the agent starts from, or {@code null} when it uses the harness. */
-	public String profileId() {
-		var id = agent.getProfileId();
-		return id == null || id.isBlank() ? null : id.trim();
+	/** The profile the agent starts from, as it names it now, or {@code null} when it has none. */
+	public ProfileRef profileRef() {
+		return ProfileRef.parse(agent.getProfileId()).orElse(null);
 	}
 
 	/**
 	 * Read a profile, fresh so an edit made since the window opened is used. Takes the
-	 * id rather than reading the agent's: the agent can be edited while a launch is
-	 * being prepared, and the launch must be of the profile that was chosen at Start.
+	 * reference rather than reading the agent's: the agent can be edited while a launch
+	 * is being prepared, and the launch must be of the profile chosen at Start.
 	 *
-	 * @param id the profile id, as {@link #profileId()} returned it when the launch began
+	 * @param ref the profile, as {@link #profileRef()} returned it when the launch began
 	 * @return the profile
 	 * @throws java.nio.file.NoSuchFileException when it no longer exists
-	 * @throws java.io.IOException               when it cannot be read, or was saved by a newer plugin
+	 * @throws IOException                       when it cannot be read, or was saved by a newer plugin
 	 */
-	public Profile profile(String id) throws java.io.IOException {
-		if (id == null || profiles == null) {
-			throw new java.nio.file.NoSuchFileException(String.valueOf(id));
-		}
-		return profiles.require(id);
+	public Profile profile(ProfileRef ref) throws IOException {
+		return profiles.require(ref);
 	}
 
 	/** The secrets profiles refer to; reading one may block, so never on the event thread. */
@@ -125,16 +118,6 @@ public final class AgentWindowContext {
 		return runtimeStamp;
 	}
 
-	/** The agent's harness, after project, template and agent overrides are merged. */
-	public EffectiveHarness harness() {
-		return HarnessResolver.resolve(project(), agent);
-	}
-
-	/** Everything the agent receives, resolved. */
-	public ResolvedContext resolvedContext() {
-		return ContextResolver.resolve(project(), agent, store.paths());
-	}
-
 	/** Where this agent's launch briefing is written. */
 	public Path briefingFile() {
 		return store.paths().briefingFile(agent.getId());
@@ -156,17 +139,33 @@ public final class AgentWindowContext {
 	}
 
 	/**
-	 * The directory the agent runs in, resolved by
-	 * {@link AgentEnvironment#workingDirectory(AgentDefinition, Path)}.
+	 * The directory the agent runs in: its own, when that is inside the project root or
+	 * one of the project's allowed roots, and the project root otherwise.
 	 *
 	 * @return an existing directory, never {@code null}
 	 */
 	public Path workingDirectory() {
-		return AgentEnvironment.workingDirectory(agent, projectRoot(), harness().allowedRoots());
+		return AgentEnvironment.workingDirectory(agent, projectRoot(), allowedRoots(store.project(), projectRoot()));
 	}
 
 	/** The variables the plugin adds to the agent's environment. */
 	public java.util.Map<String, String> commanderVariables() {
 		return AgentEnvironment.commanderVariables(project(), agent, workingDirectory());
+	}
+
+	/**
+	 * The folders a project's agents may run in: its root and its allowed roots.
+	 *
+	 * @param project the project
+	 * @param root    its root
+	 * @return the folders, as written
+	 */
+	public static List<String> allowedRoots(AiProject project, Path root) {
+		var roots = new ArrayList<String>();
+		roots.add(root.toString());
+		if (project.getAllowedRoots() != null) {
+			roots.addAll(project.getAllowedRoots());
+		}
+		return roots;
 	}
 }

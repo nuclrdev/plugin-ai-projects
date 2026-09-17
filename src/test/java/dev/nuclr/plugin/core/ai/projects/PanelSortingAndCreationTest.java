@@ -62,8 +62,7 @@ class PanelSortingAndCreationTest {
 
 	private void register(String name, int agents) throws IOException {
 		var root = Files.createDirectories(workspace.resolve(name));
-		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL, "terminal.shell", null);
-		project.getHarness().setExecutable("claude-" + name);
+		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL);
 		for (var index = 0; index < agents; index++) {
 			var agent = new AgentDefinition();
 			agent.setId("a" + index);
@@ -102,7 +101,7 @@ class PanelSortingAndCreationTest {
 		assertEquals("filepanel.sort:description:Status", sorts.get("Status"));
 		assertEquals("filepanel.sort:modified:Last opened", sorts.get("Last opened"));
 		assertEquals("filepanel.sort:size:Agents", sorts.get("Agents"));
-		assertEquals("filepanel.sort:owner:Harness", sorts.get("Harness"));
+		assertEquals("filepanel.sort:owner:Profiles", sorts.get("Profiles"));
 	}
 
 	@Test
@@ -133,14 +132,14 @@ class PanelSortingAndCreationTest {
 		var row = rows().getFirst();
 
 		// Commander's description and owner comparators read fixed metadata keys, so
-		// the values shown in Status and Harness are published under them too - but
+		// the values shown in Status and Profiles are published under them too - but
 		// undecorated. Sorting by status should order by the word, not by whichever
 		// codepoint the glyph in front of it happens to be.
 		assertEquals("Idle", row.getMetadata().get("Description"));
 		assertTrue(String.valueOf(row.getMetadata().get("Status")).endsWith("Idle"));
 		assertNotEquals(row.getMetadata().get("Status"), row.getMetadata().get("Description"));
 
-		assertEquals(row.getMetadata().get("Harness"), row.getMetadata().get("Owner"));
+		assertEquals(row.getMetadata().get("Profiles"), row.getMetadata().get("Owner"));
 		assertEquals(3, row.getLength());
 	}
 
@@ -211,8 +210,7 @@ class PanelSortingAndCreationTest {
 
 		// Created but not registered, as it would be after a colleague's clone.
 		var root = Files.createDirectories(workspace.resolve("cloned"));
-		var project = ProjectCreator.define("cloned", root, ProjectStorageMode.PROJECT_LOCAL,
-				"terminal.shell", null);
+		var project = ProjectCreator.define("cloned", root, ProjectStorageMode.PROJECT_LOCAL);
 		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
 			store.flush();
 		}

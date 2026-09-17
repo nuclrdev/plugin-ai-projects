@@ -35,7 +35,6 @@ import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.panel.AiProjectResource;
 import dev.nuclr.plugin.core.ai.projects.ui.quickview.AiProjectQuickViewPlugin;
 import dev.nuclr.plugin.core.ai.projects.ui.screen.ListEditor;
-import dev.nuclr.plugin.core.ai.projects.ui.screen.McpServerEditor;
 
 /**
  * The editable half of the configuration, and the preview that saves opening a
@@ -123,56 +122,6 @@ class EditorAndQuickViewTest {
 		assertEquals(Map.of("QUERY", "a=b"), editors[0].asMap());
 	}
 
-	// -------------------------------------------------------- mcp server editor
-
-	@Test
-	void mcpServersSurviveTheEditorUnchangedWhenNothingIsTouched() throws Exception {
-
-		var original = List.of(
-				McpServerSpec.of("files", "mcp-files", List.of("/tmp")),
-				McpServerSpec.of("search", "mcp-search", List.of()));
-
-		var editors = new McpServerEditor[1];
-		onEdt(() -> editors[0] = new McpServerEditor(original));
-
-		var edited = editors[0].servers();
-		assertEquals(2, edited.size());
-		assertEquals("files", edited.getFirst().getName());
-		assertEquals("mcp-files /tmp", edited.getFirst().displayCommandLine());
-		assertTrue(edited.getFirst().isEnabled());
-	}
-
-	@Test
-	void theEditorWorksOnCopiesSoCancellingChangesNothing() throws Exception {
-
-		var original = McpServerSpec.of("files", "mcp-files", List.of("/tmp"));
-		var editors = new McpServerEditor[1];
-		onEdt(() -> editors[0] = new McpServerEditor(List.of(original)));
-
-		editors[0].servers().getFirst().setName("renamed");
-
-		assertEquals("files", original.getName());
-	}
-
-	@Test
-	void aServerWithNoNameIsDroppedBecauseItCannotBeMergedOrOverridden() throws Exception {
-
-		var nameless = new McpServerSpec();
-		nameless.setCommand("something");
-		var editors = new McpServerEditor[1];
-		onEdt(() -> editors[0] = new McpServerEditor(List.of(nameless)));
-
-		assertTrue(editors[0].servers().isEmpty());
-	}
-
-	@Test
-	void anEmptyServerListIsNotTheSameAsNoList() throws Exception {
-		var editors = new McpServerEditor[1];
-		onEdt(() -> editors[0] = new McpServerEditor(null));
-		assertNotNull(editors[0].servers());
-		assertTrue(editors[0].servers().isEmpty());
-	}
-
 	// ----------------------------------------------------------------- dialogs
 
 	@Test
@@ -196,10 +145,7 @@ class EditorAndQuickViewTest {
 	private ProjectEntry project(String name, int agents) throws IOException {
 
 		var root = Files.createDirectories(workspace.resolve(name));
-		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL, "terminal.shell", null);
-		project.getHarness().setExecutable("claude");
-		project.getHarness().setModel("some-model");
-		project.getHarness().setProvider("anthropic");
+		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL);
 		for (var index = 0; index < agents; index++) {
 			var agent = new AgentDefinition();
 			agent.setId("a" + index);
@@ -207,6 +153,10 @@ class EditorAndQuickViewTest {
 			project.getAgents().add(agent);
 		}
 		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
+			if (agents > 0) {
+				project.getAgents().getFirst().setProfileId(
+						AiProjectScreenPluginTest.projectProfile(store, "Team Claude", "claude-code", null));
+			}
 			store.markProjectDirty();
 			store.flush();
 		}
@@ -244,8 +194,8 @@ class EditorAndQuickViewTest {
 
 		var preview = previewOf(plugin);
 		assertTrue(preview.contains("alpha"), preview);
-		assertTrue(preview.contains("claude"));
-		assertTrue(preview.contains("some-model"));
+		assertTrue(preview.contains("Team Claude"), preview);
+		assertTrue(preview.contains("1 of 2"), preview);
 		assertTrue(preview.contains("Agent 0"));
 		assertTrue(preview.contains("never run"));
 		plugin.unload();
@@ -323,7 +273,7 @@ class EditorAndQuickViewTest {
 		onEdt(plugin::closeResource);
 
 		assertNull(plugin.getCurrentResource());
-		assertFalse(previewOf(plugin).contains("claude"));
+		assertFalse(previewOf(plugin).contains("alpha"));
 		plugin.unload();
 	}
 
@@ -331,8 +281,7 @@ class EditorAndQuickViewTest {
 	void aProjectNameWithMarkupIsEscapedRatherThanRendered() throws Exception {
 
 		var root = Files.createDirectories(workspace.resolve("markup"));
-		var project = ProjectCreator.define("<b>bold</b>", root, ProjectStorageMode.PROJECT_LOCAL,
-				"terminal.shell", null);
+		var project = ProjectCreator.define("<b>bold</b>", root, ProjectStorageMode.PROJECT_LOCAL);
 		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
 			store.flush();
 		}

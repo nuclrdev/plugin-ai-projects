@@ -57,8 +57,7 @@ class LegacyDesktopStateTest {
 				""";
 
 		var root = Files.createDirectories(workspace.resolve("legacy"));
-		var project = ProjectCreator.define("legacy", root, ProjectStorageMode.PROJECT_LOCAL,
-				"terminal.shell", null);
+		var project = ProjectCreator.define("legacy", root, ProjectStorageMode.PROJECT_LOCAL);
 		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
 			store.flush();
 		}

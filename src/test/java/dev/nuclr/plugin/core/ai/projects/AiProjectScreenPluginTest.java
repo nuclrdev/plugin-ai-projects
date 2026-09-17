@@ -97,7 +97,7 @@ class AiProjectScreenPluginTest {
 	private ProjectEntry register(String name, int agents) throws IOException {
 
 		var root = Files.createDirectories(workspace.resolve(name));
-		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL, "terminal.shell", null);
+		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL);
 		for (var index = 0; index < agents; index++) {
 			var agent = new AgentDefinition();
 			agent.setId("a" + index);
@@ -280,19 +280,30 @@ class AiProjectScreenPluginTest {
 		onEdt(plugin::closeResource);
 	}
 
+
+	/** A profile saved in a project, as "project:<id>" for an agent to start from. */
+	static String projectProfile(dev.nuclr.plugin.core.ai.projects.store.ProjectStore store, String name,
+			String provider, String executable) throws IOException {
+		var profile = new dev.nuclr.plugin.core.ai.projects.profile.Profile();
+		profile.setName(name);
+		profile.getHarness().setProvider(provider);
+		profile.getHarness().setExecutable(executable);
+		return "project:" + new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(store.paths().profilesDirectory())
+				.create(profile).getId();
+	}
+
 	@Test
 	void startAllOnAgentsWithNoInstalledCliMarksThemFailedRatherThanPretending() throws Exception {
 
 		var root = Files.createDirectories(workspace.resolve("beta"));
-		var project = ProjectCreator.define("beta", root, ProjectStorageMode.PROJECT_LOCAL,
-				"terminal.shell", null);
-		project.getHarness().setExecutable("definitely-not-installed-7c1e");
+		var project = ProjectCreator.define("beta", root, ProjectStorageMode.PROJECT_LOCAL);
 		var agent = new AgentDefinition();
 		agent.setId("a0");
 		agent.setName("Agent");
-		agent.setWindowKind("terminal.shell");
+		agent.setWindowKind("terminal.codex");
 		project.getAgents().add(agent);
 		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
+			agent.setProfileId(projectProfile(store, "Missing CLI", "codex", "definitely-not-installed-7c1e"));
 			store.markProjectDirty();
 			store.flush();
 		}
@@ -395,8 +406,7 @@ class AiProjectScreenPluginTest {
 	void anAgentNamingAnUninstalledWindowKindStillOpensTheProject() throws Exception {
 
 		var root = Files.createDirectories(workspace.resolve("gamma"));
-		var project = ProjectCreator.define("gamma", root, ProjectStorageMode.PROJECT_LOCAL,
-				"terminal.shell", null);
+		var project = ProjectCreator.define("gamma", root, ProjectStorageMode.PROJECT_LOCAL);
 		var agent = new AgentDefinition();
 		agent.setId("a0");
 		agent.setName("From a colleague");

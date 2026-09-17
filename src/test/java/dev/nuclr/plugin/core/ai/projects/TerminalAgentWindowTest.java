@@ -72,7 +72,7 @@ class TerminalAgentWindowTest {
 
 	@BeforeEach
 	void setUp() throws IOException {
-		var project = ProjectCreator.define("Demo", root, ProjectStorageMode.PROJECT_LOCAL, "terminal.shell", null);
+		var project = ProjectCreator.define("Demo", root, ProjectStorageMode.PROJECT_LOCAL);
 		store = ProjectCreator.create(project, root.resolve("home"));
 		host = new RecordingHost();
 		agent = new AgentDefinition();
@@ -152,12 +152,11 @@ class TerminalAgentWindowTest {
 	}
 
 	@Test
-	void aHarnessThatNamesNothingFallsBackToTheWindowKindsOwnCli() throws Exception {
+	void anAgentWithoutAProfileRunsItsWindowKindsOwnCommand() throws Exception {
 
-		// A blank harness must not leave the agent unstartable; the kind knows what it
-		// runs. Codex, not the shell, so the test never actually spawns anything.
+		// Codex, not the shell, so the test never actually spawns anything: the resolver
+		// finds nothing on PATH.
 		agent.setWindowKind("terminal.codex");
-		project().getHarness().setExecutable("");
 
 		var window = window();
 		onEdt(window::start);
@@ -171,7 +170,7 @@ class TerminalAgentWindowTest {
 	@Test
 	void anExecutableThatIsNotInstalledFailsBeforeTouchingAPty() throws Exception {
 
-		project().getHarness().setExecutable("definitely-not-installed-4b2c");
+		agent.setWindowKind("terminal.codex");
 		store.session("a1").setPid(4242);
 
 		var window = window();
@@ -187,7 +186,7 @@ class TerminalAgentWindowTest {
 	@Test
 	void restartingAStoppedAgentJustStartsIt() throws Exception {
 
-		project().getHarness().setExecutable("definitely-not-installed-4b2c");
+		agent.setWindowKind("terminal.codex");
 
 		var window = window();
 		onEdt(window::restart);
@@ -323,7 +322,7 @@ class TerminalAgentWindowTest {
 	@Test
 	void aFailedStartIsNotedInTheTranscriptTrail() throws Exception {
 
-		project().getHarness().setExecutable("definitely-not-installed-4b2c");
+		agent.setWindowKind("terminal.codex");
 		var window = window();
 		onEdt(window::start);
 		onEdt(window::close);
@@ -349,17 +348,19 @@ class TerminalAgentWindowTest {
 		assertEquals(AgentStatus.FAILED, window.status());
 	}
 
-	private AgentWindow windowWithProfiles(dev.nuclr.plugin.core.ai.projects.profile.ProfileStore profiles)
+	private AgentWindow windowWithProfiles(dev.nuclr.plugin.core.ai.projects.profile.ProfileStore library)
 			throws Exception {
+		var places = new dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces(
+				new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(store.paths().profilesDirectory()), library);
 		var built = new AgentWindow[1];
 		SwingUtilities.invokeAndWait(() -> built[0] = new AgentWindowRegistry(command -> java.util.Optional.empty())
-				.createWindow(new AgentWindowContext(store, agent, host, RuntimeStamp.CURRENT, profiles,
+				.createWindow(new AgentWindowContext(store, agent, host, RuntimeStamp.CURRENT, places,
 						new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(null))));
 		return built[0];
 	}
 
 	@Test
-	void anAgentWithAProfileStartsWhatTheProfileSaysInsteadOfTheHarness() throws Exception {
+	void anAgentStartsFromALibraryProfile() throws Exception {
 
 		var profiles = new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(root.resolve("profiles"));
 		var draft = new dev.nuclr.plugin.core.ai.projects.profile.Profile();
@@ -367,8 +368,8 @@ class TerminalAgentWindowTest {
 		draft.getHarness().setProvider("claude-code");
 		draft.getHarness().setExecutable("definitely-not-installed-claude");
 		var saved = profiles.create(draft);
-		project().getHarness().setExecutable("project-level-command");
-		agent.setProfileId(saved.getId());
+		agent.setWindowKind("terminal.codex");
+		agent.setProfileId("library:" + saved.getId());
 
 		var window = windowWithProfiles(profiles);
 		onEdt(() -> {
@@ -404,15 +405,21 @@ class TerminalAgentWindowTest {
 	}
 
 	@Test
-	void theWindowUsesTheAgentOverrideRatherThanTheProjectExecutable() throws Exception {
+	void anAgentStartsFromAProjectProfileEvenWhenTheLibraryHasOneWithTheSameId() throws Exception {
 
-		project().getHarness().setExecutable("project-level-command");
-		agent.getHarness().setExecutable("agent-level-command");
+		var projectProfiles = new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(store.paths().profilesDirectory());
+		var draft = new dev.nuclr.plugin.core.ai.projects.profile.Profile();
+		draft.setName("Project");
+		draft.getHarness().setProvider("codex");
+		draft.getHarness().setExecutable("definitely-not-installed-project-codex");
+		var saved = projectProfiles.create(draft);
+		agent.setProfileId("project:" + saved.getId());
 
-		var window = window();
+		var window = windowWithProfiles(new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(root.resolve("empty")));
 		onEdt(window::start);
 
-		assertTrue(window.sessionSummary().contains("agent-level-command"), window.sessionSummary());
+		awaitFailure(window);
+		assertTrue(window.sessionSummary().contains("definitely-not-installed-project-codex"), window.sessionSummary());
 		onEdt(window::close);
 	}
 

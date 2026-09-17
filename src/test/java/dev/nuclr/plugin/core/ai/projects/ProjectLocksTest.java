@@ -82,7 +82,7 @@ class ProjectLocksTest {
 
 	private ProjectEntry register(String name) throws IOException {
 		var root = Files.createDirectories(workspace.resolve(name));
-		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL, "terminal.shell", null);
+		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL);
 		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
 			store.markProjectDirty();
 			store.flush();

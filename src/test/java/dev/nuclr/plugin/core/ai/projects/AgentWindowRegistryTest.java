@@ -92,8 +92,7 @@ class AgentWindowRegistryTest {
 	}
 
 	private ProjectStore openStore() throws IOException {
-		var project = ProjectCreator.define("Demo", root, ProjectStorageMode.PROJECT_LOCAL,
-				"terminal.shell", null);
+		var project = ProjectCreator.define("Demo", root, ProjectStorageMode.PROJECT_LOCAL);
 		return ProjectCreator.create(project, root.resolve("home"));
 	}
 

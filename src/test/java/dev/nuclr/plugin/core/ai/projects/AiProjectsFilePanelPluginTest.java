@@ -57,14 +57,14 @@ class AiProjectsFilePanelPluginTest {
 	private AiProject registerProject(String name, int agents) throws IOException {
 
 		var root = Files.createDirectories(workspace.resolve(name));
-		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL, "terminal.shell", null);
-		project.getHarness().setExecutable("claude");
-		project.getHarness().setModel("some-model");
+		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL);
 		for (var index = 0; index < agents; index++) {
 			var agent = new AgentDefinition();
 			agent.setId("a" + index);
 			agent.setName("Agent " + index);
 			agent.setWindowKind("terminal.shell");
+			// Every agent starts from one profile, so the row can say how many are in use.
+			agent.setProfileId("project:shared");
 			project.getAgents().add(agent);
 		}
 		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
@@ -108,7 +108,7 @@ class AiProjectsFilePanelPluginTest {
 
 		assertNotNull(data);
 		assertEquals(2, data.getEntriesCount());
-		assertEquals(List.of("Name", "Status", "Agents", "Harness", "Model", "Storage", "Last opened", "Root"),
+		assertEquals(List.of("Name", "Status", "Agents", "Profiles", "Storage", "Last opened", "Root"),
 				data.getColumnNames());
 	}
 
@@ -126,14 +126,13 @@ class AiProjectsFilePanelPluginTest {
 	}
 
 	@Test
-	void rowsReportTheHarnessModelAndAgentCountFromTheDefinition() throws IOException {
+	void rowsReportTheProfilesAndAgentCountFromTheDefinition() throws IOException {
 
 		registerProject("alpha", 3);
 		var data = plugin.openResource(AiProjectResource.root(), new AtomicBoolean(false));
 		var row = rowNamed(data.getEntries(), "alpha");
 
-		assertEquals("claude", row.getMetadata().get("Harness"));
-		assertEquals("some-model", row.getMetadata().get("Model"));
+		assertEquals("1 profile", row.getMetadata().get("Profiles"));
 		assertEquals("3", row.getMetadata().get("Agents"));
 		assertEquals("Idle", statusWord(row));
 		assertTrue(String.valueOf(row.getMetadata().get("Status")).endsWith("Idle"));

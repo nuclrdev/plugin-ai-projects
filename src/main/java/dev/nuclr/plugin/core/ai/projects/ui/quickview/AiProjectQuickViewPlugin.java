@@ -14,8 +14,6 @@ import dev.nuclr.platform.NuclrThemeScheme;
 import dev.nuclr.platform.plugin.NuclrPluginContext;
 import dev.nuclr.platform.plugin.NuclrResource;
 import dev.nuclr.platform.plugin.QuickViewNuclrPlugin;
-import dev.nuclr.plugin.core.ai.projects.harness.ContextResolver;
-import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
 import dev.nuclr.plugin.core.ai.projects.runtime.SessionRecord;
@@ -128,8 +126,6 @@ public final class AiProjectQuickViewPlugin implements QuickViewNuclrPlugin {
 	private String describe(AiProject project, dev.nuclr.plugin.core.ai.projects.store.ProjectEntry entry) {
 
 		var paths = catalog.paths(entry);
-		var harness = HarnessResolver.resolveProject(project);
-		var context = ContextResolver.resolve(project, null, paths);
 		var html = new StringBuilder();
 
 		html.append("<h2>").append(Glyphs.span(Glyphs.PROJECT)).append(' ')
@@ -141,15 +137,14 @@ public final class AiProjectQuickViewPlugin implements QuickViewNuclrPlugin {
 		html.append("<table>");
 		row(html, Glyphs.ROOT, "Root", project.getRoot());
 		row(html, Glyphs.FOLDER, "Storage", project.getStorageMode().label());
-		row(html, Glyphs.START, "Executable",
-				harness.displayCommandLine().isBlank() ? "(not set)" : harness.displayCommandLine());
-		row(html, Glyphs.TOOL, "Provider", harness.provider() == null ? "(not set)" : harness.provider());
-		row(html, Glyphs.SKILL, "Model", harness.model() == null ? "(not set)" : harness.model());
 		row(html, Glyphs.REFRESH, "Last opened", Timestamps.relative(catalog.lastOpenedAt(entry)));
-		row(html, Glyphs.CONTEXT, "Shared context", context.size() + " items"
-				+ (context.missing().isEmpty() ? "" : ", " + context.missing().size() + " missing"));
-		row(html, Glyphs.TOOL, "MCP / tools", String.valueOf(harness.enabledMcpServers().size()));
-		row(html, Glyphs.TEMPLATE, "Templates", String.valueOf(project.getTemplates().size()));
+		var projectProfiles = new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(paths.profilesDirectory())
+				.list().profiles();
+		row(html, Glyphs.PROFILE, "Profiles in the project", projectProfiles.isEmpty() ? "none"
+				: String.join(", ", projectProfiles.stream().map(profile -> profile.displayName()).toList()));
+		var withProfile = project.getAgents().stream()
+				.filter(agent -> agent.getProfileId() != null && !agent.getProfileId().isBlank()).count();
+		row(html, Glyphs.AGENT, "Agents with a profile", withProfile + " of " + project.getAgents().size());
 		html.append("</table>");
 
 		html.append("<h3>").append(Glyphs.span(Glyphs.AGENT)).append(" Agents (")
@@ -264,7 +259,6 @@ public final class AiProjectQuickViewPlugin implements QuickViewNuclrPlugin {
 
 	/** Exposed for tests: the categories a project preview reports on. */
 	static List<String> reportedFields() {
-		return List.of("Root", "Storage", "Executable", "Provider", "Model", "Last opened",
-				"Shared context", "MCP / tools", "Templates");
+		return List.of("Root", "Storage", "Last opened", "Profiles in the project", "Agents with a profile");
 	}
 }

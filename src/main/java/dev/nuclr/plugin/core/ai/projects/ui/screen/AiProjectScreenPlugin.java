@@ -302,7 +302,7 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin, Nuclr
 		// Menu items, key bindings and host dispatch all land here, so a command
 		// behaves the same however it was reached.
 		switch (actionType) {
-			case AiProjectEvents.SCREEN_NEW_AGENT -> desktop.newAgent(null);
+			case AiProjectEvents.SCREEN_NEW_AGENT -> desktop.newAgent();
 			case AiProjectEvents.SCREEN_NEW_TERMINAL -> desktop.newTerminal(folderFrom(data));
 			case AiProjectEvents.SCREEN_START_ALL -> desktop.startAll();
 			case AiProjectEvents.SCREEN_STOP_ALL -> desktop.stopAll();

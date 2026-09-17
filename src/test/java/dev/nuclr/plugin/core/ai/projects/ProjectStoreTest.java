@@ -30,19 +30,19 @@ class ProjectStoreTest {
 	Path root;
 
 	private AiProject definition(ProjectStorageMode mode) {
-		return ProjectCreator.define("Demo", root, mode, "terminal.shell", null);
+		return ProjectCreator.define("Demo", root, mode);
 	}
 
 	@Test
-	void createWritesTheDefinitionTemplatesAndDocuments() throws IOException {
+	void createWritesTheDefinitionOfAnEmptyProject() throws IOException {
 
 		var project = definition(ProjectStorageMode.PROJECT_LOCAL);
 		try (var store = ProjectCreator.create(project, root.resolve("home"))) {
 			store.flush();
 			assertTrue(Files.isRegularFile(store.paths().projectFile()));
-			assertTrue(Files.isRegularFile(store.paths().instructionsDirectory().resolve("coder.md")));
-			assertTrue(Files.isRegularFile(store.paths().skillsDirectory().resolve("example.md")));
-			assertEquals(4, store.project().getTemplates().size());
+			assertTrue(store.project().getAgents().isEmpty());
+			var written = Files.readString(store.paths().projectFile());
+			assertFalse(written.contains("\"harness\"") || written.contains("\"templates\""), written);
 		}
 	}
 
@@ -210,63 +210,23 @@ class ProjectStoreTest {
 	}
 
 	@Test
-	void aProjectWithoutProfilesStaysAtSchemaOneSoOlderPluginsStillOpenIt() throws IOException {
+	void aProjectIsWrittenInTheCurrentSchemaAndProfileReferencesSurviveAReopen() throws IOException {
 
 		var project = definition(ProjectStorageMode.PROJECT_LOCAL);
 		var paths = ProjectPaths.of(root, ProjectStorageMode.PROJECT_LOCAL, project.getId(), root.resolve("home"));
 		try (var store = ProjectCreator.create(project, root.resolve("home"))) {
 			var agent = new dev.nuclr.plugin.core.ai.projects.model.AgentDefinition();
 			agent.setId("a1");
+			agent.setProfileId("project:p-123");
 			store.project().getAgents().add(agent);
 			store.markProjectDirty();
 			store.flush();
 		}
-		assertEquals(1, writtenSchema(paths.projectFile()));
-		assertFalse(Files.readString(paths.projectFile()).contains("profileId\" : \""));
-	}
-
-	@Test
-	void anAgentStartingFromAProfileMakesTheProjectSchemaTwoAndSurvivesAReopen() throws IOException {
-
-		var project = definition(ProjectStorageMode.PROJECT_LOCAL);
-		var paths = ProjectPaths.of(root, ProjectStorageMode.PROJECT_LOCAL, project.getId(), root.resolve("home"));
-		try (var store = ProjectCreator.create(project, root.resolve("home"))) {
-			var agent = new dev.nuclr.plugin.core.ai.projects.model.AgentDefinition();
-			agent.setId("a1");
-			agent.setProfileId("p-123");
-			store.project().getAgents().add(agent);
-			store.markProjectDirty();
-			store.flush();
-		}
-		// A version 1 plugin refuses anything above 1, so it cannot open this and drop profileId.
-		assertEquals(2, writtenSchema(paths.projectFile()));
+		assertEquals(AiProject.SCHEMA_VERSION, writtenSchema(paths.projectFile()));
 
 		try (var reopened = ProjectStore.open(paths)) {
-			assertEquals(2, reopened.project().readSchemaVersion());
-			assertEquals("p-123", reopened.project().getAgents().getFirst().getProfileId());
-
-			// No agent uses a profile any more: back to what every plugin reads.
-			reopened.project().getAgents().getFirst().setProfileId(null);
-			reopened.markProjectDirty();
-			reopened.flush();
-		}
-		assertEquals(1, writtenSchema(paths.projectFile()));
-	}
-
-	@Test
-	void aSchemaOneProjectFromAnOlderPluginStillOpens() throws IOException {
-
-		var project = definition(ProjectStorageMode.PROJECT_LOCAL);
-		var paths = ProjectPaths.of(root, ProjectStorageMode.PROJECT_LOCAL, project.getId(), root.resolve("home"));
-		try (var store = ProjectCreator.create(project, root.resolve("home"))) {
-			store.flush();
-		}
-		var text = Files.readString(paths.projectFile());
-		assertEquals(1, writtenSchema(paths.projectFile()));
-		Files.writeString(paths.projectFile(), text);
-
-		try (var reopened = ProjectStore.open(paths)) {
-			assertEquals(1, reopened.project().readSchemaVersion());
+			assertEquals(AiProject.SCHEMA_VERSION, reopened.project().readSchemaVersion());
+			assertEquals("project:p-123", reopened.project().getAgents().getFirst().getProfileId());
 		}
 	}
 
@@ -283,8 +243,7 @@ class ProjectStoreTest {
 
 		try (var reopened = ProjectStore.open(paths)) {
 			assertNotNull(reopened.project().getAgents());
-			assertNotNull(reopened.project().getTemplates());
-			assertNotNull(reopened.project().getHarness());
+			assertNotNull(reopened.project().getAllowedRoots());
 			assertEquals(root.toString(), reopened.project().getRoot());
 		}
 	}
@@ -327,8 +286,9 @@ class ProjectStoreTest {
 	@Test
 	void aNewProjectAllowsItsOwnRootAndNothingElse() {
 		var project = definition(ProjectStorageMode.PROJECT_LOCAL);
-		assertEquals(List.of(root.toAbsolutePath().normalize().toString()),
-				project.getHarness().getAllowedRoots());
+		assertTrue(project.getAllowedRoots().isEmpty());
+		assertEquals(List.of(root.toString()),
+				dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext.allowedRoots(project, root));
 	}
 
 	@Test

@@ -32,9 +32,6 @@ import javax.swing.ListSelectionModel;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
-import dev.nuclr.plugin.core.ai.projects.harness.ContextItem;
-import dev.nuclr.plugin.core.ai.projects.harness.ContextResolver;
-import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
@@ -42,8 +39,7 @@ import dev.nuclr.plugin.core.ai.projects.ui.TextContextMenu;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * The project sidebar: Agents, Context, Instructions, Skills, Harness and
- * Files/Repositories, each foldable.
+ * The project sidebar: Agents, Profiles and Files/Repositories, each foldable.
  *
  * <p>It is a view. Everything it can do it asks {@link SidebarActions} to do, so
  * the same command reached from the sidebar, from a frame's toolbar and from the
@@ -56,10 +52,8 @@ public final class ProjectSidebar extends JPanel {
 
 	/** Section key for the agent list. */
 	public static final String SECTION_AGENTS = "agents";
-	/** Section key for instruction documents. */
-	public static final String SECTION_INSTRUCTIONS = "instructions";
-	/** Section key for skills. */
-	public static final String SECTION_SKILLS = "skills";
+	/** Section key for the profiles agents start from. */
+	public static final String SECTION_PROFILES = "profiles";
 	/** Section key for roots and repositories. */
 	public static final String SECTION_FILES = "files";
 
@@ -87,32 +81,14 @@ public final class ProjectSidebar extends JPanel {
 		/** Remove an agent from the project, after confirmation. */
 		void deleteAgent(String agentId);
 
-		/** Turn an agent into a reusable template. */
-		void saveAsTemplate(String agentId);
-
-		/** Create an agent, optionally from a template. */
-		void newAgent(String templateId);
+		/** Create an agent. */
+		void newAgent();
 
 		/** Open a plain shell rooted at a folder; the project root when {@code null}. */
 		void newTerminal(Path folder);
 
 		/** Open a document in the desktop. */
 		void openDocument(Path file);
-
-		/** Create a document in one of the project's directories. */
-		void newDocument(Path directory);
-
-		/** Rename a document. */
-		void renameDocument(Path file);
-
-		/** Delete a document, after confirmation. */
-		void deleteDocument(Path file);
-
-		/** Link Markdown documents from elsewhere into the project's shared context. */
-		void linkDocuments(ContextItem.Kind kind);
-
-		/** Remove the project's references to a linked document; the file is untouched. */
-		void unlinkDocument(Path file);
 
 		/** Open a folder in the system file manager. */
 		void openFolder(Path folder);
@@ -122,6 +98,12 @@ public final class ProjectSidebar extends JPanel {
 
 		/** Remember which sections are folded. */
 		void sectionsChanged();
+
+		/** Where the project's profiles, and the user's library, are kept. */
+		dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces profilePlaces();
+
+		/** Open the profile manager. */
+		void manageProfiles();
 	}
 
 	private final ProjectStore store;
@@ -149,13 +131,11 @@ public final class ProjectSidebar extends JPanel {
 		stack.setLayout(new BoxLayout(stack, BoxLayout.PAGE_AXIS));
 
 		var open = expanded == null || expanded.isEmpty()
-				? Set.of(SECTION_AGENTS, SECTION_SKILLS)
+				? Set.of(SECTION_AGENTS, SECTION_PROFILES)
 				: expanded;
 
 		addSection(SECTION_AGENTS, Glyphs.sidebar(Glyphs.AGENT, "Agents"), open.contains(SECTION_AGENTS));
-		addSection(SECTION_INSTRUCTIONS, Glyphs.sidebar(Glyphs.INSTRUCTION, "Instructions"),
-				open.contains(SECTION_INSTRUCTIONS));
-		addSection(SECTION_SKILLS, Glyphs.sidebar(Glyphs.SKILL, "Skills"), open.contains(SECTION_SKILLS));
+		addSection(SECTION_PROFILES, Glyphs.sidebar(Glyphs.PROFILE, "Profiles"), open.contains(SECTION_PROFILES));
 		addSection(SECTION_FILES, Glyphs.sidebar(Glyphs.ROOT, "Files / Repositories"),
 				open.contains(SECTION_FILES));
 
@@ -270,9 +250,9 @@ public final class ProjectSidebar extends JPanel {
 	/**
 	 * Rebuild every section from the project as it stands.
 	 *
-	 * <p>Reads the filesystem: the context section resolves every document reference
-	 * and the instruction and skill sections list their directories. Call it when the
-	 * project definition or its documents change - not when an agent's status does,
+	 * <p>Reads the filesystem: the profiles section lists the project's profiles and
+	 * reads the library profiles its agents use. Call it when the project definition or
+	 * its profiles change - not when an agent's status does,
 	 * which {@link #refreshStatuses(Map, Set)} covers without touching the disk.
 	 *
 	 * @param statuses  each agent's current status, by agent id
@@ -280,13 +260,7 @@ public final class ProjectSidebar extends JPanel {
 	 */
 	public void refresh(Map<String, AgentStatus> statuses, Set<String> attention) {
 		refreshAgents(statuses, attention);
-		var linked = linkedDocuments();
-		refreshDocuments(SECTION_INSTRUCTIONS, store.paths().instructionsDirectory(),
-				Glyphs.sidebar(Glyphs.NEW, "New instruction..."), Glyphs.INSTRUCTION,
-				ContextItem.Kind.INSTRUCTION, linked);
-		refreshDocuments(SECTION_SKILLS, store.paths().skillsDirectory(),
-				Glyphs.sidebar(Glyphs.NEW, "New skill..."), Glyphs.SKILL,
-				ContextItem.Kind.SKILL, linked);
+		refreshProfiles();
 		refreshFiles();
 		applyFilter();
 		revalidate();
@@ -322,13 +296,7 @@ public final class ProjectSidebar extends JPanel {
 					status.label() + (kind.isBlank() ? "" : " - " + kind),
 					agent.getId(), status, attention.contains(agent.getId())));
 		}
-		for (var template : store.project().getTemplates()) {
-			entries.add(SidebarEntry.command(
-					Glyphs.sidebar(Glyphs.TEMPLATE, "New " + template.displayName() + "..."),
-					() -> actions.newAgent(template.getId())));
-		}
-		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.NEW, "New agent..."),
-				() -> actions.newAgent(null)));
+		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.NEW, "New agent..."), actions::newAgent));
 		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.TERMINAL, "New terminal"),
 				() -> actions.newTerminal(null)));
 		setEntries(SECTION_AGENTS, entries);
@@ -336,51 +304,38 @@ public final class ProjectSidebar extends JPanel {
 	}
 
 	/**
-	 * Every linked document the project or any of its agents references, by path.
-	 *
-	 * <p>A linked document is not in the directory being listed, so without this the
-	 * Instructions and Skills sections would not show the documents an agent is
-	 * actually told to read from somewhere else.
+	 * The project's profiles, then the library profiles its agents start from, each with
+	 * how many agents use it. A library profile nothing here uses is not the project's
+	 * business, so it is not listed.
 	 */
-	private List<ContextItem> linkedDocuments() {
+	private void refreshProfiles() {
 
-		var linked = new LinkedHashMap<String, ContextItem>();
-		var resolved = new ArrayList<>(ContextResolver.resolve(store.project(), null, store.paths()).items());
+		var places = actions.profilePlaces();
+		var used = new LinkedHashMap<String, Integer>();
 		for (var agent : store.project().getAgents()) {
-			resolved.addAll(ContextResolver.resolve(store.project(), agent, store.paths()).items());
+			dev.nuclr.plugin.core.ai.projects.profile.ProfileRef.parse(agent.getProfileId())
+					.ifPresent(ref -> used.merge(ref.toString(), 1, Integer::sum));
 		}
-		for (var item : resolved) {
-			if (item.linked()) {
-				linked.putIfAbsent(item.kind() + " " + item.path(), item);
-			}
-		}
-		return List.copyOf(linked.values());
-	}
-
-	private void refreshDocuments(String section, Path directory, String newLabel, String glyph,
-			ContextItem.Kind kind, List<ContextItem> linked) {
-
 		var entries = new ArrayList<SidebarEntry>();
-		for (var file : listFiles(directory)) {
-			var name = file.getFileName();
-			entries.add(SidebarEntry.file(
-					Glyphs.sidebar(glyph, name == null ? file.toString() : name.toString()), "", file));
-		}
-		for (var item : linked) {
-			if (item.kind() == kind) {
-				var name = item.path().getFileName();
-				entries.add(SidebarEntry.file(
-						Glyphs.sidebar(glyph, name == null ? item.label() : name.toString()),
-						"linked" + (item.available() ? "" : " - missing"), item.path()));
+		var count = 0;
+		for (var located : places.list()) {
+			var key = located.ref().toString();
+			var project = located.ref().place() == dev.nuclr.plugin.core.ai.projects.profile.ProfileRef.Place.PROJECT;
+			if (!project && !used.containsKey(key)) {
+				continue;
 			}
+			var users = used.getOrDefault(key, 0);
+			var provider = dev.nuclr.plugin.core.ai.projects.provider.AgentProvider
+					.byId(located.profile().getHarness().getProvider())
+					.map(dev.nuclr.plugin.core.ai.projects.provider.AgentProvider::displayName).orElse("no provider");
+			entries.add(SidebarEntry.text(Glyphs.sidebar(project ? Glyphs.PROFILE : Glyphs.LINK,
+					located.profile().displayName()), provider + (project ? "" : " - my library")
+							+ (users == 0 ? "" : " - " + users + (users == 1 ? " agent" : " agents"))));
+			count++;
 		}
-		var count = entries.size();
-		entries.add(SidebarEntry.command(newLabel, () -> actions.newDocument(directory)));
-		entries.add(SidebarEntry.command(
-				Glyphs.sidebar(Glyphs.FOLDER, kind == ContextItem.Kind.SKILL ? "Link skill..." : "Link instruction..."),
-				() -> actions.linkDocuments(kind)));
-		setEntries(section, entries);
-		setBadge(section, String.valueOf(count));
+		entries.add(SidebarEntry.command(Glyphs.sidebar(Glyphs.CONFIGURE, "Profiles..."), actions::manageProfiles));
+		setEntries(SECTION_PROFILES, entries);
+		setBadge(SECTION_PROFILES, String.valueOf(count));
 	}
 
 	private void refreshFiles() {
@@ -388,7 +343,7 @@ public final class ProjectSidebar extends JPanel {
 		var entries = new ArrayList<SidebarEntry>();
 		entries.add(SidebarEntry.file(Glyphs.sidebar(Glyphs.PROJECT, store.paths().root().toString()),
 				"project root", store.paths().root()));
-		for (var root : HarnessResolver.resolveProject(store.project()).allowedRoots()) {
+		for (var root : store.project().getAllowedRoots()) {
 			try {
 				var path = Path.of(root);
 				if (!path.equals(store.paths().root())) {
@@ -487,6 +442,9 @@ public final class ProjectSidebar extends JPanel {
 			}
 			return;
 		}
+		if (SECTION_PROFILES.equals(section)) {
+			actions.manageProfiles();
+		}
 	}
 
 	private JPopupMenu contextMenu(String section, SidebarEntry entry) {
@@ -504,8 +462,6 @@ public final class ProjectSidebar extends JPanel {
 					() -> actions.sendInstruction(agentId)));
 			menu.addSeparator();
 			menu.add(item(Glyphs.DUPLICATE, "Duplicate", () -> actions.duplicate(agentId)));
-			menu.add(item(Glyphs.TEMPLATE, "Save as template...",
-					() -> actions.saveAsTemplate(agentId)));
 			menu.add(item(Glyphs.EDIT, "Edit...", () -> actions.editAgent(agentId)));
 			menu.addSeparator();
 			menu.add(item(Glyphs.DELETE, "Delete agent...",
@@ -530,24 +486,11 @@ public final class ProjectSidebar extends JPanel {
 				menu.add(item(Glyphs.FOLDER, "Open containing folder",
 						() -> actions.openFolder(parent)));
 			}
-			// Renaming or deleting the project definition from here would leave the open
-			// desktop pointing at a file that is no longer there.
-			var isDefinition = path.equals(store.paths().projectFile());
-			if (!store.paths().owns(path)) {
-				// A linked document belongs to another project; renaming or deleting it
-				// from here would break that project too. Unlinking is what this one owns.
-				menu.addSeparator();
-				menu.add(item(Glyphs.DELETE, "Unlink", () -> actions.unlinkDocument(path)));
-			} else if (!isDefinition) {
-				menu.addSeparator();
-				menu.add(item(Glyphs.RENAME, "Rename...", () -> actions.renameDocument(path)));
-				menu.add(item(Glyphs.DELETE, "Delete...", () -> actions.deleteDocument(path)));
-			}
 			return menu;
 		}
 
 		if (SECTION_AGENTS.equals(section)) {
-			menu.add(item(Glyphs.NEW, "New agent...", () -> actions.newAgent(null)));
+			menu.add(item(Glyphs.NEW, "New agent...", actions::newAgent));
 			return menu;
 		}
 		return null;
@@ -557,18 +500,6 @@ public final class ProjectSidebar extends JPanel {
 		var menuItem = Glyphs.decorate(new JMenuItem(), glyph, label);
 		menuItem.addActionListener(event -> action.run());
 		return menuItem;
-	}
-
-	private static List<Path> listFiles(Path directory) {
-		if (!Files.isDirectory(directory)) {
-			return List.of();
-		}
-		try (var entries = Files.list(directory)) {
-			return entries.filter(Files::isRegularFile).sorted().toList();
-		} catch (IOException e) {
-			log.warn("Could not list {}: {}", directory, e.getMessage());
-			return List.of();
-		}
 	}
 
 	/**

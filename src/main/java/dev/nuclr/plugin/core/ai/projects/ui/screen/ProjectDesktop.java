@@ -44,14 +44,8 @@ import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowHost;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
 import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.harness.AgentEnvironment;
-import dev.nuclr.plugin.core.ai.projects.harness.ContextItem;
-import dev.nuclr.plugin.core.ai.projects.harness.ContextResolver;
-import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
-import dev.nuclr.plugin.core.ai.projects.model.AgentTemplate;
-import dev.nuclr.plugin.core.ai.projects.model.ContextSpec;
-import dev.nuclr.plugin.core.ai.projects.model.HarnessSpec;
 import dev.nuclr.plugin.core.ai.projects.runtime.RuntimeStamp;
 import dev.nuclr.plugin.core.ai.projects.runtime.WindowState;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
@@ -113,7 +107,10 @@ public final class ProjectDesktop extends JPanel
 	private final JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
 	private final Runnable onCloseRequested;
 	private final dev.nuclr.platform.NuclrCredentialStore credentials;
-	private final ProfileStore profiles = ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome());
+	/** The user's library of profiles. */
+	private final ProfileStore library = ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome());
+	/** The project's own profiles, kept with it. */
+	private final ProfileStore projectProfiles;
 	private final javax.swing.Timer liveRefresh;
 
 	private boolean closed;
@@ -147,6 +144,7 @@ public final class ProjectDesktop extends JPanel
 		super(new BorderLayout());
 		this.credentials = credentials;
 		this.store = store;
+		this.projectProfiles = new ProfileStore(store.paths().profilesDirectory());
 		this.registry = registry;
 		this.eventBus = eventBus;
 		this.onCloseRequested = onCloseRequested;
@@ -204,8 +202,7 @@ public final class ProjectDesktop extends JPanel
 
 		var profiles = RibbonButtons.large(Glyphs.PROFILE, "Profiles",
 				"Shared profiles: harness and context reusable across projects");
-		profiles.addActionListener(event -> ProfilesDialog.show(this,
-				this.profiles, credentials));
+		profiles.addActionListener(event -> manageProfiles());
 		bar.add(profiles);
 		bar.add(dropdownButton(Glyphs.CONFIGURE, "Configuration",
 				"Project configuration and agents", this::fillConfigurationMenu));
@@ -228,29 +225,16 @@ public final class ProjectDesktop extends JPanel
 	}
 
 	/**
-	 * Configuration: the project's setup and the agents it defines.
-	 *
-	 * <p>A template is the normal way to add an agent - Coder, Reviewer,
-	 * Researcher, Architect - so templates are listed directly rather than behind a
-	 * dropdown inside a dialog. "Custom..." starts from the project harness alone.
+	 * Configuration: the project's name, its agents, and the profiles they start from.
+	 * What an agent can do and knows is its profile's, so there is nothing else to set here.
 	 */
 	private void fillConfigurationMenu(JPopupMenu menu) {
 
-		menu.add(menuItem(Glyphs.CONFIGURE, "Project configuration...", this::editConfiguration));
+		menu.add(menuItem(Glyphs.RENAME, "Project name and description...", this::editProjectDetails));
+		menu.add(menuItem(Glyphs.PROFILE, "Profiles...", this::manageProfiles));
 		menu.addSeparator();
-
-		var newAgent = Glyphs.decorate(new javax.swing.JMenu(), Glyphs.NEW, "New agent");
-		for (var template : store.project().getTemplates()) {
-			var item = menuItem(Glyphs.TEMPLATE, template.displayName(), () -> newAgent(template.getId()));
-			item.setToolTipText(template.getDescription());
-			newAgent.add(item);
-		}
-		if (newAgent.getMenuComponentCount() > 0) {
-			newAgent.addSeparator();
-		}
-		newAgent.add(shortcut(menuItem(Glyphs.AGENT, "Custom...", () -> newAgent(null)),
+		menu.add(shortcut(menuItem(Glyphs.NEW, "New agent...", this::newAgent),
 				KeyEvent.VK_N, InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK));
-		menu.add(newAgent);
 		// A shell is one of the window kinds like any other; wanting one should not cost a form.
 		menu.add(shortcut(menuItem(Glyphs.TERMINAL, "Terminal in the project folder",
 				() -> newTerminal(store.paths().root())), KeyEvent.VK_O, InputEvent.CTRL_DOWN_MASK));
@@ -342,7 +326,6 @@ public final class ProjectDesktop extends JPanel
 		definition.setName(uniqueName(terminalName(target, root)));
 		definition.setWindowKind(AgentCli.KIND_PREFIX + "shell");
 		definition.setWorkingDirectory(workingDirectoryValue(target, root));
-		adoptWindowKindExecutable(definition);
 
 		store.project().getAgents().add(definition);
 		store.markProjectDirty();
@@ -356,7 +339,7 @@ public final class ProjectDesktop extends JPanel
 	/** Whether a folder is somewhere this project's agents are allowed to run. */
 	private boolean withinAllowedRoots(Path folder) {
 		return PathContainment.contains(folder, List.of(store.paths().root()),
-				HarnessResolver.resolveProject(store.project()).allowedRoots());
+				AgentWindowContext.allowedRoots(store.project(), store.paths().root()));
 	}
 
 	/**
@@ -370,12 +353,7 @@ public final class ProjectDesktop extends JPanel
 						+ "would fall back to the project folder.\n\nAdd it to the allowed roots?")) {
 			return false;
 		}
-		var harness = store.project().getHarness();
-		var roots = new ArrayList<>(harness.getAllowedRoots() == null
-				? List.of(store.paths().root().toString())
-				: harness.getAllowedRoots());
-		roots.add(folder.toAbsolutePath().normalize().toString());
-		harness.setAllowedRoots(List.copyOf(roots));
+		store.project().getAllowedRoots().add(folder.toAbsolutePath().normalize().toString());
 		store.markProjectDirty();
 		return true;
 	}
@@ -432,7 +410,7 @@ public final class ProjectDesktop extends JPanel
 		var actions = getActionMap();
 		var modifiers = InputEvent.CTRL_DOWN_MASK | InputEvent.SHIFT_DOWN_MASK;
 
-		bind(input, actions, KeyEvent.VK_N, modifiers, "ai.newAgent", () -> newAgent(null));
+		bind(input, actions, KeyEvent.VK_N, modifiers, "ai.newAgent", this::newAgent);
 		bind(input, actions, KeyEvent.VK_W, modifiers, "ai.closeWindow", this::closeFocusedWindow);
 		// Not Ctrl+Shift+T: Commander's global key dispatcher claims that for its own
 		// system console, unconditionally, so a binding here would never be reached.
@@ -487,7 +465,7 @@ public final class ProjectDesktop extends JPanel
 
 	private AgentFrame openFrame(AgentDefinition agent, WindowState state) {
 
-		var context = new AgentWindowContext(store, agent, this, RuntimeStamp.CURRENT, profiles,
+		var context = new AgentWindowContext(store, agent, this, RuntimeStamp.CURRENT, profilePlaces(),
 				new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(credentials));
 		var window = registry.createWindow(context);
 		var frame = new AgentFrame(agent, window, this);
@@ -555,12 +533,9 @@ public final class ProjectDesktop extends JPanel
 		copy.setId(UUID.randomUUID().toString());
 		copy.setName(uniqueName(original.displayName() + " copy"));
 		copy.setWindowKind(original.getWindowKind());
-		copy.setTemplateId(original.getTemplateId());
 		copy.setWorkingDirectory(original.getWorkingDirectory());
-		// The copy keeps its own overrides rather than a reference to the original's,
-		// so editing one afterwards never silently changes the other.
-		copy.setHarness(original.getHarness() == null ? new HarnessSpec() : original.getHarness().copy());
-		copy.setContext(original.getContext() == null ? new ContextSpec() : original.getContext().copy());
+		// The same profile: it is shared by design, and editing it is meant to reach both.
+		copy.setProfileId(original.getProfileId());
 
 		store.project().getAgents().add(copy);
 		store.markProjectDirty();
@@ -574,7 +549,7 @@ public final class ProjectDesktop extends JPanel
 		// agent actually runs rather than where a narrower resolution would put it.
 		store.project().agent(agentId).ifPresent(agent -> openFolder(
 				AgentEnvironment.workingDirectory(agent, store.paths().root(),
-						HarnessResolver.resolve(store.project(), agent).allowedRoots())));
+						AgentWindowContext.allowedRoots(store.project(), store.paths().root()))));
 	}
 
 	@Override
@@ -640,25 +615,84 @@ public final class ProjectDesktop extends JPanel
 		}
 	}
 
-	/**
-	 * Edit the whole project configuration - name, harness and context - in one
-	 * tabbed dialog.
-	 */
-	public void editConfiguration() {
+	/** Change the project's name and description. */
+	public void editProjectDetails() {
 
-		var edited = ProjectConfigurationDialog.edit(this, store.project());
-		if (edited == null) {
-			return;
-		}
 		var project = store.project();
-		project.setName(edited.name());
-		project.setDescription(edited.description());
-		project.setHarness(edited.harness());
-		project.setContext(edited.context());
+		var name = new javax.swing.JTextField(project.getName() == null ? "" : project.getName(), 30);
+		var description = new javax.swing.JTextField(project.getDescription() == null ? "" : project.getDescription(), 30);
+		var form = new JPanel(new java.awt.GridLayout(0, 1, 0, 4));
+		form.add(new javax.swing.JLabel("Name"));
+		form.add(name);
+		form.add(new javax.swing.JLabel("Description"));
+		form.add(description);
+		while (true) {
+			if (Dialogs.showConfirmDialog(this, form, "Project", javax.swing.JOptionPane.OK_CANCEL_OPTION,
+					javax.swing.JOptionPane.PLAIN_MESSAGE) != javax.swing.JOptionPane.OK_OPTION) {
+				return;
+			}
+			if (!name.getText().isBlank()) {
+				break;
+			}
+			Dialogs.error(this, "Project", "Give the project a name.");
+		}
+		project.setName(name.getText().strip());
+		project.setDescription(description.getText().isBlank() ? null : description.getText().strip());
 		store.markProjectDirty();
 		notifier.setBaseTitle(title());
 		afterProjectChanged();
-		warnAboutRunningAgents("The project configuration changed.");
+	}
+
+	/** Where the project's profiles, and the user's library, are kept. */
+	@Override
+	public dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces profilePlaces() {
+		return new dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces(projectProfiles, library);
+	}
+
+	/** Open the profile manager: the project's profiles and the user's library. */
+	@Override
+	public void manageProfiles() {
+		ProfilesDialog.show(this, projectProfiles, store.project().displayName(), library, credentials);
+		// Profiles may have been added, renamed or deleted.
+		refreshSidebar();
+	}
+
+	/**
+	 * Copy a library profile into the project, with secrets of its own, so everyone who
+	 * opens the project has it.
+	 *
+	 * @param located the library profile
+	 * @return the copy, or empty when it could not be made; the user has been told why
+	 */
+	private java.util.Optional<dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces.Located> copyToProject(
+			dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces.Located located) {
+		var secrets = new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(credentials);
+		var copy = located.profile().copy();
+		List<String> written = List.of();
+		try {
+			if (secrets.available()) {
+				written = dev.nuclr.plugin.core.ai.projects.ui.OffEventThread.call(() -> secrets.copyInto(copy));
+			} else {
+				dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets.forget(copy);
+			}
+			copy.setName(ProfileStore.uniqueName(located.profile().displayName(), projectProfiles.names(null)));
+			var saved = projectProfiles.create(copy);
+			refreshSidebar();
+			return java.util.Optional.of(new dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces.Located(
+					new dev.nuclr.plugin.core.ai.projects.profile.ProfileRef(
+							dev.nuclr.plugin.core.ai.projects.profile.ProfileRef.Place.PROJECT, saved.getId()),
+					saved));
+		} catch (Exception e) {
+			written.forEach(secrets::deleteQuietly);
+			log.warn("Could not copy profile {} into the project: {}", located.ref(), e.getMessage());
+			Dialogs.error(this, "Copy into project", "Could not copy the profile: " + e.getMessage());
+			return java.util.Optional.empty();
+		}
+	}
+
+	/** Whether the project is kept in its repository, where others open it. */
+	private boolean sharedProject() {
+		return store.project().getStorageMode() == dev.nuclr.plugin.core.ai.projects.model.ProjectStorageMode.PROJECT_LOCAL;
 	}
 
 	/**
@@ -730,16 +764,15 @@ public final class ProjectDesktop extends JPanel
 	}
 
 	@Override
-	public void newAgent(String templateId) {
+	public void newAgent() {
 
-		var definition = AgentDialogs.editAgent(this, store.project(), registry, null, templateId,
-				profiles.list().profiles());
+		var definition = AgentDialogs.editAgent(this, registry, null, profilePlaces().list(), sharedProject(),
+				this::copyToProject);
 		if (definition == null) {
 			return;
 		}
 		definition.setId(UUID.randomUUID().toString());
 		definition.setName(uniqueName(definition.displayName()));
-		adoptWindowKindExecutable(definition);
 		store.project().getAgents().add(definition);
 		store.markProjectDirty();
 		openFrame(definition, WindowState.cascaded(definition.getId(), frames.size())).focusWindow();
@@ -753,20 +786,17 @@ public final class ProjectDesktop extends JPanel
 		if (existing == null) {
 			return;
 		}
-		var edited = AgentDialogs.editAgent(this, store.project(), registry, existing, null,
-				profiles.list().profiles());
+		var edited = AgentDialogs.editAgent(this, registry, existing, profilePlaces().list(), sharedProject(),
+				this::copyToProject);
 		if (edited == null) {
 			return;
 		}
 
 		var kindChanged = !java.util.Objects.equals(existing.getWindowKind(), edited.getWindowKind());
 		existing.setName(edited.getName());
-		existing.setTemplateId(edited.getTemplateId());
 		existing.setWindowKind(edited.getWindowKind());
 		existing.setWorkingDirectory(edited.getWorkingDirectory());
 		existing.setProfileId(edited.getProfileId());
-		existing.setHarness(edited.getHarness());
-		existing.setContext(edited.getContext());
 		store.markProjectDirty();
 
 		var frame = frames.get(agentId);
@@ -812,39 +842,6 @@ public final class ProjectDesktop extends JPanel
 		afterProjectChanged();
 	}
 
-	/**
-	 * Turn an agent into a template, so a configuration worth repeating can be.
-	 *
-	 * @param agentId the agent to base the template on
-	 */
-	@Override
-	public void saveAsTemplate(String agentId) {
-
-		var agent = store.project().agent(agentId).orElse(null);
-		if (agent == null) {
-			return;
-		}
-		var name = Dialogs.input(this, "Name for the new template:", agent.displayName());
-		if (name == null) {
-			return;
-		}
-		var template = new AgentTemplate();
-		template.setId(UUID.randomUUID().toString());
-		template.setName(name.trim());
-		template.setDescription("Saved from the agent '" + agent.displayName() + "'.");
-		template.setWindowKind(agent.getWindowKind());
-		// A template is a starting point, so it takes a copy of what the agent
-		// overrides rather than a reference: editing the agent afterwards must not
-		// silently rewrite the template.
-		template.setHarness(agent.getHarness() == null ? new HarnessSpec() : agent.getHarness().copy());
-		template.setContext(agent.getContext() == null ? new ContextSpec() : agent.getContext().copy());
-
-		store.project().getTemplates().add(template);
-		store.markProjectDirty();
-		afterProjectChanged();
-		flash("Template '" + template.displayName() + "' saved");
-	}
-
 	@Override
 	public void openDocument(Path file) {
 		if (file == null) {
@@ -875,174 +872,6 @@ public final class ProjectDesktop extends JPanel
 		cascadePlace(frame);
 		frame.setVisible(true);
 		select(frame);
-	}
-
-	@Override
-	public void newDocument(Path directory) {
-
-		var name = Dialogs.input(this, "Name of the new document in " + directory.getFileName() + ":",
-				"example.md");
-		if (name == null) {
-			return;
-		}
-		var fileName = name.contains(".") ? name : name + ".md";
-		var file = directory.resolve(fileName);
-		try {
-			Files.createDirectories(directory);
-			if (!Files.exists(file)) {
-				Files.writeString(file, "# " + fileName + System.lineSeparator(), StandardCharsets.UTF_8);
-			}
-		} catch (IOException e) {
-			log.warn("Could not create {}: {}", file, e.getMessage(), e);
-			Dialogs.error(this, "New document", "Could not create " + file + ": " + e.getMessage());
-			return;
-		}
-		refreshSidebar();
-		openDocument(file);
-	}
-
-	@Override
-	public void renameDocument(Path file) {
-
-		if (file == null || !Files.isRegularFile(file)) {
-			return;
-		}
-		var current = file.getFileName().toString();
-		var name = Dialogs.input(this, "New name for " + current + ":", current);
-		if (name == null || name.equals(current)) {
-			return;
-		}
-		var target = file.resolveSibling(name);
-		if (Files.exists(target)) {
-			Dialogs.error(this, "Rename", name + " already exists.");
-			return;
-		}
-		try {
-			Files.move(file, target);
-		} catch (IOException e) {
-			log.warn("Could not rename {}: {}", file, e.getMessage(), e);
-			Dialogs.error(this, "Rename", "Could not rename " + current + ": " + e.getMessage());
-			return;
-		}
-		closeDocumentFrame(file);
-		refreshSidebar();
-		// A renamed skill is still referenced by its old name wherever it was named.
-		Dialogs.message(this, "Renamed",
-				"Renamed to " + target.getFileName() + ".\n\n"
-						+ "Any agent or project context still refers to the old name;\n"
-						+ "the Resolved Context view marks references that no longer resolve.");
-	}
-
-	@Override
-	public void deleteDocument(Path file) {
-
-		if (file == null || !Files.isRegularFile(file)) {
-			return;
-		}
-		if (!Dialogs.confirm(this, "Delete document", "Delete " + file.getFileName() + "?\n\n" + file)) {
-			return;
-		}
-		try {
-			Files.delete(file);
-		} catch (IOException e) {
-			log.warn("Could not delete {}: {}", file, e.getMessage(), e);
-			Dialogs.error(this, "Delete document", "Could not delete " + file + ": " + e.getMessage());
-			return;
-		}
-		closeDocumentFrame(file);
-		refreshSidebar();
-	}
-
-	/**
-	 * Link Markdown documents from another project or folder into the project's
-	 * shared context, by absolute path.
-	 *
-	 * @param kind {@link ContextItem.Kind#SKILL} for skills; anything else links instructions
-	 */
-	@Override
-	public void linkDocuments(ContextItem.Kind kind) {
-
-		var skill = kind == ContextItem.Kind.SKILL;
-		var files = ProjectConfigurationDialog.chooseMarkdown(this, skill ? "Link skills" : "Link instructions");
-		if (files.isEmpty()) {
-			return;
-		}
-		if (store.project().getContext() == null) {
-			store.project().setContext(new ContextSpec());
-		}
-		var context = store.project().getContext();
-		if (skill && context.getSkills() == null) {
-			context.setSkills(new ArrayList<>());
-		}
-		if (!skill && context.getInstructions() == null) {
-			context.setInstructions(new ArrayList<>());
-		}
-		var references = skill ? context.getSkills() : context.getInstructions();
-		var added = 0;
-		for (var file : files) {
-			var reference = file.toString();
-			if (!references.contains(reference)) {
-				references.add(reference);
-				added++;
-			}
-		}
-		if (added == 0) {
-			flash("Already linked");
-			return;
-		}
-		store.markProjectDirty();
-		afterProjectChanged();
-		warnAboutRunningAgents("The context changed.");
-	}
-
-	/**
-	 * Remove the project context's references to a linked document. The file itself
-	 * belongs to wherever it was linked from and is left alone.
-	 *
-	 * @param file the resolved document
-	 */
-	@Override
-	public void unlinkDocument(Path file) {
-
-		if (file == null) {
-			return;
-		}
-		var allowedRoots = HarnessResolver.resolveProject(store.project()).allowedRoots();
-		var context = store.project().getContext();
-		var removed = false;
-		if (context != null && context.getInstructions() != null) {
-			removed |= context.getInstructions().removeIf(reference ->
-					file.equals(store.paths().resolveLinkedDocument(reference, allowedRoots)));
-		}
-		if (context != null && context.getSkills() != null) {
-			removed |= context.getSkills().removeIf(reference ->
-					file.equals(ContextResolver.skillPath(store.paths(), reference, allowedRoots)));
-		}
-		if (removed) {
-			store.markProjectDirty();
-			afterProjectChanged();
-		}
-
-		// An agent, its template or the harness can link the same document; say so
-		// rather than letting it look unlinked while agents still receive it.
-		var stillLinked = store.project().getAgents().stream()
-				.filter(agent -> ContextResolver.resolve(store.project(), agent, store.paths()).items().stream()
-						.anyMatch(item -> file.equals(item.path())))
-				.map(AgentDefinition::displayName)
-				.toList();
-		if (stillLinked.isEmpty()) {
-			if (removed) {
-				flash("Unlinked " + file.getFileName());
-			}
-			return;
-		}
-		Dialogs.message(this, "Unlink",
-				(removed ? "Removed from the project context.\n\n" : "The project context does not link this.\n\n")
-						+ file + "\n\nis still linked for: " + String.join(", ", stillLinked)
-						+ "\nEdit their context, template or harness to remove it there.");
-		if (removed) {
-			warnAboutRunningAgents("The context changed.");
-		}
 	}
 
 	private void closeDocumentFrame(Path file) {
@@ -1580,39 +1409,6 @@ public final class ProjectDesktop extends JPanel
 		frames.remove(frame.agentId());
 		frame.window().close();
 		frame.dispose();
-	}
-
-	/**
-	 * Give a new agent its window kind's own executable when the project harness
-	 * names a different one.
-	 *
-	 * <p>An agent of kind {@code terminal.codex} in a project whose harness says
-	 * {@code claude} must run Codex, not Claude Code. Recording that as an explicit
-	 * agent-level override rather than resolving it silently at launch is the
-	 * point: it shows up in the harness view attributed to the agent, so the
-	 * command line on screen is the command line that runs.
-	 *
-	 * @param definition the agent being created; modified in place
-	 */
-	private void adoptWindowKindExecutable(AgentDefinition definition) {
-
-		var provider = registry.find(definition.getWindowKind()).orElse(null);
-		if (provider == null || definition.getHarness().getExecutable() != null) {
-			return;
-		}
-		var kindDefault = provider.defaultHarness();
-		var executable = kindDefault.getExecutable();
-		if (executable == null || executable.isBlank()) {
-			return;
-		}
-		var projectExecutable = HarnessResolver.resolveProject(store.project()).executable();
-		if (executable.equals(projectExecutable)) {
-			return;
-		}
-		definition.getHarness().setExecutable(executable);
-		if (kindDefault.getProvider() != null) {
-			definition.getHarness().setProvider(kindDefault.getProvider());
-		}
 	}
 
 	/** After the project definition is edited by hand, say that a reopen is needed. */

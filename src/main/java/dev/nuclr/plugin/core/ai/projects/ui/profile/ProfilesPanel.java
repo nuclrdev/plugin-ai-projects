@@ -99,6 +99,11 @@ public final class ProfilesPanel extends JPanel {
 	private final JButton export;
 
 	private transient ProfileStore.Listing listing = new ProfileStore.Listing(List.of(), List.of());
+	private final JToolBar bar = new JToolBar();
+	private transient ProfileStore copyTarget;
+	private String copyLabel;
+	private transient Runnable afterCopy;
+	private JButton copy;
 
 	/**
 	 * Build the panel and read the profiles.
@@ -137,7 +142,6 @@ public final class ProfilesPanel extends JPanel {
 		filter.setMaximumSize(new Dimension(240, filter.getPreferredSize().height));
 		RecordEditorDialog.onChange(filter, this::applyFilter);
 
-		var bar = new JToolBar();
 		bar.setFloatable(false);
 		bar.setBorder(BorderFactory.createEmptyBorder());
 		bar.add(create);
@@ -303,6 +307,62 @@ public final class ProfilesPanel extends JPanel {
 			}
 		}
 		reload(copies);
+	}
+
+	/**
+	 * Offer copying the selected profiles to a second place, such as from the library into
+	 * the open project.
+	 *
+	 * @param label  the command's name, e.g. "Copy to project"
+	 * @param tip    what it does
+	 * @param target where copies are saved
+	 * @param copied run after something was copied, to refresh the other place's list
+	 */
+	public void setCopyTarget(String label, String tip, ProfileStore target, Runnable copied) {
+		copyTarget = target;
+		copyLabel = label;
+		afterCopy = copied;
+		copy = toolButton(Glyphs.COPY, label, tip, this::copySelected);
+		// After Duplicate, which it is a variant of.
+		bar.add(copy, bar.getComponentIndex(duplicate) + 1);
+		updateButtons();
+	}
+
+	private void copySelected() {
+		var selected = selectedProfiles();
+		if (selected.isEmpty() || copyTarget == null) {
+			return;
+		}
+		var copied = 0;
+		for (var profile : selected) {
+			// Secrets of its own, as with Duplicate: deleting either never takes the other's.
+			var copy = profile.copy();
+			List<String> written;
+			try {
+				written = secrets.available() ? OffEventThread.call(() -> secrets.copyInto(copy)) : List.of();
+				if (!secrets.available()) {
+					ProfileSecrets.forget(copy);
+				}
+			} catch (Exception e) {
+				credentialError(copyLabel, e);
+				break;
+			}
+			try {
+				copy.setName(ProfileStore.uniqueName(profile.displayName(), copyTarget.names(null)));
+				copyTarget.create(copy);
+				copied++;
+			} catch (IOException e) {
+				quietly(() -> written.forEach(secrets::deleteQuietly));
+				Dialogs.error(this, copyLabel, "Could not copy \"" + profile.displayName() + "\": " + e.getMessage());
+				break;
+			}
+		}
+		if (copied > 0) {
+			status.setText(copied == 1 ? "1 profile copied" : copied + " profiles copied");
+			if (afterCopy != null) {
+				afterCopy.run();
+			}
+		}
 	}
 
 	private void deleteSelected() {
@@ -537,6 +597,9 @@ public final class ProfilesPanel extends JPanel {
 		var count = table.getSelectedRowCount();
 		edit.setEnabled(count == 1);
 		duplicate.setEnabled(count > 0);
+		if (copy != null) {
+			copy.setEnabled(count > 0);
+		}
 		delete.setEnabled(count > 0);
 		export.setEnabled(count > 0);
 	}
@@ -644,6 +707,9 @@ public final class ProfilesPanel extends JPanel {
 			menu.addSeparator();
 			menu.add(menuItem(Glyphs.EDIT, "Edit...", this::editSelected, count == 1));
 			menu.add(menuItem(Glyphs.DUPLICATE, "Duplicate", this::duplicateSelected, true));
+			if (copyTarget != null) {
+				menu.add(menuItem(Glyphs.COPY, copyLabel, this::copySelected, true));
+			}
 			menu.add(menuItem(Glyphs.EXPORT, "Export...", this::exportSelected, true));
 			menu.addSeparator();
 			menu.add(menuItem(Glyphs.DELETE, "Delete", this::deleteSelected, true));

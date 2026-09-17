@@ -23,7 +23,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import dev.nuclr.platform.plugin.NuclrMenuResource;
 import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
-import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
 import dev.nuclr.plugin.core.ai.projects.model.ProjectStorageMode;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectCatalog;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectCreator;
@@ -62,9 +61,7 @@ class TerminalHereTest {
 		plugin.init();
 
 		var root = Files.createDirectories(workspace.resolve("project"));
-		var project = ProjectCreator.define("project", root, ProjectStorageMode.PROJECT_LOCAL,
-				"terminal.claude-code", null);
-		project.getHarness().setExecutable("claude");
+		var project = ProjectCreator.define("project", root, ProjectStorageMode.PROJECT_LOCAL);
 		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
 			store.markProjectDirty();
 			store.flush();
@@ -119,7 +116,7 @@ class TerminalHereTest {
 	}
 
 	@Test
-	void theShellOverridesTheProjectsAgentExecutable() throws Exception {
+	void aTerminalIsAPlainShellWithNoProfile() throws Exception {
 
 		openProject();
 		onEdt(() -> plugin.act(null, AiProjectEvents.SCREEN_NEW_TERMINAL, List.of(), null,
@@ -128,12 +125,8 @@ class TerminalHereTest {
 
 		try (var store = reopen()) {
 			var agent = store.project().getAgents().getFirst();
-			var resolved = HarnessResolver.resolve(store.project(), agent);
-
-			// The project harness runs Claude Code; a terminal must not inherit that.
-			assertEquals("claude", HarnessResolver.resolveProject(store.project()).executable());
-			assertFalse("claude".equals(resolved.executable()), resolved.executable());
-			assertEquals(AgentCli.defaultShell(), resolved.executable());
+			assertNull(agent.getProfileId(), "a terminal runs the shell, not an agent CLI");
+			assertTrue(AgentCli.byKind(agent.getWindowKind()).orElseThrow().isShell());
 		}
 	}
 
@@ -198,7 +191,8 @@ class TerminalHereTest {
 		onEdt(plugin::closeResource);
 
 		try (var store = reopen()) {
-			var roots = HarnessResolver.resolveProject(store.project()).allowedRoots();
+			var roots = dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext.allowedRoots(store.project(),
+					store.paths().root());
 			assertTrue(roots.contains(outside.toAbsolutePath().normalize().toString()), roots.toString());
 
 			// And because it is allowed, the agent really runs there.

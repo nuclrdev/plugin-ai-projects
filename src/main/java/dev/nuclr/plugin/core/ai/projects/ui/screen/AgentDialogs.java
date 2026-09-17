@@ -30,11 +30,8 @@ import javax.swing.JTextField;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
-import dev.nuclr.plugin.core.ai.projects.model.AgentTemplate;
-import dev.nuclr.plugin.core.ai.projects.model.AiProject;
-import dev.nuclr.plugin.core.ai.projects.model.ContextSpec;
-import dev.nuclr.plugin.core.ai.projects.model.HarnessSpec;
-import dev.nuclr.plugin.core.ai.projects.profile.Profile;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfileRef;
 import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
 
 /**
@@ -47,23 +44,27 @@ public final class AgentDialogs {
 	}
 
 	/**
-	 * Ask for an agent's definition.
+	 * Ask for an agent's definition: its name, the profile it starts from, its window
+	 * kind and working directory.
 	 *
-	 * <p>The dialog edits a copy and returns it only on OK, so cancelling really
-	 * cancels rather than leaving half an edit in the project. The full harness and
-	 * context are reachable from here through their own editors rather than being
-	 * flattened into this form, which would be unreadable.
+	 * <p>The dialog edits a copy and returns it only on OK, so cancelling really cancels
+	 * rather than leaving half an edit in the project.
 	 *
-	 * @param parent    component to centre on
-	 * @param project   the owning project, for its templates
-	 * @param registry  the available window kinds
-	 * @param existing  the agent to edit, or {@code null} to define a new one
-	 * @param template  the template to preselect for a new agent, or {@code null}
-	 * @param profiles  the shared profiles an agent can start from
+	 * <p>A project kept in its repository is opened by other people, who have the
+	 * project's profiles but not this user's library. Choosing a library profile there
+	 * says so, and offers to copy it into the project - once, and never in the way.
+	 *
+	 * @param parent        component to centre on
+	 * @param registry      the available window kinds
+	 * @param existing      the agent to edit, or {@code null} to define a new one
+	 * @param profiles      the profiles an agent can start from, the project's first
+	 * @param sharedProject whether the project is kept in its repository, for others to open
+	 * @param copyToProject copies a library profile into the project, returning the copy, or empty when it could not
 	 * @return the edited copy, or {@code null} when cancelled
 	 */
-	public static AgentDefinition editAgent(Component parent, AiProject project, AgentWindowRegistry registry,
-			AgentDefinition existing, String template, List<Profile> profiles) {
+	public static AgentDefinition editAgent(Component parent, AgentWindowRegistry registry, AgentDefinition existing,
+			List<ProfilePlaces.Located> profiles, boolean sharedProject,
+			java.util.function.Function<ProfilePlaces.Located, java.util.Optional<ProfilePlaces.Located>> copyToProject) {
 
 		var draft = copyOf(existing);
 
@@ -72,14 +73,6 @@ public final class AgentDialogs {
 				existing == null || existing.getWorkingDirectory() == null ? "" : existing.getWorkingDirectory(), 26);
 		workingDirectory.setToolTipText("Blank means the project root. Relative paths resolve against it.");
 
-		var templates = new ArrayList<AgentTemplate>();
-		templates.add(null);
-		templates.addAll(project.getTemplates());
-		var templateChoice = new JComboBox<>(templates.toArray(new AgentTemplate[0]));
-		templateChoice.setRenderer(renderer(value ->
-				value instanceof AgentTemplate item ? item.displayName() : "(no template)"));
-		selectTemplate(templateChoice, templates, existing != null ? existing.getTemplateId() : template);
-
 		var providers = registry.providers();
 		var kindChoice = new JComboBox<>(providers.toArray(new AgentWindowProvider[0]));
 		kindChoice.setRenderer(renderer(value -> value instanceof AgentWindowProvider provider
@@ -87,51 +80,80 @@ public final class AgentDialogs {
 				: ""));
 		selectKind(kindChoice, providers, existing != null ? existing.getWindowKind() : null, registry.defaultKind());
 
-		// The two overrides people reach for constantly stay on this form.
-		var executable = new JTextField(
-				draft.getHarness().getExecutable() == null ? "" : draft.getHarness().getExecutable(), 26);
-		executable.setToolTipText("Leave blank to inherit the project harness.");
-		var model = new JTextField(
-				draft.getHarness().getModel() == null ? "" : draft.getHarness().getModel(), 26);
-		model.setToolTipText("Leave blank to inherit the project harness.");
-
-		// A profile decides the launch, so the harness overrides step aside while one is chosen.
-		var profileChoices = new ArrayList<Object>();
-		profileChoices.add(NO_PROFILE);
-		profiles.stream().sorted(java.util.Comparator.comparing(Profile::displayName, String.CASE_INSENSITIVE_ORDER))
-				.forEach(profileChoices::add);
-		var currentProfile = draft.getProfileId();
-		if (currentProfile != null && profiles.stream().noneMatch(each -> currentProfile.equals(each.getId()))) {
-			profileChoices.add(new MissingProfile(currentProfile));
+		var profileChoice = new JComboBox<Object>();
+		profileChoice.addItem(NO_PROFILE);
+		profiles.forEach(profileChoice::addItem);
+		var current = ProfileRef.parse(draft.getProfileId()).orElse(null);
+		if (current != null && profiles.stream().noneMatch(each -> each.ref().equals(current))) {
+			profileChoice.addItem(new MissingProfile(current));
 		}
-		var profileChoice = new JComboBox<>(profileChoices.toArray());
-		profileChoice.setRenderer(renderer(value -> value instanceof Profile profile
-				? profile.displayName() + AgentProvider.byId(profile.getHarness().getProvider())
-						.map(provider -> "  (" + provider.displayName() + ")").orElse("")
-				: value instanceof MissingProfile missing ? "(missing profile " + missing.id() + ")"
-						: "(none - use the project harness)"));
-		for (var choice : profileChoices) {
-			if (choice instanceof Profile profile && profile.getId().equals(currentProfile)
-					|| choice instanceof MissingProfile missing && missing.id().equals(currentProfile)) {
-				profileChoice.setSelectedItem(choice);
+		profileChoice.setRenderer(renderer(value -> value instanceof ProfilePlaces.Located located
+				? located.profile().displayName()
+						+ AgentProvider.byId(located.profile().getHarness().getProvider())
+								.map(provider -> "  (" + provider.displayName() + ")").orElse("")
+						+ (located.ref().place() == ProfileRef.Place.PROJECT ? "  - this project" : "  - my library")
+				: value instanceof MissingProfile missing
+						? "(missing: " + missing.ref().place().label().toLowerCase(java.util.Locale.ROOT) + " profile)"
+						: "(none - the window kind's command, with its own settings)"));
+		for (var index = 0; index < profileChoice.getItemCount(); index++) {
+			var choice = profileChoice.getItemAt(index);
+			if (choice instanceof ProfilePlaces.Located located && located.ref().equals(current)
+					|| choice instanceof MissingProfile missing && missing.ref().equals(current)) {
+				profileChoice.setSelectedIndex(index);
 			}
 		}
+
+		// The reminder for a library profile in a project others open, with the one fix.
+		var reminder = new JLabel("<html>Others who open this project won't have this profile: it is in your "
+				+ "library.</html>");
+		reminder.setIcon(dev.nuclr.plugin.core.ai.projects.ui.Glyphs.icon(dev.nuclr.plugin.core.ai.projects.ui.Glyphs.MISSING));
+		var copy = new JButton("Copy into project");
+		copy.setToolTipText("Copy this profile into the project, and start the agent from the copy");
+		var dismiss = new JButton("Dismiss");
+		dismiss.putClientProperty("JButton.buttonType", "borderless");
+		var reminderPanel = new JPanel(new BorderLayout(6, 4));
+		var reminderButtons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEADING, 0, 0));
+		reminderButtons.add(copy);
+		reminderButtons.add(Box.createHorizontalStrut(6));
+		reminderButtons.add(dismiss);
+		reminderPanel.add(reminder, BorderLayout.CENTER);
+		reminderPanel.add(reminderButtons, BorderLayout.SOUTH);
+		var dismissed = new boolean[1];
+
 		Runnable profileChanged = () -> {
 			var chosen = profileChoice.getSelectedItem();
-			var usesProfile = chosen != NO_PROFILE;
-			executable.setEnabled(!usesProfile);
-			model.setEnabled(!usesProfile);
-			var note = usesProfile ? "The profile decides this." : "Leave blank to inherit the project harness.";
-			executable.setToolTipText(note);
-			model.setToolTipText(note);
-			if (chosen instanceof Profile profile) {
+			reminderPanel.setVisible(sharedProject && !dismissed[0] && chosen instanceof ProfilePlaces.Located located
+					&& located.ref().place() == ProfileRef.Place.LIBRARY);
+			if (chosen instanceof ProfilePlaces.Located located) {
 				// Show the profile's CLI in a window of its kind, when there is one.
-				AgentProvider.byId(profile.getHarness().getProvider())
+				AgentProvider.byId(located.profile().getHarness().getProvider())
 						.ifPresent(provider -> selectKind(kindChoice, providers, "terminal." + provider.id(), null));
 			}
+			var window = javax.swing.SwingUtilities.getWindowAncestor(reminderPanel);
+			if (window != null) {
+				window.pack();
+			}
 		};
-		profileChanged.run();
 		profileChoice.addActionListener(event -> profileChanged.run());
+		dismiss.addActionListener(event -> {
+			dismissed[0] = true;
+			profileChanged.run();
+		});
+		copy.addActionListener(event -> {
+			if (profileChoice.getSelectedItem() instanceof ProfilePlaces.Located located) {
+				copyToProject.apply(located).ifPresent(copied -> {
+					// The project's profiles are listed first; the copy joins them.
+					var at = 1;
+					while (at < profileChoice.getItemCount() && profileChoice.getItemAt(at) instanceof ProfilePlaces.Located each
+							&& each.ref().place() == ProfileRef.Place.PROJECT) {
+						at++;
+					}
+					profileChoice.insertItemAt(copied, at);
+					profileChoice.setSelectedItem(copied);
+				});
+			}
+		});
+		profileChanged.run();
 
 		var form = new JPanel(new GridBagLayout());
 		form.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
@@ -143,11 +165,9 @@ public final class AgentDialogs {
 		var row = 0;
 		addRow(form, constraints, row++, "Name", nameField);
 		addRow(form, constraints, row++, "Profile", profileChoice);
-		addRow(form, constraints, row++, "Template", templateChoice);
+		addRow(form, constraints, row++, "", reminderPanel);
 		addRow(form, constraints, row++, "Window kind", kindChoice);
-		addRow(form, constraints, row++, "Working directory", workingDirectory);
-		addRow(form, constraints, row++, "Executable override", executable);
-		addRow(form, constraints, row, "Model override", model);
+		addRow(form, constraints, row, "Working directory", workingDirectory);
 
 		while (true) {
 			var choice = Dialogs.showConfirmDialog(parent, form,
@@ -161,18 +181,14 @@ public final class AgentDialogs {
 						JOptionPane.ERROR_MESSAGE);
 				continue;
 			}
-			var chosenTemplate = (AgentTemplate) templateChoice.getSelectedItem();
 			var chosenKind = (AgentWindowProvider) kindChoice.getSelectedItem();
 
 			draft.setName(nameField.getText().trim());
-			draft.setTemplateId(chosenTemplate == null ? null : chosenTemplate.getId());
 			draft.setWindowKind(chosenKind == null ? registry.defaultKind() : chosenKind.kind());
 			draft.setWorkingDirectory(blankToNull(workingDirectory.getText()));
 			var chosenProfile = profileChoice.getSelectedItem();
-			draft.setProfileId(chosenProfile instanceof Profile profile ? profile.getId()
-					: chosenProfile instanceof MissingProfile missing ? missing.id() : null);
-			draft.getHarness().setExecutable(blankToNull(executable.getText()));
-			draft.getHarness().setModel(blankToNull(model.getText()));
+			draft.setProfileId(chosenProfile instanceof ProfilePlaces.Located located ? located.ref().toString()
+					: chosenProfile instanceof MissingProfile missing ? missing.ref().toString() : null);
 			return draft;
 		}
 	}
@@ -325,33 +341,17 @@ public final class AgentDialogs {
 		copy.setId(existing.getId());
 		copy.setName(existing.getName());
 		copy.setWindowKind(existing.getWindowKind());
-		copy.setTemplateId(existing.getTemplateId());
 		copy.setWorkingDirectory(existing.getWorkingDirectory());
 		copy.setProfileId(existing.getProfileId());
 		copy.setCreatedAt(existing.getCreatedAt());
-		copy.setHarness(existing.getHarness() == null ? new HarnessSpec() : existing.getHarness().copy());
-		copy.setContext(existing.getContext() == null ? new ContextSpec() : existing.getContext().copy());
 		return copy;
-	}
-
-	private static void selectTemplate(JComboBox<AgentTemplate> choice, List<AgentTemplate> templates, String id) {
-		if (id == null) {
-			return;
-		}
-		for (var index = 0; index < templates.size(); index++) {
-			var template = templates.get(index);
-			if (template != null && id.equals(template.getId())) {
-				choice.setSelectedIndex(index);
-				return;
-			}
-		}
 	}
 
 	/** The choice of starting from no profile. */
 	private static final Object NO_PROFILE = new Object();
 
 	/** A profile the agent refers to that is no longer there, kept so OK does not silently drop it. */
-	private record MissingProfile(String id) {
+	private record MissingProfile(ProfileRef ref) {
 	}
 
 	private static void selectKind(JComboBox<AgentWindowProvider> choice, List<AgentWindowProvider> providers,

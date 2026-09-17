@@ -64,8 +64,7 @@ class IconSlotsTest {
 		plugin.init();
 
 		var root = Files.createDirectories(workspace.resolve("project"));
-		var project = ProjectCreator.define("project", root, ProjectStorageMode.PROJECT_LOCAL,
-				"terminal.shell", null);
+		var project = ProjectCreator.define("project", root, ProjectStorageMode.PROJECT_LOCAL);
 		var agent = new AgentDefinition();
 		agent.setId("a0");
 		agent.setName("Coder");

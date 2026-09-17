@@ -40,7 +40,6 @@ import com.pty4j.PtyProcessBuilder;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
 import dev.nuclr.plugin.core.ai.projects.connector.LaunchPlan;
-import dev.nuclr.plugin.core.ai.projects.harness.AgentBriefing;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import lombok.extern.slf4j.Slf4j;
@@ -347,64 +346,39 @@ public final class TerminalAgentWindow implements AgentWindow {
 			return;
 		}
 
-		// A profile decides the whole launch; without one, the harness does.
-		if (context.profileId() != null) {
-			startFromProfile();
+		// A profile decides the whole launch; without one, the window kind's own command runs as it is.
+		var ref = context.profileRef();
+		if (ref != null) {
+			startFromProfile(ref);
 			return;
 		}
 
-		var harness = context.harness();
-		var command = commandLine(harness);
-		if (command.isEmpty()) {
-			fail("No executable is configured for this agent. Set one in the project harness.");
-			return;
-		}
-
-		var executable = command.getFirst();
+		var executable = cli.isShell() ? AgentCli.defaultShell() : cli.executable();
 		final Optional<java.nio.file.Path> resolved;
 		try {
 			resolved = executableResolver.apply(executable);
 		} catch (RuntimeException e) {
-			fail("The configured executable is not a valid path: " + e.getMessage());
+			fail("The command is not a valid path: " + e.getMessage());
 			return;
 		}
 		if (resolved.isEmpty()) {
-			fail("Could not find '" + executable + "' on PATH. Install it, or point the harness at its full path.");
+			fail("Could not find '" + executable + "' on PATH. Install it, or start the agent from a profile that "
+					+ "names its full path.");
 			return;
 		}
 
-		var environment = environment(harness);
-		var launched = new ArrayList<>(command);
-		launched.set(0, resolved.get().toString());
-
-		// What the briefing is built from is gathered here, from the project model; the
-		// documents themselves are read on the background thread.
-		var resolvedContext = context.resolvedContext();
-		var projectName = context.project().displayName();
-		var agentName = context.agent().displayName();
-		var briefingFile = context.briefingFile();
+		var command = List.of(executable);
+		var environment = baseEnvironment(context.commanderVariables());
 		var workingDirectory = context.workingDirectory();
+		var notice = cli.isShell() ? "" : "Started without a profile: " + cli.displayName() + " uses its own settings";
 
 		stopRequested = false;
 		setStatus(AgentStatus.STARTING);
-		showStopped("Starting " + String.join(" ", command) + " ...");
+		showStopped("Starting " + executable + " ...");
 		startButton.setEnabled(false);
 
-		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> {
-			// Hand the agent what it is told, not just how it is run. The briefing is
-			// built from the same resolved context the view shows.
-			var briefing = AgentBriefing.of(projectName, agentName, resolvedContext);
-			final ContextDelivery delivery;
-			try {
-				delivery = deliverBriefing(briefing.text(), briefingFile, executable, resolved.get(), launched,
-						environment);
-			} catch (StartRefused e) {
-				SwingUtilities.invokeLater(() -> handleStartFailure(e.getMessage()));
-				return;
-			}
-			spawn(new Launch(command, launched, environment, launchNotice(harness, briefing, delivery)),
-					workingDirectory);
-		});
+		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> spawn(
+				new Launch(command, List.of(resolved.get().toString()), environment, notice), workingDirectory));
 	}
 
 	/**
@@ -453,18 +427,16 @@ public final class TerminalAgentWindow implements AgentWindow {
 	/**
 	 * Start an agent from its profile. Everything that reads the project model is
 	 * gathered here, on the event thread; the rest - reading the profile and the files
-	 * it links, writing the briefing and MCP configuration, reading secrets - happens
-	 * on a background thread, since any of it may be slow or ask to unlock a store.
+	 * it links, fetching its repositories, writing the briefing and the files it needs,
+	 * reading secrets - happens on a background thread, since any of it may be slow or
+	 * ask to unlock a store.
+	 *
+	 * @param ref the profile, as the agent named it when Start was clicked; the agent may be edited meanwhile
 	 */
-	private void startFromProfile() {
+	private void startFromProfile(dev.nuclr.plugin.core.ai.projects.profile.ProfileRef ref) {
 
-		// The id is taken now: the agent may be edited while the launch is prepared.
-		var profileId = context.profileId();
 		var workingDirectory = context.workingDirectory();
 		var commanderVariables = context.commanderVariables();
-		var resolvedContext = context.resolvedContext();
-		var projectName = context.project().displayName();
-		var agentName = context.agent().displayName();
 		var briefingFile = context.briefingFile();
 		var runtimeDirectory = context.runtimeDirectory();
 		var home = System.getProperty("user.home");
@@ -477,8 +449,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> {
 			final Launch launch;
 			try {
-				launch = prepareProfileLaunch(profileId, workingDirectory, commanderVariables,
-						AgentBriefing.of(projectName, agentName, resolvedContext), briefingFile, runtimeDirectory, home);
+				launch = prepareProfileLaunch(ref, workingDirectory, commanderVariables, briefingFile, runtimeDirectory,
+						home);
 			} catch (StartRefused e) {
 				SwingUtilities.invokeLater(() -> handleStartFailure(e.getMessage()));
 				return;
@@ -488,15 +460,18 @@ public final class TerminalAgentWindow implements AgentWindow {
 	}
 
 	/** Build a profile launch. Off the event thread. */
-	private Launch prepareProfileLaunch(String profileId, java.nio.file.Path workingDirectory,
-			java.util.Map<String, String> commanderVariables, AgentBriefing projectBriefing,
+	private Launch prepareProfileLaunch(dev.nuclr.plugin.core.ai.projects.profile.ProfileRef ref,
+			java.nio.file.Path workingDirectory, java.util.Map<String, String> commanderVariables,
 			java.nio.file.Path briefingFile, java.nio.file.Path runtimeDirectory, String home) throws StartRefused {
 
 		final dev.nuclr.plugin.core.ai.projects.profile.Profile profile;
 		try {
-			profile = context.profile(profileId);
+			profile = context.profile(ref);
 		} catch (java.nio.file.NoSuchFileException e) {
-			throw new StartRefused("This agent starts from a profile that no longer exists. Edit the agent and choose another.");
+			throw new StartRefused("This agent starts from a profile that no longer exists"
+					+ (ref.place() == dev.nuclr.plugin.core.ai.projects.profile.ProfileRef.Place.LIBRARY
+							? " in your library" : " in this project")
+					+ ". Edit the agent and choose another.");
 		} catch (IOException e) {
 			throw new StartRefused("This agent's profile cannot be read: " + e.getMessage());
 		}
@@ -520,19 +495,14 @@ public final class TerminalAgentWindow implements AgentWindow {
 					+ "' on PATH. Install it, or point the profile at its full path.");
 		}
 
-		// The project harness's variables are not added: the profile decides the launch.
-		var environment = new LinkedHashMap<>(System.getenv());
+		var environment = baseEnvironment(commanderVariables);
 		putNamed(environment, plan.environment());
+		// The plugin's own variables win over a profile's, so an agent always knows where it is.
 		putNamed(environment, commanderVariables);
-		environment.put("TERM", environment.getOrDefault("TERM", "xterm-256color"));
 		var launched = new ArrayList<>(command);
 		launched.set(0, resolved.get().toString());
 
-		var briefingText = projectBriefing.text();
-		if (!plan.briefing().isEmpty()) {
-			briefingText = briefingText.isEmpty() ? plan.briefing() : briefingText + "\n" + plan.briefing();
-		}
-		var delivery = deliverBriefing(briefingText, briefingFile, executable, resolved.get(), launched, environment);
+		var delivery = deliverBriefing(plan.briefing(), briefingFile, executable, resolved.get(), launched, environment);
 
 		try {
 			plan.writeFiles();
@@ -545,6 +515,18 @@ public final class TerminalAgentWindow implements AgentWindow {
 			throw new StartRefused(e.getMessage());
 		}
 		return new Launch(command, launched, environment, profileNotice(plan, delivery));
+	}
+
+	/**
+	 * An agent's environment before its profile: this process's, and the variables the
+	 * plugin adds. {@code TERM} is set because a pty with none makes most CLIs fall back
+	 * to their plainest output.
+	 */
+	private static java.util.Map<String, String> baseEnvironment(java.util.Map<String, String> commanderVariables) {
+		var environment = new LinkedHashMap<>(System.getenv());
+		putNamed(environment, commanderVariables);
+		environment.put("TERM", environment.getOrDefault("TERM", "xterm-256color"));
+		return environment;
 	}
 
 	/** Start the process and hand it to the event thread. Off the event thread. */
@@ -1074,43 +1056,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 		}
 	}
 
-	/**
-	 * The command line this agent runs.
-	 *
-	 * <p>The resolved harness decides. Only when it names no executable at all -
-	 * a harness nobody has filled in, or one a hand edit has blanked - does this
-	 * fall back to what the window kind's own CLI is called, which is a better
-	 * answer than refusing to start.
-	 */
-	private List<String> commandLine(dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness harness) {
-		var command = harness.commandLine();
-		if (!command.isEmpty()) {
-			return command;
-		}
-		var fallback = cli.defaultHarness().getExecutable();
-		return fallback == null || fallback.isBlank() ? List.of() : List.of(fallback);
-	}
-
-	/**
-	 * The agent's environment: this process's, plus the harness's, plus the
-	 * variables the plugin adds. {@code TERM} is forced because a pty with no
-	 * {@code TERM} makes most CLIs fall back to their dumbest output mode.
-	 *
-	 * <p>Blank names are dropped. A harness is a file, and a hand-edited or
-	 * mistyped {@code =value} line names no variable at all - handing that to the
-	 * process builder is at best ignored and at worst refused, and either way the
-	 * agent would fail to start for a reason nothing on screen explains.
-	 */
-	private java.util.Map<String, String> environment(
-			dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness harness) {
-
-		var environment = new LinkedHashMap<>(System.getenv());
-		putNamed(environment, harness.env());
-		putNamed(environment, context.commanderVariables());
-		environment.put("TERM", environment.getOrDefault("TERM", "xterm-256color"));
-		return environment;
-	}
-
 	/** Say which profile started the agent, how its briefing was delivered, and what was not applied. */
 	private static String profileNotice(LaunchPlan plan, ContextDelivery delivery) {
 		var notes = new ArrayList<String>();
@@ -1130,60 +1075,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 				target.put(name, value);
 			}
 		});
-	}
-
-	/** Say how the briefing was delivered, and what configuration has no terminal/CLI mapping yet. */
-	private String launchNotice(dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness harness,
-			AgentBriefing briefing, ContextDelivery delivery) {
-		var unsupported = new ArrayList<String>();
-		if (harness.provider() != null && !harness.provider().isBlank()) {
-			unsupported.add("provider");
-		}
-		if (harness.model() != null && !harness.model().isBlank()) {
-			unsupported.add("model");
-		}
-		if (!harness.permissions().isEmpty()) {
-			unsupported.add("permissions");
-		}
-		if (!harness.enabledMcpServers().isEmpty()) {
-			unsupported.add("MCP servers");
-		}
-		if (!harness.allowedRoots().isEmpty()) {
-			unsupported.add("filesystem access policy");
-		}
-		if (harness.sandbox() != null && !harness.sandbox().isBlank()) {
-			unsupported.add("sandbox");
-		}
-		if (!harness.tools().isEmpty()) {
-			unsupported.add("tools");
-		}
-		if (!harness.software().isEmpty()) {
-			unsupported.add("software access");
-		}
-		if (!harness.hardware().isEmpty()) {
-			unsupported.add("hardware access");
-		}
-		if (!harness.network().isEmpty()) {
-			unsupported.add("network access");
-		}
-		if (harness.maxTurns() != null || harness.timeoutMinutes() != null || harness.maxBudgetUsd() != null) {
-			unsupported.add("execution limits");
-		}
-		if (!briefing.isEmpty() && !delivery.delivered()) {
-			unsupported.add("context files and variables (this CLI has no known way to receive them; the briefing is at "
-					+ context.briefingFile() + ")");
-		}
-		var notes = new ArrayList<String>();
-		if (delivery.delivered()) {
-			notes.add(delivery.description() + ": " + briefing.documents() + " documents, "
-					+ briefing.variables() + " variables"
-					+ (briefing.references() > 0 ? ", " + briefing.references() + " knowledge references and rules" : "")
-					+ (briefing.missing() > 0 ? ", " + briefing.missing() + " missing" : ""));
-		}
-		if (!unsupported.isEmpty()) {
-			notes.add("Not applied by the terminal CLI: " + String.join(", ", unsupported));
-		}
-		return String.join("; ", notes);
 	}
 
 	private static String escape(String text) {

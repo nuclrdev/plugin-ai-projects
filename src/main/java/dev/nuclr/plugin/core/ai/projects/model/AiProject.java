@@ -28,11 +28,13 @@ import lombok.Setter;
 @JsonPropertyOrder({ "schemaVersion" })
 public class AiProject {
 
-	/** The newest {@code project.json} schema this plugin reads. */
-	public static final int SCHEMA_VERSION = 2;
-
-	/** The schema a project with none of the version 2 fields is written as. */
-	static final int BASE_SCHEMA_VERSION = 1;
+	/**
+	 * The {@code project.json} schema this plugin writes, and the newest it reads.
+	 * Version 3 replaced the project harness, context and templates with profiles,
+	 * which {@code ProjectMigration} carries earlier projects over to; a plugin that
+	 * reads only version 2 must refuse the file rather than open it with no harness.
+	 */
+	public static final int SCHEMA_VERSION = 3;
 
 	/**
 	 * The schema of the file this project was read from. What is written is
@@ -42,7 +44,7 @@ public class AiProject {
 	@EqualsAndHashCode.Exclude
 	@Getter(AccessLevel.NONE)
 	@Setter(AccessLevel.NONE)
-	private int schemaVersion = BASE_SCHEMA_VERSION;
+	private int schemaVersion = SCHEMA_VERSION;
 
 	/** Stable project identifier, generated at creation. */
 	private String id;
@@ -59,13 +61,28 @@ public class AiProject {
 	/** Where this project's metadata is kept. */
 	private ProjectStorageMode storageMode = ProjectStorageMode.PROJECT_LOCAL;
 
-	/** The project harness every agent inherits. */
+	/**
+	 * Folders outside the project root that agents and terminals may be started in.
+	 * The root itself is always allowed.
+	 */
+	private List<String> allowedRoots = new ArrayList<>();
+
+	/**
+	 * The project harness of a version 1 or 2 project: read, to be carried over to a
+	 * profile, and never written again.
+	 */
+	@Deprecated
+	@JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
 	private HarnessSpec harness = new HarnessSpec();
 
-	/** Context every agent in this project receives. */
+	/** The project context of a version 1 or 2 project, read only to be carried over to a profile. */
+	@Deprecated
+	@JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
 	private ContextSpec context = new ContextSpec();
 
-	/** Agent templates available in this project. */
+	/** The agent templates of a version 1 or 2 project, read only to be carried over to profiles. */
+	@Deprecated
+	@JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
 	private List<AgentTemplate> templates = new ArrayList<>();
 
 	/** The agents this project defines. */
@@ -77,19 +94,10 @@ public class AiProject {
 	/** Creates an empty project. */
 	public AiProject() {}
 
-	/**
-	 * The schema this project is written as: the oldest that holds everything in it.
-	 *
-	 * <p>{@code project.json} is committed and shared, so a project that uses nothing
-	 * new stays at version 1, which every plugin still opens. Once an agent starts from
-	 * a profile it is version 2, which a version 1 plugin refuses instead of opening
-	 * it and dropping {@code profileId} on its next save.
-	 */
+	/** The schema this project is written as: always the current one. */
 	@JsonProperty("schemaVersion")
 	public int getSchemaVersion() {
-		var usesProfiles = agents != null && agents.stream()
-				.anyMatch(agent -> agent != null && agent.getProfileId() != null && !agent.getProfileId().isBlank());
-		return usesProfiles ? SCHEMA_VERSION : BASE_SCHEMA_VERSION;
+		return SCHEMA_VERSION;
 	}
 
 	/**
@@ -102,7 +110,7 @@ public class AiProject {
 		this.schemaVersion = version;
 	}
 
-	/** The schema of the file this project was read from, for refusing one from a newer plugin. */
+	/** The schema of the file this project was read from: to refuse a newer one, and migrate an older one. */
 	public int readSchemaVersion() {
 		return schemaVersion;
 	}

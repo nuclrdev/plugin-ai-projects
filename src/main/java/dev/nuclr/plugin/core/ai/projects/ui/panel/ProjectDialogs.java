@@ -77,28 +77,12 @@ public final class ProjectDialogs {
 		});
 
 		var projectLocal = new JRadioButton(
-				"In the project folder (.nuclr/ai-project) - instructions and skills can be committed", true);
+				"In the project folder (.nuclr/ai-project) - its profiles can be committed and shared", true);
 		var commanderPrivate = new JRadioButton(
 				"Private to Commander - nothing is written inside the project folder");
 		var storage = new ButtonGroup();
 		storage.add(projectLocal);
 		storage.add(commanderPrivate);
-
-		var providers = registry.providers().stream().filter(AgentWindowProvider::isAvailable).toList();
-		var harnessChoice = new JComboBox<AgentWindowProvider>(providers.toArray(AgentWindowProvider[]::new));
-		harnessChoice.setRenderer(new javax.swing.DefaultListCellRenderer() {
-			@Override
-			public Component getListCellRendererComponent(javax.swing.JList<?> list, Object value, int index,
-					boolean selected, boolean focus) {
-				var label = super.getListCellRendererComponent(list, value, index, selected, focus);
-				if (value instanceof AgentWindowProvider provider) {
-					setText(provider.displayName());
-					setToolTipText(provider.description());
-				}
-				return label;
-			}
-		});
-		selectDefault(harnessChoice, providers, registry.defaultKind());
 
 		var form = new JPanel(new GridBagLayout());
 		form.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
@@ -113,7 +97,6 @@ public final class ProjectDialogs {
 
 		addRow(form, constraints, 0, "Name", nameField);
 		addRow(form, constraints, 1, "Root folder", rootRow);
-		addRow(form, constraints, 2, "Default agent", harnessChoice);
 
 		constraints.gridx = 0;
 		constraints.gridy = 3;
@@ -136,13 +119,9 @@ public final class ProjectDialogs {
 				continue;
 			}
 			var root = Path.of(rootField.getText().trim()).toAbsolutePath().normalize();
-			var provider = (AgentWindowProvider) harnessChoice.getSelectedItem();
-			var kind = provider == null ? registry.defaultKind() : provider.kind();
-			var harness = provider == null ? null : provider.defaultHarness();
 			return ProjectCreator.define(nameField.getText().trim(), root,
 					projectLocal.isSelected() ? ProjectStorageMode.PROJECT_LOCAL
-							: ProjectStorageMode.COMMANDER_PRIVATE,
-					kind, harness);
+							: ProjectStorageMode.COMMANDER_PRIVATE);
 		}
 	}
 
@@ -169,16 +148,6 @@ public final class ProjectDialogs {
 			return "'" + clash.get().name() + "' already uses that folder.";
 		}
 		return null;
-	}
-
-	private static void selectDefault(JComboBox<AgentWindowProvider> choice,
-			java.util.List<AgentWindowProvider> providers, String defaultKind) {
-		for (var index = 0; index < providers.size(); index++) {
-			if (providers.get(index).kind().equals(defaultKind)) {
-				choice.setSelectedIndex(index);
-				return;
-			}
-		}
 	}
 
 	private static void addRow(JPanel form, GridBagConstraints constraints, int row, String label, Component field) {

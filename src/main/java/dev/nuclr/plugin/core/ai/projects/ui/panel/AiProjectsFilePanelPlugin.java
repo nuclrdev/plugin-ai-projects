@@ -25,7 +25,6 @@ import dev.nuclr.platform.plugin.NuclrPluginCallback;
 import dev.nuclr.platform.plugin.NuclrPluginContext;
 import dev.nuclr.platform.plugin.NuclrResource;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
-import dev.nuclr.plugin.core.ai.projects.harness.HarnessResolver;
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectCatalog;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectCreator;
@@ -55,7 +54,7 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 	public static final String PLUGIN_ID = "dev.nuclr.plugin.core.ai.projects.panel";
 
 	private static final List<String> COLUMNS =
-			List.of("Name", "Status", "Agents", "Harness", "Model", "Storage", "Last opened", "Root");
+			List.of("Name", "Status", "Agents", "Profiles", "Storage", "Last opened", "Root");
 
 	/**
 	 * Metadata keys Commander's own comparators read.
@@ -63,8 +62,8 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 	 * <p>The host owns the comparators and keys them to fixed metadata names, so a
 	 * plugin makes one of its columns sortable by publishing that column's value
 	 * under the name the matching comparator reads. Status is therefore mirrored
-	 * into {@code Description} and Harness into {@code Owner}; the columns the user
-	 * sees are still Status and Harness, and the sort descriptors below point the
+	 * into {@code Description} and Profiles into {@code Owner}; the columns the user
+	 * sees are still Status and Profiles, and the sort descriptors below point the
 	 * header arrow at them.
 	 */
 	private static final String SORT_KEY_STATUS = "Description";
@@ -232,15 +231,14 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 		var report = activity.getOrDefault(entry.id(), ProjectActivity.CLOSED);
 		var rootExists = Files.isDirectory(entry.rootPath());
 		var status = status(definition, rootExists, report);
-		var harness = harness(definition);
+		var profiles = profiles(definition);
 		var lastOpened = catalog.lastOpenedAt(entry);
 		var agentCount = definition == null ? 0 : definition.getAgents().size();
 
 		row.getMetadata().put("Name", definition == null ? entry.name() : definition.displayName());
 		row.getMetadata().put("Status", Glyphs.label(statusGlyph(definition, rootExists, report), status));
 		row.getMetadata().put("Agents", agents(definition, report));
-		row.getMetadata().put("Harness", harness);
-		row.getMetadata().put("Model", model(definition));
+		row.getMetadata().put("Profiles", profiles);
 		row.getMetadata().put("Storage", entry.storageMode().label());
 		row.getMetadata().put("Last opened", Timestamps.relative(lastOpened));
 		row.getMetadata().put("Root", entry.root());
@@ -249,7 +247,7 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 		// undecorated: sorting by status should order by the word, not by whichever
 		// codepoint happens to sit in front of it.
 		row.getMetadata().put(SORT_KEY_STATUS, status);
-		row.getMetadata().put(SORT_KEY_HARNESS, harness);
+		row.getMetadata().put(SORT_KEY_HARNESS, profiles);
 		row.setLength(agentCount);
 		row.setLastModifiedDateTime(toLocal(lastOpened));
 
@@ -266,8 +264,7 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 		hint.getMetadata().put("Name", Glyphs.label(Glyphs.NEW, hint.getName()));
 		hint.getMetadata().put("Status", "");
 		hint.getMetadata().put("Agents", "");
-		hint.getMetadata().put("Harness", "");
-		hint.getMetadata().put("Model", "");
+		hint.getMetadata().put("Profiles", "");
 		hint.getMetadata().put("Storage", "");
 		hint.getMetadata().put("Last opened", "");
 		hint.getMetadata().put("Root", "F7 for a new project, or copy a folder here with F5");
@@ -330,23 +327,18 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 		return detail.append(')').toString();
 	}
 
-	private static String harness(AiProject definition) {
+	/** How many profiles the project's agents start from, and how many agents start from none. */
+	private static String profiles(AiProject definition) {
 		if (definition == null) {
 			return "-";
 		}
-		var resolved = HarnessResolver.resolveProject(definition);
-		if (resolved.executable() != null && !resolved.executable().isBlank()) {
-			return resolved.executable();
+		var distinct = new java.util.HashSet<String>();
+		for (var agent : definition.getAgents()) {
+			if (agent.getProfileId() != null && !agent.getProfileId().isBlank()) {
+				distinct.add(agent.getProfileId().strip());
+			}
 		}
-		return resolved.provider() == null ? "-" : resolved.provider();
-	}
-
-	private static String model(AiProject definition) {
-		if (definition == null) {
-			return "-";
-		}
-		var model = HarnessResolver.resolveProject(definition).model();
-		return model == null || model.isBlank() ? "-" : model;
+		return distinct.isEmpty() ? "-" : distinct.size() == 1 ? "1 profile" : distinct.size() + " profiles";
 	}
 
 	@Override
@@ -381,7 +373,7 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 		items.add(sortByColumn("Last opened", "Ctrl+F5", "modified"));
 		items.add(sortByColumn("Agents", "Ctrl+F6", "size"));
 		items.add(new NuclrMenuResource("Unsort", "Ctrl+F7", "filepanel.sort:unsorted"));
-		items.add(sortByColumn("Harness", "Ctrl+F8", "owner"));
+		items.add(sortByColumn("Profiles", "Ctrl+F8", "owner"));
 		items.add(new NuclrMenuResource("Sort", "Ctrl+F12", "filepanel.sort:dialog"));
 		return items;
 	}

@@ -16,8 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
-import dev.nuclr.plugin.core.ai.projects.model.ContextSpec;
-import dev.nuclr.plugin.core.ai.projects.model.HarnessSpec;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
 import dev.nuclr.plugin.core.ai.projects.model.ProjectStorageMode;
 import dev.nuclr.plugin.core.ai.projects.runtime.DesktopState;
 import dev.nuclr.plugin.core.ai.projects.runtime.SessionRecord;
@@ -88,6 +87,11 @@ public final class ProjectStore implements AutoCloseable {
 					+ project.readSchemaVersion() + ")");
 		}
 		normalise(project, paths);
+		if (ProjectMigration.toProfiles(project, paths, new ProfileStore(paths.profilesDirectory()))) {
+			// Written now, not with the next change: the profiles it made exist already, and a
+			// project still at its old version would be carried over - and profiles made - again.
+			Json.write(paths.projectFile(), project);
+		}
 		var desktop = Json.readOrDefault(paths.desktopFile(), DesktopState.class, new DesktopState());
 		if (desktop.getSchemaVersion() > 1) {
 			desktop = new DesktopState();
@@ -119,29 +123,19 @@ public final class ProjectStore implements AutoCloseable {
 	 * in once, here, so nothing downstream has to null-check the model - and so a
 	 * half-written file opens instead of failing.
 	 */
+	@SuppressWarnings("deprecation")
 	private static void normalise(AiProject project, ProjectPaths paths) {
-		if (project.getHarness() == null) {
-			project.setHarness(new HarnessSpec());
-		}
-		if (project.getContext() == null) {
-			project.setContext(new ContextSpec());
-		}
 		if (project.getAgents() == null) {
 			project.setAgents(new ArrayList<>());
 		}
 		if (project.getTemplates() == null) {
 			project.setTemplates(new ArrayList<>());
 		}
+		if (project.getAllowedRoots() == null) {
+			project.setAllowedRoots(new ArrayList<>());
+		}
 		project.getAgents().removeIf(agent -> agent == null || agent.getId() == null);
 		project.getTemplates().removeIf(template -> template == null || template.getId() == null);
-		for (var agent : project.getAgents()) {
-			if (agent.getHarness() == null) {
-				agent.setHarness(new HarnessSpec());
-			}
-			if (agent.getContext() == null) {
-				agent.setContext(new ContextSpec());
-			}
-		}
 		if (project.getRoot() == null || project.getRoot().isBlank()) {
 			project.setRoot(paths.root().toString());
 		}

@@ -140,6 +140,11 @@ public final class ProjectPaths {
 		return metadataDirectory.resolve("transcripts").resolve(safe(agentId) + ".log");
 	}
 
+	/** The project's own profiles — committable, so everyone who opens the project has them. */
+	public Path profilesDirectory() {
+		return metadataDirectory.resolve("profiles");
+	}
+
 	/** Instruction documents — committable. */
 	public Path instructionsDirectory() {
 		return metadataDirectory.resolve("instructions");
