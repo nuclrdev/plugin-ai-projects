@@ -435,7 +435,8 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 			case AiProjectEvents.OPEN_PROJECT -> openProject(focusedResource);
 			case AiProjectEvents.NEW_PROJECT -> newProject(data);
 			case AiProjectEvents.MANAGE_PROFILES -> dev.nuclr.plugin.core.ai.projects.ui.profile.ProfilesDialog.show(null,
-					dev.nuclr.plugin.core.ai.projects.profile.ProfileStore.inCommanderHome(catalog.commanderHome()));
+					dev.nuclr.plugin.core.ai.projects.profile.ProfileStore.inCommanderHome(catalog.commanderHome()),
+					context.getCredentialStore());
 			case AiProjectEvents.ADD_EXISTING -> addExisting(data);
 			case AiProjectEvents.ACCEPT_COPY -> adoptFolders(selectedResources, focusedResource, data);
 			case AiProjectEvents.RENAME_PROJECT -> rename(focusedResource, data);

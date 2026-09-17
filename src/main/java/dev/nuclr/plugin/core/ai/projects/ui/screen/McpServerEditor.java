@@ -76,6 +76,24 @@ public final class McpServerEditor extends JPanel {
 		}
 	}
 
+	/**
+	 * Be told whenever a server is added, removed or edited.
+	 *
+	 * @param listener run after every change
+	 */
+	public void addChangeListener(Runnable listener) {
+		model.addTableModelListener(event -> listener.run());
+	}
+
+	/**
+	 * The servers as the table holds them now, without committing a cell that is
+	 * still being edited. For change listeners: committing from inside one fires
+	 * the listener again, endlessly.
+	 */
+	public List<McpServerSpec> currentServers() {
+		return model.servers();
+	}
+
 	/** The edited servers, dropping rows with no name. */
 	public List<McpServerSpec> servers() {
 		stopEditing();

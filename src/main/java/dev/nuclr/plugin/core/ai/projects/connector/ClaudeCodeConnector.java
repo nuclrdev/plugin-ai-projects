@@ -171,6 +171,121 @@ final class ClaudeCodeConnector implements AgentConnector {
 		return problems;
 	}
 
+	/** The file the profile's servers are written to; {@code --mcp-config} names it. */
+	static final String MCP_CONFIG_FILE = "nuclr-mcp.json";
+
+	private static final java.util.regex.Pattern SERVER_NAME = java.util.regex.Pattern.compile("^[A-Za-z0-9_-]+$");
+
+	@Override
+	public boolean supportsMcp() {
+		return true;
+	}
+
+	@Override
+	public boolean canRestrictMcpServers() {
+		return true;
+	}
+
+	@Override
+	public boolean canSwitchOffMcpServers() {
+		return false;
+	}
+
+	@Override
+	public String mcpMeaning() {
+		return "The profile's servers are written to " + MCP_CONFIG_FILE + " and passed with --mcp-config.";
+	}
+
+	@Override
+	public McpSetup mcpSetup(List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> servers,
+			boolean onlyProfileServers, List<String> switchedOff, java.nio.file.Path runtimeDirectory) {
+		var enabled = AgentConnector.enabledServers(servers);
+		var arguments = new ArrayList<String>();
+		var bindings = new ArrayList<SecretBinding>();
+		String content = null;
+		// Strict mode is documented together with --mcp-config, and without one a Claude Code
+		// has been seen to go on loading the servers configured elsewhere. So "only the
+		// profile's servers" always passes a file - an empty one when there are none.
+		if (!enabled.isEmpty() || onlyProfileServers) {
+			var definitions = new java.util.LinkedHashMap<String, Object>();
+			for (var server : enabled) {
+				definitions.put(McpSupport.text(server.getName()), definition(server, bindings));
+			}
+			content = dev.nuclr.plugin.core.ai.projects.store.Json.toJson(Map.of("mcpServers", definitions));
+			arguments.add("--mcp-config");
+			arguments.add(runtimeDirectory.resolve(MCP_CONFIG_FILE).toString());
+		}
+		if (onlyProfileServers) {
+			arguments.add("--strict-mcp-config");
+		}
+		return new McpSetup(List.copyOf(arguments), content == null ? null : MCP_CONFIG_FILE, content,
+				List.copyOf(bindings));
+	}
+
+	/**
+	 * One server as Claude Code's MCP configuration has it. Secrets are written as
+	 * {@code ${VARIABLE}}, which Claude Code expands from its own environment.
+	 */
+	private static Map<String, Object> definition(dev.nuclr.plugin.core.ai.projects.model.McpServerSpec server,
+			List<SecretBinding> bindings) {
+		var definition = new java.util.LinkedHashMap<String, Object>();
+		if (server.remote()) {
+			definition.put("type", server.transportOrDefault());
+			definition.put("url", McpSupport.text(server.getUrl()));
+			var headers = new java.util.LinkedHashMap<String, String>(McpSupport.nullToEmpty(server.getHeaders()));
+			if (dev.nuclr.plugin.core.ai.projects.model.McpServerSpec.AUTH_BEARER.equals(server.authOrDefault())
+					&& server.getBearerToken() != null) {
+				headers.put("Authorization", "Bearer ${" + bind(server, "TOKEN", server.getBearerToken(), bindings) + "}");
+			}
+			McpSupport.nullToEmpty(server.getSecretHeaders()).forEach((name, secret) ->
+					headers.put(name, "${" + bind(server, "HEADER_" + name, secret, bindings) + "}"));
+			if (!headers.isEmpty()) {
+				definition.put("headers", headers);
+			}
+		} else {
+			definition.put("type", "stdio");
+			definition.put("command", server.getCommand());
+			definition.put("args", server.getArgs() == null ? List.of() : server.getArgs());
+			var env = new java.util.LinkedHashMap<String, String>(McpSupport.nullToEmpty(server.getEnv()));
+			McpSupport.nullToEmpty(server.getSecretEnv()).forEach((name, secret) ->
+					env.put(name, "${" + bind(server, "ENV_" + name, secret, bindings) + "}"));
+			if (!env.isEmpty()) {
+				definition.put("env", env);
+			}
+		}
+		return definition;
+	}
+
+	/** The variable a secret is read from; a stored secret is also bound to it for launch. */
+	private static String bind(dev.nuclr.plugin.core.ai.projects.model.McpServerSpec server, String part,
+			dev.nuclr.plugin.core.ai.projects.model.McpSecret secret, List<SecretBinding> bindings) {
+		var variable = McpSupport.variableFor(server, part, secret);
+		if (!secret.fromEnvironment()) {
+			bindings.add(new SecretBinding(variable, secret));
+		}
+		return variable;
+	}
+
+	@Override
+	public List<String> mcpProblems(List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> servers,
+			boolean onlyProfileServers, List<String> switchedOff) {
+		var problems = new ArrayList<String>();
+		if (!switchedOff.isEmpty()) {
+			problems.add("MCP servers: Claude Code cannot switch off servers configured outside the profile. "
+					+ "Choose \"Only the profile's servers\", or block their tools on the Tools tab.");
+		}
+		for (var server : AgentConnector.enabledServers(servers)) {
+			if (!SERVER_NAME.matcher(McpSupport.text(server.getName())).matches()) {
+				problems.add("MCP servers: \"" + McpSupport.text(server.getName())
+						+ "\" - use letters, digits, '-' and '_' only, so its tools can be named mcp__server__tool.");
+			}
+			problems.addAll(McpSupport.problems(server));
+		}
+		problems.addAll(McpSupport.bindingConflicts(
+				mcpSetup(servers, onlyProfileServers, List.of(), java.nio.file.Path.of("")).secrets()));
+		return problems;
+	}
+
 	@Override
 	public ModelCatalog discover(String executable, Duration timeout) throws IOException {
 		try (var process = JsonLineProcess.start(List.of(executable, "-p",

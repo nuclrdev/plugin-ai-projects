@@ -32,6 +32,17 @@ public final class ProfilesDialog {
 	 * @param store  where the profiles are kept
 	 */
 	public static void show(Component parent, ProfileStore store) {
+		show(parent, store, null);
+	}
+
+	/**
+	 * Show the profile manager, keeping secrets in the host's credential store.
+	 *
+	 * @param parent      component to centre on, or {@code null} for the active window
+	 * @param store       where the profiles are kept
+	 * @param credentials the host's credential store, or {@code null} when there is none
+	 */
+	public static void show(Component parent, ProfileStore store, dev.nuclr.platform.NuclrCredentialStore credentials) {
 
 		if (Dialogs.isHeadless()) {
 			return;
@@ -41,7 +52,7 @@ public final class ProfilesDialog {
 		var dialog = new JDialog(owner, "AI Profiles", Dialog.ModalityType.APPLICATION_MODAL);
 		dialog.setDefaultCloseOperation(JDialog.HIDE_ON_CLOSE);
 
-		var panel = new ProfilesPanel(store);
+		var panel = new ProfilesPanel(store, new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(credentials));
 		var close = new JButton("Close");
 		close.addActionListener(event -> dialog.setVisible(false));
 		var buttons = new JPanel(new FlowLayout(FlowLayout.TRAILING, 0, 0));

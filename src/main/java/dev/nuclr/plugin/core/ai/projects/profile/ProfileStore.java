@@ -253,6 +253,9 @@ public final class ProfileStore {
 				? stripSuffix(file.getFileName().toString())
 				: imported.getName().trim();
 		imported.setName(uniqueName(name, names(null)));
+		// Keys to stored secrets mean nothing here - or, worse, belong to the profile it
+		// was exported from - so an imported profile's secrets are there to be entered.
+		ProfileSecrets.forget(imported);
 		return create(imported);
 	}
 
@@ -264,7 +267,10 @@ public final class ProfileStore {
 	 * @throws IOException when it cannot be written
 	 */
 	public void exportTo(Profile profile, Path file) throws IOException {
-		Json.write(file, profile);
+		// Profiles are exported to be shared; the credential-store keys stay behind.
+		var exported = profile.copy();
+		ProfileSecrets.forget(exported);
+		Json.write(file, exported);
 	}
 
 	/**

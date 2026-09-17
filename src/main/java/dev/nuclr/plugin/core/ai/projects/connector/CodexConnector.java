@@ -152,6 +152,229 @@ final class CodexConnector implements AgentConnector {
 		return problems;
 	}
 
+	/** A TOML bare key: the only server and variable names that need no quoting in a {@code -c} path. */
+	private static final java.util.regex.Pattern BARE_KEY = java.util.regex.Pattern.compile("^[A-Za-z0-9_-]+$");
+
+	@Override
+	public boolean supportsMcp() {
+		return true;
+	}
+
+	@Override
+	public boolean canRestrictMcpServers() {
+		return false;
+	}
+
+	@Override
+	public boolean canSwitchOffMcpServers() {
+		return true;
+	}
+
+	@Override
+	public String mcpMeaning() {
+		return "The profile's servers are added with -c mcp_servers.<name> overrides, on top of the servers "
+				+ "configured in Codex.";
+	}
+
+	@Override
+	public McpSetup mcpSetup(List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> servers,
+			boolean onlyProfileServers, List<String> switchedOff, java.nio.file.Path runtimeDirectory) {
+		var arguments = new ArrayList<String>();
+		var bindings = new ArrayList<SecretBinding>();
+		for (var server : AgentConnector.enabledServers(servers)) {
+			var key = "mcp_servers." + McpSupport.text(server.getName());
+			if (server.remote()) {
+				override(arguments, key + ".url", literal(McpSupport.text(server.getUrl())));
+				if (dev.nuclr.plugin.core.ai.projects.model.McpServerSpec.AUTH_BEARER.equals(server.authOrDefault())
+						&& server.getBearerToken() != null) {
+					override(arguments, key + ".bearer_token_env_var",
+							literal(bind(server, "TOKEN", server.getBearerToken(), bindings)));
+				}
+				var headers = McpSupport.nullToEmpty(server.getHeaders());
+				if (!headers.isEmpty()) {
+					override(arguments, key + ".http_headers", table(headers));
+				}
+				var secretHeaders = new java.util.LinkedHashMap<String, String>();
+				McpSupport.nullToEmpty(server.getSecretHeaders()).forEach((name, secret) ->
+						secretHeaders.put(name, bind(server, "HEADER_" + name, secret, bindings)));
+				if (!secretHeaders.isEmpty()) {
+					override(arguments, key + ".env_http_headers", table(secretHeaders));
+				}
+			} else {
+				override(arguments, key + ".command", literal(server.getCommand()));
+				if (server.getArgs() != null && !server.getArgs().isEmpty()) {
+					override(arguments, key + ".args", "[" + String.join(", ",
+							server.getArgs().stream().map(CodexConnector::literal).toList()) + "]");
+				}
+				if (server.getEnv() != null && !server.getEnv().isEmpty()) {
+					override(arguments, key + ".env", table(server.getEnv()));
+				}
+				// Codex passes named variables through from its own environment, so a secret
+				// variable is set on the agent process under exactly the name the server expects.
+				// That makes the variable global to the Codex process: two servers wanting API_KEY
+				// from different secrets would overwrite one another, which the checks refuse.
+				var passThrough = new ArrayList<String>();
+				McpSupport.nullToEmpty(server.getSecretEnv()).forEach((name, secret) -> {
+					if (secret != null) {
+						bindings.add(new SecretBinding(name, secret));
+					}
+					passThrough.add(literal(name));
+				});
+				if (!passThrough.isEmpty()) {
+					override(arguments, key + ".env_vars", "[" + String.join(", ", passThrough) + "]");
+				}
+			}
+		}
+		for (var name : switchedOff) {
+			override(arguments, "mcp_servers." + McpSupport.text(name) + ".enabled", "false");
+		}
+		return new McpSetup(List.copyOf(arguments), null, null, List.copyOf(bindings));
+	}
+
+	private static void override(List<String> arguments, String path, String value) {
+		arguments.add("-c");
+		arguments.add(path + "=" + value);
+	}
+
+	/** A TOML inline table of literal strings. */
+	private static String table(Map<String, String> values) {
+		return "{ " + String.join(", ", values.entrySet().stream()
+				.map(entry -> entry.getKey() + " = " + literal(entry.getValue())).toList()) + " }";
+	}
+
+	/** The variable a secret is read from; a stored secret is also bound to it for launch. */
+	private static String bind(dev.nuclr.plugin.core.ai.projects.model.McpServerSpec server, String part,
+			dev.nuclr.plugin.core.ai.projects.model.McpSecret secret, List<SecretBinding> bindings) {
+		var variable = McpSupport.variableFor(server, part, secret);
+		if (!secret.fromEnvironment()) {
+			bindings.add(new SecretBinding(variable, secret));
+		}
+		return variable;
+	}
+
+	@Override
+	public List<String> mcpProblems(List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> servers,
+			boolean onlyProfileServers, List<String> switchedOff) {
+		var problems = new ArrayList<String>();
+		if (onlyProfileServers) {
+			problems.add("MCP servers: Codex always loads the servers configured in it. "
+					+ "Switch off the ones agents should not use instead.");
+		}
+		var profileNames = new java.util.HashSet<String>();
+		for (var server : AgentConnector.enabledServers(servers)) {
+			var name = McpSupport.text(server.getName());
+			profileNames.add(name);
+			if (!BARE_KEY.matcher(name).matches()) {
+				problems.add("MCP servers: \"" + name + "\" - Codex needs letters, digits, '-' and '_' only.");
+			}
+			if (dev.nuclr.plugin.core.ai.projects.model.McpServerSpec.SSE.equals(server.transportOrDefault())) {
+				problems.add("MCP servers: \"" + name + "\" uses SSE, which Codex does not support. "
+						+ "Use HTTP if the server offers it.");
+			}
+			problems.addAll(McpSupport.problems(server));
+			var keys = new ArrayList<String>();
+			keys.addAll(McpSupport.nullToEmpty(server.getEnv()).keySet());
+			keys.addAll(McpSupport.nullToEmpty(server.getHeaders()).keySet());
+			keys.addAll(McpSupport.nullToEmpty(server.getSecretHeaders()).keySet());
+			for (var key : keys) {
+				if (!BARE_KEY.matcher(key).matches()) {
+					problems.add("MCP servers: \"" + name + "\" \"" + key
+							+ "\" - Codex needs letters, digits, '-' and '_' only.");
+				}
+			}
+			var values = new ArrayList<String>();
+			values.add(server.getCommand() == null ? "" : server.getCommand());
+			values.add(server.getUrl() == null ? "" : server.getUrl());
+			if (server.getArgs() != null) {
+				values.addAll(server.getArgs());
+			}
+			values.addAll(McpSupport.nullToEmpty(server.getEnv()).values());
+			values.addAll(McpSupport.nullToEmpty(server.getHeaders()).values());
+			if (values.stream().anyMatch(value -> value != null
+					&& (value.contains("'") || value.contains("\n") || value.contains("\r")))) {
+				problems.add("MCP servers: \"" + name + "\" - Codex cannot take a single quote or line break in a "
+						+ "command, URL, argument, header or environment value.");
+			}
+		}
+		problems.addAll(McpSupport.bindingConflicts(
+				mcpSetup(servers, onlyProfileServers, List.of(), java.nio.file.Path.of("")).secrets()));
+		for (var name : switchedOff) {
+			if (!BARE_KEY.matcher(name.strip()).matches()) {
+				problems.add("MCP servers: \"" + name.strip() + "\" is not a server name Codex can switch off.");
+			} else if (profileNames.contains(name.strip())) {
+				problems.add("MCP servers: \"" + name.strip() + "\" is both a profile server and switched off.");
+			}
+		}
+		return problems;
+	}
+
+	/**
+	 * Read the servers configured in Codex, from {@code codex mcp list --json}.
+	 */
+	@Override
+	public List<String> configuredMcpServers(String executable, Duration timeout) throws IOException {
+		var process = new ProcessBuilder(executable, "mcp", "list", "--json").redirectErrorStream(false).start();
+		process.getOutputStream().close();
+		var output = new java.io.ByteArrayOutputStream();
+		var reader = Thread.ofVirtual().start(() -> {
+			try (var in = process.getInputStream()) {
+				in.transferTo(output);
+			} catch (IOException e) {
+				// What was read is what there is.
+			}
+		});
+		Thread.ofVirtual().start(() -> {
+			try (var err = process.getErrorStream()) {
+				err.transferTo(java.io.OutputStream.nullOutputStream());
+			} catch (IOException e) {
+				// Ignored.
+			}
+		});
+		try {
+			if (!process.waitFor(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+				process.descendants().forEach(ProcessHandle::destroyForcibly);
+				process.destroyForcibly();
+				throw new IOException("codex mcp list did not answer within " + timeout.toSeconds() + " seconds");
+			}
+			reader.join();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			process.destroyForcibly();
+			throw new IOException("interrupted", e);
+		}
+		if (process.exitValue() != 0) {
+			throw new IOException("codex mcp list exited with " + process.exitValue());
+		}
+		return parseConfiguredServers(output.toString(java.nio.charset.StandardCharsets.UTF_8));
+	}
+
+	/**
+	 * Read the names from {@code codex mcp list --json}.
+	 *
+	 * @param json the command's output
+	 * @return the server names, in order
+	 * @throws IOException when it is not a list of servers
+	 */
+	static List<String> parseConfiguredServers(String json) throws IOException {
+		var root = dev.nuclr.plugin.core.ai.projects.store.Json.fromJson(json, JsonNode.class);
+		if (root == null || !root.isArray()) {
+			throw new IOException("unexpected output from codex mcp list");
+		}
+		var names = new ArrayList<String>();
+		for (var server : root) {
+			var name = text(server, "name");
+			if (name != null && !name.isBlank()) {
+				names.add(name);
+			}
+		}
+		return names;
+	}
+
+	/** A TOML literal string: no escapes, so Windows paths pass through unchanged. */
+	private static String literal(String value) {
+		return "'" + (value == null ? "" : value) + "'";
+	}
+
 	@Override
 	public ModelCatalog discover(String executable, Duration timeout) throws IOException {
 		var deadline = System.nanoTime() + timeout.toNanos();

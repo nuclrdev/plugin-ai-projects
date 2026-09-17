@@ -50,7 +50,11 @@ import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableRowSorter;
 
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;
+import dev.nuclr.platform.NuclrCredentialException;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
+import dev.nuclr.plugin.core.ai.projects.profile.SecretSession;
+import dev.nuclr.plugin.core.ai.projects.ui.OffEventThread;
 import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.ui.panel.Timestamps;
@@ -79,6 +83,7 @@ public final class ProfilesPanel extends JPanel {
 	private static final String CARD_EMPTY = "empty";
 
 	private final transient ProfileStore store;
+	private final transient ProfileSecrets secrets;
 	private final ProfileTableModel model = new ProfileTableModel();
 	private final JTable table = new JTable(model);
 	private final TableRowSorter<ProfileTableModel> sorter = new TableRowSorter<>(model);
@@ -101,9 +106,20 @@ public final class ProfilesPanel extends JPanel {
 	 * @param store where the profiles are kept
 	 */
 	public ProfilesPanel(ProfileStore store) {
+		this(store, new ProfileSecrets(null));
+	}
+
+	/**
+	 * Build the panel, keeping profile secrets in a credential store.
+	 *
+	 * @param store   where the profiles are kept
+	 * @param secrets where their secrets are kept
+	 */
+	public ProfilesPanel(ProfileStore store, ProfileSecrets secrets) {
 
 		super(new BorderLayout(0, 6));
 		this.store = store;
+		this.secrets = secrets;
 
 		var create = toolButton(Glyphs.NEW, "New...", "Create a profile (Ctrl+N)", this::newProfile);
 		edit = toolButton(Glyphs.EDIT, "Edit...", "Edit the selected profile (Enter)", this::editSelected);
@@ -182,10 +198,18 @@ public final class ProfilesPanel extends JPanel {
 	/** Create a profile. */
 	public void newProfile() {
 		var created = new String[1];
-		ProfileEditorDialog.edit(this, new Profile(), true, names(null), profile -> {
+		var draft = new Profile();
+		var session = new SecretSession(secrets, draft);
+		ProfileEditorDialog.edit(this, draft, true, names(null), session, profile -> {
 			try {
-				created[0] = store.create(profile).getId();
+				created[0] = persist(session, profile, () -> store.create(profile)).getId();
 				return true;
+			} catch (SecretsFailure failure) {
+				credentialError("New profile", failure.getCause());
+				return false;
+			} catch (ProfileStore.ConflictException e) {
+				Dialogs.error(this, "New profile", "Could not save the profile: " + e.getMessage());
+				return false;
 			} catch (IOException e) {
 				log.warn("Could not create profile: {}", e.getMessage(), e);
 				Dialogs.error(this, "New profile", "Could not save the profile: " + e.getMessage());
@@ -210,14 +234,19 @@ public final class ProfilesPanel extends JPanel {
 			refresh();
 			return;
 		}
-		ProfileEditorDialog.edit(this, current, false, names(current.getId()), profile -> saveEdited(profile));
+		var session = new SecretSession(secrets, current);
+		ProfileEditorDialog.edit(this, current, false, names(current.getId()), session,
+				profile -> saveEdited(profile, session));
 		reload(Set.of(current.getId()));
 	}
 
-	private boolean saveEdited(Profile profile) {
+	private boolean saveEdited(Profile profile, SecretSession session) {
 		try {
-			store.save(profile, false);
+			persist(session, profile, () -> store.save(profile, false));
 			return true;
+		} catch (SecretsFailure failure) {
+			credentialError("Save profile", failure.getCause());
+			return false;
 		} catch (ProfileStore.ConflictException conflict) {
 			var overwrite = Dialogs.choose(this, "Save profile",
 					conflict.getMessage() + (conflict.deleted()
@@ -228,8 +257,11 @@ public final class ProfilesPanel extends JPanel {
 				return false;
 			}
 			try {
-				store.save(profile, true);
+				persist(session, profile, () -> store.save(profile, true));
 				return true;
+			} catch (SecretsFailure failure) {
+				credentialError("Save profile", failure.getCause());
+				return false;
 			} catch (IOException | ProfileStore.ConflictException e) {
 				Dialogs.error(this, "Save profile", "Could not save the profile: " + e.getMessage());
 				return false;
@@ -248,9 +280,23 @@ public final class ProfilesPanel extends JPanel {
 		}
 		var copies = new LinkedHashSet<String>();
 		for (var profile : selected) {
+			// The copy gets secrets of its own, so deleting one profile never takes the
+			// other's with it.
+			var copy = profile.copy();
+			List<String> written;
 			try {
-				copies.add(store.duplicate(profile).getId());
+				written = secrets.available() ? OffEventThread.call(() -> secrets.copyInto(copy)) : List.of();
+				if (!secrets.available()) {
+					ProfileSecrets.forget(copy);
+				}
+			} catch (Exception e) {
+				credentialError("Duplicate profile", e);
+				break;
+			}
+			try {
+				copies.add(store.duplicate(copy).getId());
 			} catch (IOException e) {
+				quietly(() -> written.forEach(secrets::deleteQuietly));
 				Dialogs.error(this, "Duplicate profile",
 						"Could not duplicate \"" + profile.displayName() + "\": " + e.getMessage());
 				break;
@@ -274,6 +320,7 @@ public final class ProfilesPanel extends JPanel {
 		for (var profile : selected) {
 			try {
 				store.delete(profile.getId());
+				quietly(() -> secrets.deleteAll(profile));
 			} catch (IOException e) {
 				Dialogs.error(this, "Delete profile",
 						"Could not delete \"" + profile.displayName() + "\": " + e.getMessage());
@@ -367,6 +414,67 @@ public final class ProfilesPanel extends JPanel {
 			var where = profiles.size() == 1 ? files.getFirst().toString() : files.getFirst().getParent().toString();
 			Dialogs.message(this, "Export profiles",
 					(profiles.size() == 1 ? "Exported to " : "Exported " + profiles.size() + " profiles to ") + where);
+		}
+	}
+
+	/** Writes a profile to disk. */
+	@FunctionalInterface
+	private interface ProfileWrite {
+		Profile write() throws IOException, ProfileStore.ConflictException;
+	}
+
+	/** The credential store refused; the cause says why. */
+	private static final class SecretsFailure extends Exception {
+		private static final long serialVersionUID = 1L;
+
+		SecretsFailure(Exception cause) {
+			super(cause.getMessage(), cause);
+		}
+	}
+
+	/**
+	 * Save a profile with its secrets: the secrets first, so the saved profile never
+	 * refers to one that is missing; then the profile; then the clean-up of secrets it
+	 * no longer uses. If the profile cannot be written, the secrets just stored are
+	 * removed again. The credential store may block or prompt, so it is used off the
+	 * event thread while the window stays responsive.
+	 */
+	private Profile persist(SecretSession session, Profile profile, ProfileWrite write)
+			throws SecretsFailure, IOException, ProfileStore.ConflictException {
+		List<String> written;
+		try {
+			written = OffEventThread.call(() -> session.writeStaged(profile));
+		} catch (Exception e) {
+			throw new SecretsFailure(e);
+		}
+		try {
+			var saved = write.write();
+			quietly(() -> session.finish(saved));
+			return saved;
+		} catch (IOException | ProfileStore.ConflictException | RuntimeException e) {
+			quietly(() -> session.rollback(written));
+			throw e;
+		}
+	}
+
+	private void credentialError(String title, Throwable cause) {
+		var unavailable = cause instanceof NuclrCredentialException credential
+				&& credential.getReason() == NuclrCredentialException.Reason.UNAVAILABLE;
+		Dialogs.error(this, title, unavailable
+				? "The OS credential store is not available on this machine, so the secrets could not be stored.\n\n"
+						+ "Use an environment variable for them instead."
+				: "Could not store the secrets: " + cause.getMessage());
+	}
+
+	/** Clean-up that must not interrupt what the user did: off the event thread, failures only logged. */
+	private static void quietly(Runnable work) {
+		try {
+			OffEventThread.call(() -> {
+				work.run();
+				return null;
+			});
+		} catch (Exception e) {
+			log.warn("Profile secret clean-up failed: {}", e.getMessage());
 		}
 	}
 

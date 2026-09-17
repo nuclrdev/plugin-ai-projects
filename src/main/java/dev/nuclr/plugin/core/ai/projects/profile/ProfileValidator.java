@@ -81,6 +81,7 @@ public final class ProfileValidator {
 		}
 		if (harness != null) {
 			problems.addAll(toolProblems(harness));
+			problems.addAll(mcpProblems(harness));
 		}
 		if (harness != null) {
 			positive(problems, harness.getMaxTurns(), "Max turns");
@@ -96,8 +97,12 @@ public final class ProfileValidator {
 						problems.add(new Problem(null, -1, "Every MCP server needs a name."));
 					} else if (!names.add(server.getName().trim().toLowerCase(Locale.ROOT))) {
 						problems.add(new Problem(null, -1, "Two MCP servers are called \"" + server.getName().trim() + "\"."));
-					} else if (server.getCommand() == null || server.getCommand().isBlank()) {
+					} else if (server.isEnabled() && !server.remote()
+							&& (server.getCommand() == null || server.getCommand().isBlank())) {
 						problems.add(new Problem(null, -1, "MCP server \"" + server.getName().trim() + "\" has no command."));
+					} else if (server.isEnabled() && server.remote()
+							&& (server.getUrl() == null || server.getUrl().isBlank())) {
+						problems.add(new Problem(null, -1, "MCP server \"" + server.getName().trim() + "\" has no URL."));
 					}
 				}
 			}
@@ -162,6 +167,25 @@ public final class ProfileValidator {
 				problems.add(new Problem(null, -1, "Tools: \"" + name + "\" is allowed more than once."));
 				break;
 			}
+		}
+		return problems;
+	}
+
+	/** MCP settings beyond the server list itself are provider-specific, and so is what they allow. */
+	private static List<Problem> mcpProblems(Profile.Harness harness) {
+		var problems = new ArrayList<Problem>();
+		var switchedOff = nullToEmpty(harness.getSwitchedOffMcpServers());
+		var provider = AgentProvider.byId(harness.getProvider());
+		if (provider.isEmpty()) {
+			if (harness.restrictsMcpServers() || !switchedOff.isEmpty()) {
+				problems.add(new Problem(null, -1, "MCP servers: choose a provider first - "
+						+ "which servers can be limited or switched off depends on it."));
+			}
+			return problems;
+		}
+		for (var message : provider.get().connector().mcpProblems(harness.getMcpServers(),
+				harness.restrictsMcpServers(), switchedOff)) {
+			problems.add(new Problem(null, -1, message));
 		}
 		return problems;
 	}

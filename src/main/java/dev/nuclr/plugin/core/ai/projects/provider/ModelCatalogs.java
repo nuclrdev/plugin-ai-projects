@@ -42,10 +42,29 @@ public final class ModelCatalogs {
 
 	private static final ModelCatalogs SHARED = new ModelCatalogs(
 			(provider, executable) -> provider.connector().discover(executable, AgentConnector.DISCOVERY_TIMEOUT),
+			(provider, executable) -> provider.connector().configuredMcpServers(executable,
+					AgentConnector.DISCOVERY_TIMEOUT),
 			command -> AgentCli.resolveOnPath(command).map(Object::toString),
 			Executors.newVirtualThreadPerTaskExecutor());
 
+	/** Asks a provider's CLI which MCP servers the user configured. */
+	@FunctionalInterface
+	public interface McpDiscovery {
+
+		/**
+		 * Ask.
+		 *
+		 * @param provider   the provider
+		 * @param executable the resolved executable
+		 * @return the server names
+		 * @throws IOException when the CLI cannot be asked
+		 */
+		java.util.List<String> configuredServers(AgentProvider provider, String executable) throws IOException;
+	}
+
 	private final Discovery discovery;
+	private final McpDiscovery mcpDiscovery;
+	private final Map<String, CompletableFuture<java.util.List<String>>> mcpCache = new ConcurrentHashMap<>();
 	private final Function<String, Optional<String>> resolver;
 	private final Executor executor;
 	private final Map<String, CompletableFuture<ModelCatalog>> cache = new ConcurrentHashMap<>();
@@ -58,7 +77,21 @@ public final class ModelCatalogs {
 	 * @param executor  where the asking happens
 	 */
 	public ModelCatalogs(Discovery discovery, Function<String, Optional<String>> resolver, Executor executor) {
+		this(discovery, (provider, executable) -> java.util.List.of(), resolver, executor);
+	}
+
+	/**
+	 * A catalogue source that also asks which MCP servers are configured.
+	 *
+	 * @param discovery    how a CLI is asked for its models
+	 * @param mcpDiscovery how a CLI is asked for its configured MCP servers
+	 * @param resolver     finds a command on this machine, empty when it is not installed
+	 * @param executor     where the asking happens
+	 */
+	public ModelCatalogs(Discovery discovery, McpDiscovery mcpDiscovery, Function<String, Optional<String>> resolver,
+			Executor executor) {
 		this.discovery = discovery;
+		this.mcpDiscovery = mcpDiscovery;
 		this.resolver = resolver;
 		this.executor = executor;
 	}
@@ -99,6 +132,32 @@ public final class ModelCatalogs {
 	public CompletableFuture<ModelCatalog> refresh(AgentProvider provider, String executable) {
 		cache.remove(key(provider, executable));
 		return catalog(provider, executable);
+	}
+
+	/**
+	 * The MCP servers configured in a provider's CLI, from the cache when asked
+	 * before. Empty when the CLI cannot say or cannot be run.
+	 *
+	 * @param provider   the provider
+	 * @param executable the executable to ask, or blank for the provider's default
+	 * @return the names, completing off the calling thread; never completes exceptionally
+	 */
+	public CompletableFuture<java.util.List<String>> configuredMcpServers(AgentProvider provider, String executable) {
+		return mcpCache.computeIfAbsent(key(provider, executable), ignored -> {
+			var command = executable == null || executable.isBlank() ? provider.defaultExecutable() : executable.trim();
+			return CompletableFuture.supplyAsync(() -> {
+				var resolved = resolver.apply(command).orElse(null);
+				if (resolved == null) {
+					return java.util.List.<String>of();
+				}
+				try {
+					return mcpDiscovery.configuredServers(provider, resolved);
+				} catch (IOException | RuntimeException e) {
+					log.info("Could not list {} MCP servers: {}", provider.displayName(), e.getMessage());
+					return java.util.List.<String>of();
+				}
+			}, executor);
+		});
 	}
 
 	private CompletableFuture<ModelCatalog> load(AgentProvider provider, String executable) {

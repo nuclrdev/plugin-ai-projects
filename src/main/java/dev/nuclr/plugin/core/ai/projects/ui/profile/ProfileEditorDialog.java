@@ -44,13 +44,15 @@ public final class ProfileEditorDialog {
 	private final Collection<String> otherNames;
 	private final Predicate<Profile> saver;
 	private boolean saved;
+	/** Storing secrets keeps the interface responsive; a second Save meanwhile is ignored. */
+	private boolean saving;
 
 	private ProfileEditorDialog(Component parent, Profile profile, boolean isNew, Collection<String> otherNames,
-			Predicate<Profile> saver) {
+			dev.nuclr.plugin.core.ai.projects.profile.SecretSession session, Predicate<Profile> saver) {
 
 		this.otherNames = otherNames;
 		this.saver = saver;
-		this.form = new ProfileForm(profile);
+		this.form = new ProfileForm(profile, dev.nuclr.plugin.core.ai.projects.provider.ModelCatalogs.shared(), session);
 		this.baseline = form.toProfile();
 
 		var owner = parent == null ? null : SwingUtilities.getWindowAncestor(parent);
@@ -110,16 +112,17 @@ public final class ProfileEditorDialog {
 	 * @param profile    the profile to edit, or a blank one to create
 	 * @param isNew      whether this creates a profile
 	 * @param otherNames the names of every other profile, for uniqueness
+	 * @param session    holds the secrets entered while editing, for the saver to store
 	 * @param saver      saves the edited profile; returns {@code true} on success,
 	 *                   having told the user about any failure itself
 	 * @return whether the profile was saved
 	 */
 	public static boolean edit(Component parent, Profile profile, boolean isNew, Collection<String> otherNames,
-			Predicate<Profile> saver) {
+			dev.nuclr.plugin.core.ai.projects.profile.SecretSession session, Predicate<Profile> saver) {
 		if (Dialogs.isHeadless()) {
 			return false;
 		}
-		var editor = new ProfileEditorDialog(parent, profile, isNew, otherNames, saver);
+		var editor = new ProfileEditorDialog(parent, profile, isNew, otherNames, session, saver);
 		editor.dialog.setVisible(true);
 		editor.dialog.dispose();
 		return editor.saved;
@@ -142,9 +145,30 @@ public final class ProfileEditorDialog {
 			return;
 		}
 
-		if (saver.test(profile)) {
-			saved = true;
-			dialog.setVisible(false);
+		var needed = profile.getHarness().getMcpServers() == null ? List.<String>of()
+				: profile.getHarness().getMcpServers().stream()
+						.filter(server -> server != null && server.isEnabled()
+								&& server.secrets().stream().anyMatch(secret -> secret.needsEntry()))
+						.map(server -> server.getName())
+						.toList();
+		if (!needed.isEmpty() && !Dialogs.ask(dialog, dialog.getTitle(), "These MCP servers have secrets that are not "
+				+ "entered on this machine: " + String.join(", ", needed) + ".\n\nThey cannot connect until the secrets "
+				+ "are entered. Save anyway?")) {
+			form.revealMcp();
+			return;
+		}
+
+		if (saving) {
+			return;
+		}
+		saving = true;
+		try {
+			if (saver.test(profile)) {
+				saved = true;
+				dialog.setVisible(false);
+			}
+		} finally {
+			saving = false;
 		}
 	}
 

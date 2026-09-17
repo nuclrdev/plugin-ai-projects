@@ -27,7 +27,6 @@ import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalogs;
 import dev.nuclr.plugin.core.ai.projects.store.Json;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.ui.screen.ListEditor;
-import dev.nuclr.plugin.core.ai.projects.ui.screen.McpServerEditor;
 
 /**
  * Every field of a profile, laid out as the model is: name and description on
@@ -49,7 +48,7 @@ public final class ProfileForm extends JPanel {
 	private final ProviderFields providerFields;
 	private final JTextField sandbox = new JTextField(28);
 	private final ListEditor startupArgs;
-	private final McpServerEditor mcpServers;
+	private final McpServerListEditor mcpServers;
 	private final JTextField maxTurns = new JTextField(10);
 	private final JTextField timeoutMinutes = new JTextField(10);
 	private final JTextField maxBudgetUsd = new JTextField(10);
@@ -62,6 +61,7 @@ public final class ProfileForm extends JPanel {
 	private final Map<ProfileSection, Integer> tabIndex = new EnumMap<>(ProfileSection.class);
 	private int limitsTab;
 	private int mcpTab;
+	private McpServersPanel mcp;
 	private int toolsTab;
 	private final ToolListsPanel tools;
 
@@ -81,6 +81,19 @@ public final class ProfileForm extends JPanel {
 	 * @param catalogs where the provider's models come from
 	 */
 	public ProfileForm(Profile profile, ModelCatalogs catalogs) {
+		this(profile, catalogs, new dev.nuclr.plugin.core.ai.projects.profile.SecretSession(
+				new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(null), profile));
+	}
+
+	/**
+	 * Build the form with a place to keep the secrets entered while editing.
+	 *
+	 * @param profile  the profile to show; never modified
+	 * @param catalogs where the provider's models come from
+	 * @param session  holds secrets entered here until the profile is saved
+	 */
+	public ProfileForm(Profile profile, ModelCatalogs catalogs,
+			dev.nuclr.plugin.core.ai.projects.profile.SecretSession session) {
 
 		super(new BorderLayout(0, 8));
 		this.original = profile.copy();
@@ -95,7 +108,7 @@ public final class ProfileForm extends JPanel {
 		sandbox.setText(text(harness.getSandbox()));
 		RecordEditorDialog.placeholder(sandbox, "e.g. local, docker, devcontainer");
 		startupArgs = new ListEditor("One argument per line.", 5, harness.getStartupArgs());
-		mcpServers = new McpServerEditor(harness.getMcpServers());
+		mcpServers = new McpServerListEditor(harness.getMcpServers(), session, () -> providerFields.selectedProvider());
 		maxTurns.setText(number(harness.getMaxTurns()));
 		timeoutMinutes.setText(number(harness.getTimeoutMinutes()));
 		maxBudgetUsd.setText(number(harness.getMaxBudgetUsd()));
@@ -126,7 +139,12 @@ public final class ProfileForm extends JPanel {
 		tools.addChangeListener(this::updateToolsTitle);
 		updateToolsTitle();
 		mcpTab = harnessTabs.getTabCount();
-		harnessTabs.addTab("MCP servers", Glyphs.icon(Glyphs.TOOL), padded(mcpServers));
+		mcp = new McpServersPanel(harness, mcpServers, providerFields.selectedProvider(), catalogs,
+				() -> providerFields.executable().getText());
+		providerFields.addProviderListener(mcp::setProvider);
+		harnessTabs.addTab("MCP servers", Glyphs.icon(Glyphs.TOOL), mcp);
+		mcp.addChangeListener(this::updateMcpTitle);
+		updateMcpTitle();
 		addSection(harnessTabs, ProfileSection.SOFTWARE, Glyphs.SOFTWARE);
 		addSection(harnessTabs, ProfileSection.HARDWARE, Glyphs.HARDWARE);
 		var accessForm = form(
@@ -203,6 +221,8 @@ public final class ProfileForm extends JPanel {
 		harness.setSandbox(trimToNull(sandbox.getText()));
 		harness.setStartupArgs(new ArrayList<>(startupArgs.values()));
 		harness.setMcpServers(new ArrayList<>(mcpServers.servers()));
+		harness.setMcpAccess(mcp.restrictsMcpServers() ? Profile.Harness.TOOL_ACCESS_ONLY : null);
+		harness.setSwitchedOffMcpServers(new ArrayList<>(mcp.switchedOffServers()));
 		harness.setMaxTurns(parseInteger(maxTurns, "", new ArrayList<>()));
 		harness.setTimeoutMinutes(parseInteger(timeoutMinutes, "", new ArrayList<>()));
 		harness.setMaxBudgetUsd(parseDecimal(maxBudgetUsd, "", new ArrayList<>()));
@@ -255,6 +275,11 @@ public final class ProfileForm extends JPanel {
 		sections.get(problem.section()).selectRecord(problem.index());
 	}
 
+	/** Bring the MCP servers tab forward. */
+	public void revealMcp() {
+		showTab(harnessTabs, mcpTab);
+	}
+
 	/** Bring the limits tab forward, for a limit that does not parse. */
 	public void revealLimits() {
 		showTab(harnessTabs, limitsTab);
@@ -289,6 +314,11 @@ public final class ProfileForm extends JPanel {
 		panel.add(top, BorderLayout.NORTH);
 		panel.add(bottom, BorderLayout.SOUTH);
 		return panel;
+	}
+
+	private void updateMcpTitle() {
+		var count = mcp.count();
+		harnessTabs.setTitleAt(mcpTab, count == 0 ? "MCP servers" : "MCP servers (" + count + ")");
 	}
 
 	private void updateToolsTitle() {

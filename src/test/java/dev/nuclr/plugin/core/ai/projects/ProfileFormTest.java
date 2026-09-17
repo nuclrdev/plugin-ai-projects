@@ -97,4 +97,39 @@ class ProfileFormTest {
 		assertEquals("Bash", ((ProfileRecord) records[0].getFirst()).getText());
 		assertEquals("Bash", original.getText());
 	}
+
+	@Test
+	void readingTheFormWhileAServerRowIsBeingSwitchedDoesNotLoop() throws Exception {
+		// Cancel reads the form back while a cell in the MCP list may still be open. An
+		// earlier version committed the edit, reported a change, read the servers again,
+		// committed again... until the stack ran out.
+		var result = new Object[2];
+		onEdt(() -> {
+			var form = new ProfileForm(full(), ModelCatalogsTest.answering());
+			var baseline = form.toProfile();
+			var table = findServerTable(form);
+			table.editCellAt(0, 0);
+			table.setValueAt(Boolean.FALSE, 0, 0);
+			result[0] = form.differsFrom(baseline);
+			result[1] = form.toProfile().getHarness().getMcpServers().getFirst().isEnabled();
+		});
+		assertTrue((Boolean) result[0]);
+		assertFalse((Boolean) result[1]);
+	}
+
+	private static javax.swing.JTable findServerTable(java.awt.Container root) {
+		for (var child : root.getComponents()) {
+			if (child instanceof javax.swing.JTable table && table.getColumnCount() == 5
+					&& "Command or URL".equals(table.getColumnName(3))) {
+				return table;
+			}
+			if (child instanceof java.awt.Container container) {
+				var found = findServerTable(container);
+				if (found != null) {
+					return found;
+				}
+			}
+		}
+		return null;
+	}
 }

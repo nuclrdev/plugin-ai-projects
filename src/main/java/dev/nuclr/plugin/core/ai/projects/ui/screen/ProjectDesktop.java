@@ -112,6 +112,7 @@ public final class ProjectDesktop extends JPanel
 	private final ProjectSidebar sidebar;
 	private final JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
 	private final Runnable onCloseRequested;
+	private final dev.nuclr.platform.NuclrCredentialStore credentials;
 	private final javax.swing.Timer liveRefresh;
 
 	private boolean closed;
@@ -127,8 +128,23 @@ public final class ProjectDesktop extends JPanel
 	 */
 	public ProjectDesktop(ProjectStore store, AgentWindowRegistry registry, NuclrEventBus eventBus,
 			Runnable onCloseRequested) {
+		this(store, registry, eventBus, onCloseRequested, null);
+	}
+
+	/**
+	 * Build the desktop with the host's credential store, for profile secrets.
+	 *
+	 * @param store            the open project
+	 * @param registry         the available window kinds
+	 * @param eventBus         the host event bus, for activity reports and navigation
+	 * @param onCloseRequested run when the user asks to close the project; may be {@code null}
+	 * @param credentials      the host's credential store, or {@code null} when there is none
+	 */
+	public ProjectDesktop(ProjectStore store, AgentWindowRegistry registry, NuclrEventBus eventBus,
+			Runnable onCloseRequested, dev.nuclr.platform.NuclrCredentialStore credentials) {
 
 		super(new BorderLayout());
+		this.credentials = credentials;
 		this.store = store;
 		this.registry = registry;
 		this.eventBus = eventBus;
@@ -188,7 +204,7 @@ public final class ProjectDesktop extends JPanel
 		var profiles = RibbonButtons.large(Glyphs.PROFILE, "Profiles",
 				"Shared profiles: harness and context reusable across projects");
 		profiles.addActionListener(event -> ProfilesDialog.show(this,
-				ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome())));
+				ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome()), credentials));
 		bar.add(profiles);
 		bar.add(dropdownButton(Glyphs.CONFIGURE, "Configuration",
 				"Project configuration and agents", this::fillConfigurationMenu));

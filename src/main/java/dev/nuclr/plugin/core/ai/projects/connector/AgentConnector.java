@@ -139,6 +139,102 @@ public interface AgentConnector {
 		return tools().stream().anyMatch(tool -> tool.name().equals(wanted));
 	}
 
+	// ------------------------------------------------------------------ MCP servers
+
+	/** Whether the CLI can use MCP servers at all. */
+	boolean supportsMcp();
+
+	/** Whether the CLI can be limited to the profile's servers, ignoring the ones the user configured. */
+	boolean canRestrictMcpServers();
+
+	/** Whether servers the user configured can be switched off by name. */
+	boolean canSwitchOffMcpServers();
+
+	/** How the profile's servers reach the CLI, one sentence for the editor. */
+	String mcpMeaning();
+
+	/**
+	 * One secret handed to the agent process in an environment variable.
+	 *
+	 * @param variable the variable the agent process gets
+	 * @param secret   where the value comes from: the credential store, or another
+	 *                 environment variable
+	 */
+	record SecretBinding(String variable, dev.nuclr.plugin.core.ai.projects.model.McpSecret secret) {
+	}
+
+	/**
+	 * What a launch needs for MCP: arguments, possibly a configuration file those
+	 * arguments name, and the secrets to put in the agent's environment.
+	 *
+	 * <p>Secrets never appear in the arguments or the file - only the names of the
+	 * variables that carry them - so neither the command line nor anything on disk
+	 * holds one. Definitions go in a file rather than on the command line to keep
+	 * them intact through Windows argument quoting.
+	 *
+	 * @param arguments         the arguments
+	 * @param configFileName    the file to write before launching, or {@code null} for none
+	 * @param configFileContent its content, or {@code null}
+	 * @param secrets           the variables to set on the agent process
+	 */
+	record McpSetup(List<String> arguments, String configFileName, String configFileContent,
+			List<SecretBinding> secrets) {
+
+		/** Nothing to pass. */
+		public static McpSetup none() {
+			return new McpSetup(List.of(), null, null, List.of());
+		}
+	}
+
+	/**
+	 * What to pass for a profile's MCP servers.
+	 *
+	 * @param servers            the profile's servers; disabled ones are left out
+	 * @param onlyProfileServers whether to ignore servers the user configured
+	 * @param switchedOff        servers the user configured to switch off, by name
+	 * @param runtimeDirectory   where a configuration file would be written
+	 * @return the setup, already validated
+	 */
+	McpSetup mcpSetup(List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> servers, boolean onlyProfileServers,
+			List<String> switchedOff, java.nio.file.Path runtimeDirectory);
+
+	/**
+	 * Everything that would make these MCP settings wrong for this CLI.
+	 *
+	 * @param servers            the profile's servers
+	 * @param onlyProfileServers whether to ignore servers the user configured
+	 * @param switchedOff        servers the user configured to switch off
+	 * @return messages, empty when the settings can be used
+	 */
+	List<String> mcpProblems(List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> servers,
+			boolean onlyProfileServers, List<String> switchedOff);
+
+	/**
+	 * The MCP servers the user configured for this CLI, by name, for suggestions.
+	 *
+	 * @param executable the resolved executable
+	 * @param timeout    how long to allow
+	 * @return the names; empty when the CLI cannot say
+	 * @throws IOException when the CLI cannot be asked
+	 */
+	default List<String> configuredMcpServers(String executable, Duration timeout) throws IOException {
+		return List.of();
+	}
+
+	/**
+	 * The profile's servers that take part: switched on, with a name.
+	 *
+	 * @param servers the profile's servers, possibly {@code null}
+	 * @return the enabled ones
+	 */
+	static List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> enabledServers(
+			List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> servers) {
+		return servers == null ? List.of() : servers.stream()
+				.filter(server -> server != null && server.isEnabled() && server.getName() != null
+						&& !server.getName().isBlank())
+				.toList();
+	}
+
 	/**
 	 * Ask the installed CLI what it offers.
 	 *

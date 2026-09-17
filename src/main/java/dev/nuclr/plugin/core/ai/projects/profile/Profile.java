@@ -122,8 +122,14 @@ public class Profile {
 		/** Built-in tools, or tool patterns, agents may not use. */
 		private List<String> blockedTools = new ArrayList<>();
 
-		/** MCP servers and tool providers. */
+		/** MCP servers the profile adds. */
 		private List<McpServerSpec> mcpServers = new ArrayList<>();
+
+		/** {@code only} when agents use the profile's MCP servers and none the user configured. */
+		private String mcpAccess;
+
+		/** MCP servers configured outside the profile to switch off, by name. */
+		private List<String> switchedOffMcpServers = new ArrayList<>();
 
 		/** Software agents may drive. */
 		private List<ProfileRecord> software = new ArrayList<>();
@@ -152,11 +158,16 @@ public class Profile {
 		/** Most a run may spend, in US dollars. */
 		private Double maxBudgetUsd;
 
-		/** The {@link #toolAccess} value that limits agents to the allowed tools. */
+		/** The {@link #toolAccess} and {@link #mcpAccess} value that limits agents to what the profile lists. */
 		public static final String TOOL_ACCESS_ONLY = "only";
 
 		/** Creates an empty harness. */
 		public Harness() {}
+
+		/** Whether agents use only the profile's MCP servers. */
+		public boolean restrictsMcpServers() {
+			return TOOL_ACCESS_ONLY.equalsIgnoreCase(mcpAccess == null ? "" : mcpAccess.trim());
+		}
 
 		/** Whether agents are limited to the allowed tools. */
 		public boolean restrictsTools() {

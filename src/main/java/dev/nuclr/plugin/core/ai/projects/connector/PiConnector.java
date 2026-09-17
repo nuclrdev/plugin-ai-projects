@@ -154,6 +154,42 @@ final class PiConnector implements AgentConnector {
 	}
 
 	@Override
+	public boolean supportsMcp() {
+		return false;
+	}
+
+	@Override
+	public boolean canRestrictMcpServers() {
+		return false;
+	}
+
+	@Override
+	public boolean canSwitchOffMcpServers() {
+		return false;
+	}
+
+	@Override
+	public String mcpMeaning() {
+		return "Pi has no MCP support by design. Use skills or CLI tools instead, or a Pi extension that adds MCP.";
+	}
+
+	@Override
+	public McpSetup mcpSetup(List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> servers,
+			boolean onlyProfileServers, List<String> switchedOff, java.nio.file.Path runtimeDirectory) {
+		return McpSetup.none();
+	}
+
+	@Override
+	public List<String> mcpProblems(List<dev.nuclr.plugin.core.ai.projects.model.McpServerSpec> servers,
+			boolean onlyProfileServers, List<String> switchedOff) {
+		if (AgentConnector.enabledServers(servers).isEmpty() && !onlyProfileServers && switchedOff.isEmpty()) {
+			return List.of();
+		}
+		return List.of("MCP servers: Pi has no MCP support, so these servers would be ignored. "
+				+ "Remove them, or choose Claude Code or Codex.");
+	}
+
+	@Override
 	public ModelCatalog discover(String executable, Duration timeout) throws IOException {
 		// --no-session keeps discovery from leaving a session behind; --offline skips
 		// start-up network checks, which the model list does not need.
