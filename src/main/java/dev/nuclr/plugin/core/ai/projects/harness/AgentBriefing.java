@@ -1,7 +1,6 @@
 package dev.nuclr.plugin.core.ai.projects.harness;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -35,7 +34,8 @@ public record AgentBriefing(String text, int documents, int variables, int refer
 	}
 
 	/**
-	 * Build the briefing for one agent.
+	 * Build the briefing for one agent. Reads every document the context names, so
+	 * not on the event thread.
 	 *
 	 * @param projectName the project's display name
 	 * @param agentName   the agent's display name
@@ -48,6 +48,7 @@ public record AgentBriefing(String text, int documents, int variables, int refer
 		var documents = 0;
 		var missing = 0;
 
+		var notRead = new java.util.ArrayList<ContextItem>();
 		for (var kind : new ContextItem.Kind[] {
 				ContextItem.Kind.INSTRUCTION, ContextItem.Kind.SKILL, ContextItem.Kind.INJECTED_FILE }) {
 			var section = new StringBuilder();
@@ -55,6 +56,7 @@ public record AgentBriefing(String text, int documents, int variables, int refer
 				var content = item.available() ? read(item.path()) : null;
 				if (content == null) {
 					missing++;
+					notRead.add(item);
 					continue;
 				}
 				documents++;
@@ -98,15 +100,12 @@ public record AgentBriefing(String text, int documents, int variables, int refer
 		if (missing > 0) {
 			body.append("## Not found\n\n")
 					.append("These were configured for you but could not be read. Mention it if they matter.\n\n");
-			for (var kind : new ContextItem.Kind[] {
-					ContextItem.Kind.INSTRUCTION, ContextItem.Kind.SKILL, ContextItem.Kind.INJECTED_FILE }) {
-				for (var item : context.of(kind)) {
-					if (!item.available() || read(item.path()) == null) {
-						body.append("- ").append(item.label())
-								.append(item.path() == null ? " (outside the permitted folders)" : " (" + item.path() + ")")
-								.append('\n');
-					}
-				}
+			// Listed from the first pass: reading every document a second time only to find the missing ones again
+			// doubles the work, and a file could change in between.
+			for (var item : notRead) {
+				body.append("- ").append(item.label())
+						.append(item.path() == null ? " (outside the permitted folders)" : " (" + item.path() + ")")
+						.append('\n');
 			}
 			body.append('\n');
 		}
@@ -121,13 +120,16 @@ public record AgentBriefing(String text, int documents, int variables, int refer
 		return new AgentBriefing(text, documents, variables.size(), knowledge.size() + rules.size(), missing);
 	}
 
-	/** A document's text, truncated if enormous; {@code null} when it cannot be read. */
+	/**
+	 * A document's text, truncated if enormous; {@code null} when it cannot be read.
+	 * Only as much as is used is read, so a huge file is never loaded whole.
+	 */
 	private static String read(Path path) {
 		if (path == null) {
 			return null;
 		}
 		try {
-			var text = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+			var text = dev.nuclr.plugin.core.ai.projects.store.TextFiles.readBounded(path, DOCUMENT_LIMIT);
 			return text.length() <= DOCUMENT_LIMIT ? text
 					: text.substring(0, DOCUMENT_LIMIT) + "\n\n[... truncated by Nuclr Commander; read " + path
 							+ " for the rest]";

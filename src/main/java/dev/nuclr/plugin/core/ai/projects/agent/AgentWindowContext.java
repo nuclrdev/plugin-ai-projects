@@ -74,15 +74,16 @@ public final class AgentWindowContext {
 	}
 
 	/**
-	 * The profile the agent starts from, read fresh so an edit made since the window
-	 * opened is used.
+	 * Read a profile, fresh so an edit made since the window opened is used. Takes the
+	 * id rather than reading the agent's: the agent can be edited while a launch is
+	 * being prepared, and the launch must be of the profile that was chosen at Start.
 	 *
+	 * @param id the profile id, as {@link #profileId()} returned it when the launch began
 	 * @return the profile
 	 * @throws java.nio.file.NoSuchFileException when it no longer exists
 	 * @throws java.io.IOException               when it cannot be read, or was saved by a newer plugin
 	 */
-	public Profile profile() throws java.io.IOException {
-		var id = profileId();
+	public Profile profile(String id) throws java.io.IOException {
 		if (id == null || profiles == null) {
 			throw new java.nio.file.NoSuchFileException(String.valueOf(id));
 		}

@@ -369,35 +369,58 @@ public final class TerminalAgentWindow implements AgentWindow {
 		var launched = new ArrayList<>(command);
 		launched.set(0, resolved.get().toString());
 
-		// Hand the agent what it is told, not just how it is run. The briefing is
-		// built from the same resolved context the view shows.
-		var briefing = AgentBriefing.of(context.project().displayName(), context.agent().displayName(),
-				context.resolvedContext());
-		var delivery = ContextDelivery.NONE;
-		if (!briefing.isEmpty()) {
-			var briefingFile = context.briefingFile();
-			try {
-				Files.createDirectories(briefingFile.getParent());
-				Files.writeString(briefingFile, briefing.text(), StandardCharsets.UTF_8);
-			} catch (IOException | RuntimeException e) {
-				fail("Could not write the agent's briefing to " + briefingFile + ": " + e.getMessage()
-						+ ". Not starting an agent without its instructions.");
-				return;
-			}
-			delivery = ContextDelivery.plan(executable, resolved.get(), briefingFile, briefing.text(), environment);
-			launched.addAll(delivery.arguments());
-			environment.putAll(delivery.environment());
-		}
+		// What the briefing is built from is gathered here, from the project model; the
+		// documents themselves are read on the background thread.
+		var resolvedContext = context.resolvedContext();
+		var projectName = context.project().displayName();
+		var agentName = context.agent().displayName();
+		var briefingFile = context.briefingFile();
+		var workingDirectory = context.workingDirectory();
 
 		stopRequested = false;
 		setStatus(AgentStatus.STARTING);
 		showStopped("Starting " + String.join(" ", command) + " ...");
 		startButton.setEnabled(false);
 
-		var workingDirectory = context.workingDirectory();
-		var launchNotice = launchNotice(harness, briefing, delivery);
-		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId())
-				.start(() -> spawn(new Launch(command, launched, environment, launchNotice), workingDirectory));
+		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> {
+			// Hand the agent what it is told, not just how it is run. The briefing is
+			// built from the same resolved context the view shows.
+			var briefing = AgentBriefing.of(projectName, agentName, resolvedContext);
+			final ContextDelivery delivery;
+			try {
+				delivery = deliverBriefing(briefing.text(), briefingFile, executable, resolved.get(), launched,
+						environment);
+			} catch (StartRefused e) {
+				SwingUtilities.invokeLater(() -> handleStartFailure(e.getMessage()));
+				return;
+			}
+			spawn(new Launch(command, launched, environment, launchNotice(harness, briefing, delivery)),
+					workingDirectory);
+		});
+	}
+
+	/**
+	 * Write a briefing and add what hands it to the CLI. Off the event thread.
+	 *
+	 * @return how it was delivered; {@link ContextDelivery#NONE} when there is nothing to tell the agent
+	 */
+	private static ContextDelivery deliverBriefing(String briefingText, java.nio.file.Path briefingFile,
+			String executable, java.nio.file.Path resolvedExecutable, List<String> launched,
+			java.util.Map<String, String> environment) throws StartRefused {
+		if (briefingText.isEmpty()) {
+			return ContextDelivery.NONE;
+		}
+		try {
+			Files.createDirectories(briefingFile.getParent());
+			Files.writeString(briefingFile, briefingText, StandardCharsets.UTF_8);
+		} catch (IOException | RuntimeException e) {
+			throw new StartRefused("Could not write the agent's briefing to " + briefingFile + ": " + e.getMessage()
+					+ ". Not starting an agent without its instructions.");
+		}
+		var delivery = ContextDelivery.plan(executable, resolvedExecutable, briefingFile, briefingText, environment);
+		launched.addAll(delivery.arguments());
+		environment.putAll(delivery.environment());
+		return delivery;
 	}
 
 	/**
@@ -427,10 +450,13 @@ public final class TerminalAgentWindow implements AgentWindow {
 	 */
 	private void startFromProfile() {
 
+		// The id is taken now: the agent may be edited while the launch is prepared.
+		var profileId = context.profileId();
 		var workingDirectory = context.workingDirectory();
 		var commanderVariables = context.commanderVariables();
-		var projectBriefing = AgentBriefing.of(context.project().displayName(), context.agent().displayName(),
-				context.resolvedContext());
+		var resolvedContext = context.resolvedContext();
+		var projectName = context.project().displayName();
+		var agentName = context.agent().displayName();
 		var briefingFile = context.briefingFile();
 		var runtimeDirectory = context.runtimeDirectory();
 		var home = System.getProperty("user.home");
@@ -443,8 +469,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> {
 			final Launch launch;
 			try {
-				launch = prepareProfileLaunch(workingDirectory, commanderVariables, projectBriefing, briefingFile,
-						runtimeDirectory, home);
+				launch = prepareProfileLaunch(profileId, workingDirectory, commanderVariables,
+						AgentBriefing.of(projectName, agentName, resolvedContext), briefingFile, runtimeDirectory, home);
 			} catch (StartRefused e) {
 				SwingUtilities.invokeLater(() -> handleStartFailure(e.getMessage()));
 				return;
@@ -454,13 +480,13 @@ public final class TerminalAgentWindow implements AgentWindow {
 	}
 
 	/** Build a profile launch. Off the event thread. */
-	private Launch prepareProfileLaunch(java.nio.file.Path workingDirectory,
+	private Launch prepareProfileLaunch(String profileId, java.nio.file.Path workingDirectory,
 			java.util.Map<String, String> commanderVariables, AgentBriefing projectBriefing,
 			java.nio.file.Path briefingFile, java.nio.file.Path runtimeDirectory, String home) throws StartRefused {
 
 		final dev.nuclr.plugin.core.ai.projects.profile.Profile profile;
 		try {
-			profile = context.profile();
+			profile = context.profile(profileId);
 		} catch (java.nio.file.NoSuchFileException e) {
 			throw new StartRefused("This agent starts from a profile that no longer exists. Edit the agent and choose another.");
 		} catch (IOException e) {
@@ -498,19 +524,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 		if (!plan.briefing().isEmpty()) {
 			briefingText = briefingText.isEmpty() ? plan.briefing() : briefingText + "\n" + plan.briefing();
 		}
-		var delivery = ContextDelivery.NONE;
-		if (!briefingText.isEmpty()) {
-			try {
-				Files.createDirectories(briefingFile.getParent());
-				Files.writeString(briefingFile, briefingText, StandardCharsets.UTF_8);
-			} catch (IOException | RuntimeException e) {
-				throw new StartRefused("Could not write the agent's briefing to " + briefingFile + ": " + e.getMessage()
-						+ ". Not starting an agent without its instructions.");
-			}
-			delivery = ContextDelivery.plan(executable, resolved.get(), briefingFile, briefingText, environment);
-			launched.addAll(delivery.arguments());
-			environment.putAll(delivery.environment());
-		}
+		var delivery = deliverBriefing(briefingText, briefingFile, executable, resolved.get(), launched, environment);
 
 		try {
 			plan.writeConfigFile();
@@ -529,8 +543,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 	private void spawn(Launch launch, java.nio.file.Path workingDirectory) {
 		PtyProcess started;
 		try {
-			started = new PtyProcessBuilder()
-					.setCommand(launch.launched().toArray(String[]::new))
+			started = WindowsCommandLine.setCommand(new PtyProcessBuilder(), launch.launched())
 					.setEnvironment(launch.environment())
 					.setDirectory(workingDirectory.toString())
 					.setInitialColumns(COLUMNS)

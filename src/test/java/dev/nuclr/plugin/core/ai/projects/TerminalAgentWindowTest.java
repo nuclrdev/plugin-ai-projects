@@ -371,7 +371,11 @@ class TerminalAgentWindowTest {
 		agent.setProfileId(saved.getId());
 
 		var window = windowWithProfiles(profiles);
-		onEdt(window::start);
+		onEdt(() -> {
+			window.start();
+			// Edited while the launch is prepared: it must still be the profile chosen at Start.
+			agent.setProfileId("a-profile-chosen-later");
+		});
 
 		awaitFailure(window);
 		assertTrue(window.sessionSummary().contains("definitely-not-installed-claude"), window.sessionSummary());

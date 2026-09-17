@@ -213,8 +213,15 @@ class LaunchPlanTest {
 		var big = home.resolve("big.md");
 		Files.writeString(big, "a".repeat(LaunchPlan.DOCUMENT_LIMIT * 3));
 
-		assertEquals(LaunchPlan.DOCUMENT_LIMIT + 1, LaunchPlan.readBounded(big, LaunchPlan.DOCUMENT_LIMIT).length());
-		assertEquals(5, LaunchPlan.readBounded(big, 4).length());
+		var readBounded = (java.util.function.BiFunction<Path, Integer, Integer>) (file, limit) -> {
+			try {
+				return dev.nuclr.plugin.core.ai.projects.store.TextFiles.readBounded(file, limit).length();
+			} catch (IOException e) {
+				throw new java.io.UncheckedIOException(e);
+			}
+		};
+		assertEquals(LaunchPlan.DOCUMENT_LIMIT + 1, readBounded.apply(big, LaunchPlan.DOCUMENT_LIMIT));
+		assertEquals(5, readBounded.apply(big, 4));
 
 		var profile = claude();
 		profile.getContext().getInstructions().add(ProfileRecord.file("Big", big.toString()));

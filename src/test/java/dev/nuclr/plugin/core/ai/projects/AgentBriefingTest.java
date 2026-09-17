@@ -85,6 +85,20 @@ class AgentBriefingTest {
 	}
 
 	@Test
+	void aHugeDocumentIsCutShortWithoutBeingLoadedWhole() throws IOException {
+
+		Files.writeString(root.resolve("HUGE.md"), "h".repeat(100_000 * 5));
+		var agent = agent(null);
+		agent.getContext().getInjectedFiles().add("HUGE.md");
+
+		var briefing = briefing(agent);
+
+		assertEquals(1, briefing.documents());
+		assertTrue(briefing.text().contains("[... truncated by Nuclr Commander"), "said it was cut short");
+		assertTrue(briefing.text().length() < 100_000 + 2_000, "only the limit is included");
+	}
+
+	@Test
 	void aMissingDocumentIsNamedRatherThanSilentlyDropped() {
 
 		var agent = agent(null);
