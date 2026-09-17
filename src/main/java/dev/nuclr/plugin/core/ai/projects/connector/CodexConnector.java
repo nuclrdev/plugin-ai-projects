@@ -153,6 +153,20 @@ final class CodexConnector implements AgentConnector {
 	}
 
 	@Override
+	public SkillLoading skillLoading() {
+		// Checked against Codex 0.154: skills come from the repository's .agents/skills and the user's own
+		// folders; no flag or -c override adds a folder for one session.
+		return SkillLoading.BRIEFING;
+	}
+
+	@Override
+	public String skillsMeaning() {
+		return "Codex cannot be given skill folders for one session, so they are listed in its instructions with "
+				+ "their descriptions, for the agent to read when relevant. To load them as real skills, put them "
+				+ "in the repository's .agents/skills.";
+	}
+
+	@Override
 	public String sandboxNetworkMeaning(AccessMode mode) {
 		return switch (mode) {
 			case ASK, AUTO -> "Codex's sandbox blocks the network for commands unless this is on.";

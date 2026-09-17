@@ -41,7 +41,7 @@ public record ContextDelivery(List<String> arguments, Map<String, String> enviro
 	public static final ContextDelivery NONE = new ContextDelivery(List.of(), Map.of(), "");
 
 	/** Longest briefing passed inline; Windows caps a whole command line at 32,767 characters. */
-	static final int INLINE_LIMIT = 24_000;
+	public static final int INLINE_LIMIT = 24_000;
 
 	/** OpenCode's inline configuration variable. */
 	static final String OPENCODE_CONFIG_CONTENT = "OPENCODE_CONFIG_CONTENT";

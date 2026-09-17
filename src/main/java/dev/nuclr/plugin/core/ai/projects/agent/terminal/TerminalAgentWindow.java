@@ -96,6 +96,14 @@ public final class TerminalAgentWindow implements AgentWindow {
 	 */
 	private static final int VIEW_TAIL_CHARS = 40_000;
 
+	/**
+	 * Local copies of the repositories profiles name. One for every window, so two agents
+	 * starting from the same profile take turns updating a copy rather than breaking it.
+	 */
+	private static final dev.nuclr.plugin.core.ai.projects.connector.GitSources GIT_SOURCES =
+			dev.nuclr.plugin.core.ai.projects.connector.GitCheckouts.inCommanderHome(
+					dev.nuclr.plugin.core.ai.projects.store.ProjectPaths.defaultCommanderHome());
+
 	private final AgentWindowContext context;
 	private final AgentCli cli;
 	private final Function<String, Optional<java.nio.file.Path>> executableResolver;
@@ -494,7 +502,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 		}
 		final LaunchPlan plan;
 		try {
-			plan = LaunchPlan.of(profile, runtimeDirectory, home, workingDirectory);
+			plan = LaunchPlan.of(profile, runtimeDirectory, home, workingDirectory, GIT_SOURCES);
 		} catch (IllegalArgumentException e) {
 			throw new StartRefused(e.getMessage());
 		}
@@ -527,9 +535,9 @@ public final class TerminalAgentWindow implements AgentWindow {
 		var delivery = deliverBriefing(briefingText, briefingFile, executable, resolved.get(), launched, environment);
 
 		try {
-			plan.writeConfigFile();
+			plan.writeFiles();
 		} catch (IOException | RuntimeException e) {
-			throw new StartRefused("Could not write the agent's MCP configuration: " + e.getMessage());
+			throw new StartRefused("Could not write the files the agent's profile needs: " + e.getMessage());
 		}
 		try {
 			environment.putAll(LaunchPlan.resolveSecrets(plan.secrets(), context.profileSecrets(), System.getenv()));

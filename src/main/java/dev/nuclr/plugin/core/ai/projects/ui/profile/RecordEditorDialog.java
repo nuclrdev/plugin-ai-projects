@@ -291,10 +291,19 @@ public final class RecordEditorDialog {
 		var constraints = constraints();
 		placeholder(repository, "https://github.com/org/repo.git  or  git@github.com:org/repo.git");
 		placeholder(ref, "Default branch");
-		placeholder(repositoryPath, "Whole repository, or e.g. docs/CONVENTIONS.md");
+		var inRepository = switch (section) {
+			case INSTRUCTIONS -> new String[] { "File in repository *", "e.g. docs/CONVENTIONS.md" };
+			case SKILLS -> new String[] { "Skill folder", "e.g. skills/review, or blank when the repository is the skill" };
+			default -> new String[] { "Path in repository", "Whole repository, or e.g. docs/ or docs/API.md" };
+		};
+		placeholder(repositoryPath, inRepository[1]);
 		addRow(card, constraints, label(new JLabel("Repository URL *")), repository);
 		addRow(card, constraints, label(new JLabel("Branch, tag or commit")), ref);
-		addRow(card, constraints, label(new JLabel("Path in repository")), repositoryPath);
+		addRow(card, constraints, label(new JLabel(inRepository[0])), repositoryPath);
+		var fetched = new WrappingNote();
+		fetched.setText("Fetched when an agent starts - only the one commit - and kept for the next start. A private "
+				+ "repository needs git credentials or an SSH key already set up on the machine.");
+		addRow(card, constraints, label(new JLabel()), fetched);
 		return topAligned(card);
 	}
 
@@ -411,8 +420,13 @@ public final class RecordEditorDialog {
 			} else if (!Files.isDirectory(file) && section.browse() == ProfileSection.Browse.DIRECTORIES) {
 				pathStatus.setForeground(errorColor());
 				pathStatus.setText(Glyphs.label(Glyphs.MISSING, "This is a file; a folder is expected here."));
+			} else if (section == ProfileSection.SKILLS && !Files.isRegularFile(file.resolve("SKILL.md"))) {
+				pathStatus.setForeground(errorColor());
+				pathStatus.setText(Glyphs.label(Glyphs.MISSING,
+						"This folder has no SKILL.md, so it is not a skill. Choose the folder that holds one."));
 			} else {
-				pathStatus.setText(Glyphs.label(Glyphs.FINISHED, Files.isDirectory(file) ? "Folder found." : "File found."));
+				pathStatus.setText(Glyphs.label(Glyphs.FINISHED, section == ProfileSection.SKILLS ? "Skill folder found."
+						: Files.isDirectory(file) ? "Folder found." : "File found."));
 			}
 		} catch (InvalidPathException e) {
 			pathStatus.setForeground(errorColor());

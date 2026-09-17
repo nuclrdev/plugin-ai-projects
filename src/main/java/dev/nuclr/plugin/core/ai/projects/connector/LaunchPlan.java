@@ -4,14 +4,20 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import dev.nuclr.platform.NuclrCredentialException;
 import dev.nuclr.plugin.core.ai.projects.connector.AgentConnector.SecretBinding;
+import dev.nuclr.plugin.core.ai.projects.connector.AgentConnector.SkillLoading;
 import dev.nuclr.plugin.core.ai.projects.profile.ExtraFolders;
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileRecord;
@@ -20,43 +26,71 @@ import dev.nuclr.plugin.core.ai.projects.profile.ProfileValidator;
 import dev.nuclr.plugin.core.ai.projects.profile.RecordKind;
 import dev.nuclr.plugin.core.ai.projects.provider.AccessMode;
 import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
+import dev.nuclr.plugin.core.ai.projects.store.TextFiles;
 
 /**
  * How to start an agent from a profile, in a form any kind of session can use: the
- * command, the environment, a configuration file to write first, the secrets to
- * put in the environment, and the briefing built from the profile's context.
+ * command, the environment, the files to write first, the secrets to put in the
+ * environment, and the briefing built from the profile's context.
  *
  * <p>Building a plan reads the files the profile links - a bounded amount of each,
- * but from disks that may be slow or remote - so it belongs off the event thread.
- * It never touches the credential store. Secrets are named here and read by
- * {@link #resolveSecrets} when the process is about to start, off the event thread,
+ * but from disks that may be slow or remote - and fetches its git sources, so it
+ * belongs off the event thread. It never touches the credential store. Secrets are
+ * named here and read by {@link #resolveSecrets} when the process is about to start,
  * so a plan can be built - and shown - without unlocking anything.
+ *
+ * <p>The context becomes three things. Instructions are placed in full in the
+ * briefing. Skills - folders with a {@code SKILL.md} - are given to the CLI as real
+ * skills where it can take them ({@link SkillLoading}), and otherwise listed with
+ * their descriptions. Knowledge is only pointed to: its paths are listed, never its
+ * content.
  *
  * @param provider          the CLI
  * @param executable        the command, as the profile names it or the provider's own
  * @param arguments         everything after the executable
  * @param environment       variables to set, from the profile's Environment tab
  * @param secrets           variables whose values are secrets, resolved at launch
- * @param configFile        a file to write before launching, or {@code null}
+ * @param configFile        the MCP configuration file to write before launching, or {@code null}
  * @param configFileContent its content, or {@code null}
+ * @param skillsPlugin      the plugin folder skill folders are copied into, or {@code null}
+ * @param skillCopies       the skill folders to copy into it
  * @param briefing          Markdown from the profile's context; empty when there is none
  * @param notices           what the profile holds that this launch does not apply
  */
 public record LaunchPlan(AgentProvider provider, String executable, List<String> arguments,
 		Map<String, String> environment, List<SecretBinding> secrets, Path configFile, String configFileContent,
-		String briefing, List<String> notices) {
+		Path skillsPlugin, List<SkillCopy> skillCopies, String briefing, List<String> notices) {
 
 	/** Longest linked document read into the briefing, in characters. */
-	static final int DOCUMENT_LIMIT = 100_000;
+	public static final int DOCUMENT_LIMIT = 100_000;
 
 	/** Longest environment file read, in characters; a larger one is not a {@code .env} file. */
 	static final int ENVIRONMENT_FILE_LIMIT = 1_000_000;
+
+	/** Most files copied from one skill folder. */
+	static final int SKILL_FILE_LIMIT = 2_000;
+
+	/** Most bytes copied from one skill folder. */
+	static final long SKILL_BYTE_LIMIT = 50L * 1024 * 1024;
+
+	/** The plugin folder Claude Code is given the profile's skills in; its name is the skills' namespace. */
+	static final String SKILLS_PLUGIN = "nuclr-profile";
+
+	/**
+	 * One skill folder copied for the session.
+	 *
+	 * @param from the skill folder
+	 * @param to   where it is copied
+	 */
+	public record SkillCopy(Path from, Path to) {
+	}
 
 	/** Defensive copies. */
 	public LaunchPlan {
 		arguments = List.copyOf(arguments);
 		environment = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(environment));
 		secrets = List.copyOf(secrets);
+		skillCopies = List.copyOf(skillCopies);
 		notices = List.copyOf(notices);
 	}
 
@@ -70,12 +104,14 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 	 * @param profile          the profile
 	 * @param runtimeDirectory where files for this launch may be written
 	 * @param home             the user's home folder, for {@code ~}
-	 * @param workingDirectory the directory the agent runs in
+	 * @param workingDirectory the directory the agent runs in, or {@code null} for a preview with none, where
+	 *                         relative paths are left for the start
+	 * @param git              where git sources come from
 	 * @return the plan
 	 * @throws IllegalArgumentException with a message for the user when the profile cannot start an agent
 	 */
-	public static LaunchPlan of(Profile profile, Path runtimeDirectory, String home, Path workingDirectory) {
-		var paths = new Paths(home, workingDirectory);
+	public static LaunchPlan of(Profile profile, Path runtimeDirectory, String home, Path workingDirectory,
+			GitSources git) {
 
 		var problems = ProfileValidator.validate(profile, List.of());
 		if (!problems.isEmpty()) {
@@ -87,6 +123,7 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 				"Profile \"" + profile.displayName() + "\" names no provider. Choose one on its Model / runtime tab."));
 		var connector = provider.connector();
 		var notices = new ArrayList<String>();
+		var sources = new Sources(new Paths(home, workingDirectory), git, notices);
 
 		var executable = blank(harness.getExecutable()) ? provider.defaultExecutable() : harness.getExecutable().strip();
 		var mode = AccessMode.byId(harness.getAccessMode()).orElse(null);
@@ -113,25 +150,21 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 		var environment = new LinkedHashMap<String, String>();
 		for (var record : enabled(harness.getEnvironment())) {
 			if (record.getKind() == RecordKind.FILE) {
-				readEnvironmentFile(paths.resolveOrRefuse(record.getPath(), "The environment file"), environment);
+				var file = sources.paths().resolveOrRefuse(record.getPath(), "The environment file");
+				if (file != null) {
+					readEnvironmentFile(file, environment);
+				}
 			} else if (!blank(record.getName())) {
 				environment.put(record.getName().strip(), record.getText() == null ? "" : record.getText());
 			}
 		}
 
-		var skills = new ArrayList<ProfileRecord>();
-		for (var skill : enabled(profile.getContext().getSkills())) {
-			if (provider == AgentProvider.PI && skill.getKind() == RecordKind.FILE) {
-				arguments.add("--skill");
-				arguments.add(paths.resolveOrRefuse(skill.getPath(), "The skill \"" + skill.displayName() + "\"").toString());
-			} else {
-				skills.add(skill);
-			}
-		}
-		var briefing = briefing(profile, skills, paths, notices);
+		var skills = skills(profile, connector.skillLoading(), runtimeDirectory, sources);
+		arguments.addAll(skills.arguments());
+		var briefing = briefing(profile, skills.listed(), sources);
 
 		return new LaunchPlan(provider, executable, arguments, environment, mcp.secrets(), configFile,
-				mcp.configFileContent(), briefing, notices);
+				mcp.configFileContent(), skills.plugin(), skills.copies(), briefing, notices);
 	}
 
 	/**
@@ -177,11 +210,23 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 		return values;
 	}
 
-	/** Write the configuration file, if there is one. */
-	public void writeConfigFile() throws IOException {
+	/**
+	 * Write what the launch needs on disk: the MCP configuration, and a fresh copy of
+	 * every skill folder in the plugin folder. Off the event thread.
+	 *
+	 * @throws IOException when a file cannot be written, or a skill folder is too large to copy
+	 */
+	public void writeFiles() throws IOException {
 		if (configFile != null) {
 			Files.createDirectories(configFile.getParent());
 			Files.writeString(configFile, configFileContent, StandardCharsets.UTF_8);
+		}
+		if (skillsPlugin != null) {
+			// Rebuilt every start, so a skill removed from the profile is gone from the session too.
+			deleteTree(skillsPlugin);
+			for (var copy : skillCopies) {
+				copyTree(copy.from(), copy.to());
+			}
 		}
 	}
 
@@ -193,14 +238,116 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 		return command;
 	}
 
-	private static String briefing(Profile profile, List<ProfileRecord> skills, Paths home, List<String> notices) {
+	// ------------------------------------------------------------------ skills
+
+	/**
+	 * A skill folder found for the launch.
+	 *
+	 * @param name        the name to show: the {@code SKILL.md} name, or the record's
+	 * @param description the {@code SKILL.md} description, or blank
+	 * @param folder      the folder
+	 */
+	record Skill(String name, String description, Path folder) {
+	}
+
+	private record Skills(List<String> arguments, Path plugin, List<SkillCopy> copies, List<Skill> listed) {
+	}
+
+	private static Skills skills(Profile profile, SkillLoading loading, Path runtimeDirectory, Sources sources) {
+		var arguments = new ArrayList<String>();
+		var copies = new ArrayList<SkillCopy>();
+		var listed = new ArrayList<Skill>();
+		var plugin = runtimeDirectory.resolve(SKILLS_PLUGIN);
+		var names = new HashSet<String>();
+		for (var record : enabled(profile.getContext().getSkills())) {
+			var located = sources.locate(record, "Skill");
+			if (located == null) {
+				continue;
+			}
+			var folder = located;
+			if (Files.isRegularFile(folder) && folder.getFileName().toString().equalsIgnoreCase("SKILL.md")) {
+				folder = folder.getParent();
+			}
+			if (!Files.isRegularFile(folder.resolve("SKILL.md"))) {
+				sources.unavailable(record, "Skill", "has no SKILL.md in " + folder);
+				continue;
+			}
+			var skill = readSkill(record, folder);
+			switch (loading) {
+				case OWN_FLAG -> {
+					arguments.add("--skill");
+					arguments.add(folder.toString());
+				}
+				case PLUGIN_FOLDER -> copies.add(new SkillCopy(folder,
+						plugin.resolve("skills").resolve(unique(safeName(skill.name()), names))));
+				case BRIEFING -> listed.add(skill);
+			}
+		}
+		if (!copies.isEmpty()) {
+			arguments.add("--plugin-dir");
+			arguments.add(plugin.toString());
+		}
+		return new Skills(arguments, copies.isEmpty() ? null : plugin, copies, listed);
+	}
+
+	/** A skill's name and description, from the front matter of its {@code SKILL.md}. */
+	static Skill readSkill(ProfileRecord record, Path folder) {
+		String name = null;
+		var description = "";
+		try {
+			var text = TextFiles.readBounded(folder.resolve("SKILL.md"), 16_000);
+			var lines = text.split("\\R");
+			if (lines.length > 0 && lines[0].strip().equals("---")) {
+				for (var index = 1; index < lines.length && !lines[index].strip().equals("---"); index++) {
+					var line = lines[index];
+					if (line.startsWith("name:")) {
+						name = unquote(line.substring("name:".length()));
+					} else if (line.startsWith("description:")) {
+						description = unquote(line.substring("description:".length()));
+					}
+				}
+			}
+		} catch (IOException | RuntimeException e) {
+			// The name and description are only a courtesy; the folder is still the skill.
+		}
+		if (blank(name)) {
+			name = blank(record.getName()) ? folder.getFileName().toString() : record.getName().strip();
+		}
+		return new Skill(name, description, folder);
+	}
+
+	private static String unquote(String value) {
+		var text = value.strip();
+		if (text.length() >= 2 && (text.startsWith("\"") && text.endsWith("\"")
+				|| text.startsWith("'") && text.endsWith("'"))) {
+			text = text.substring(1, text.length() - 1);
+		}
+		return text;
+	}
+
+	/** A folder name a skill can be copied under, on every file system. */
+	private static String safeName(String name) {
+		var safe = name.strip().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9._-]+", "-").replaceAll("^[-.]+|[-.]+$", "");
+		return safe.isEmpty() ? "skill" : safe;
+	}
+
+	private static String unique(String name, Set<String> taken) {
+		var candidate = name;
+		for (var suffix = 2; !taken.add(candidate); suffix++) {
+			candidate = name + "-" + suffix;
+		}
+		return candidate;
+	}
+
+	// ------------------------------------------------------------------ briefing
+
+	private static String briefing(Profile profile, List<Skill> skills, Sources sources) {
 		var context = profile.getContext();
 		var body = new StringBuilder();
-		var notFound = new ArrayList<String>();
 
 		var instructions = new StringBuilder();
 		for (var record : enabled(context.getInstructions())) {
-			var content = content(record, home, notices, notFound, "Instruction");
+			var content = instruction(record, sources);
 			if (content != null) {
 				instructions.append("### ").append(record.displayName()).append("\n\n").append(content.strip())
 						.append("\n\n");
@@ -210,39 +357,39 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 			body.append("## Instructions\n\n").append(instructions);
 		}
 
-		var skillText = new StringBuilder();
-		for (var record : skills) {
-			if (record.getKind() == RecordKind.TEXT) {
-				skillText.append("### ").append(record.displayName()).append("\n\n")
-						.append(record.getText() == null ? "" : record.getText().strip()).append("\n\n");
-			} else {
-				skillText.append("- ").append(record.displayName()).append(": ").append(reference(record, home))
-						.append(" - read its SKILL.md when the skill is relevant\n");
+		if (!skills.isEmpty()) {
+			body.append("## Skills\n\nRead a skill's SKILL.md, and follow it, when its description matches the task.\n\n");
+			for (var skill : skills) {
+				body.append("- ").append(skill.name());
+				if (!skill.description().isBlank()) {
+					body.append(": ").append(skill.description());
+				}
+				body.append(" (").append(skill.folder().resolve("SKILL.md")).append(")\n");
 			}
-		}
-		if (!skillText.isEmpty()) {
-			body.append("## Skills\n\n").append(skillText.toString().stripTrailing()).append("\n\n");
+			body.append('\n');
 		}
 
 		var knowledge = new StringBuilder();
 		for (var record : enabled(context.getKnowledge())) {
-			if (record.getKind() == RecordKind.TEXT) {
-				knowledge.append("### ").append(record.displayName()).append("\n\n")
-						.append(record.getText() == null ? "" : record.getText().strip()).append("\n\n");
-			} else {
-				knowledge.append("- ").append(record.displayName()).append(": ").append(reference(record, home))
-						.append('\n');
+			var located = sources.locate(record, "Knowledge source");
+			if (located != null) {
+				knowledge.append("- ").append(record.displayName()).append(": ").append(located);
+				if (record.getKind() == RecordKind.GIT) {
+					knowledge.append(" (a copy of ").append(record.getRepository().strip())
+							.append(blank(record.getRef()) ? "" : " at " + record.getRef().strip()).append(')');
+				}
+				knowledge.append('\n');
 			}
 		}
 		if (!knowledge.isEmpty()) {
 			body.append("## Knowledge\n\nConsult these when they are relevant; they are not included here.\n\n")
-					.append(knowledge.toString().stripTrailing()).append("\n\n");
+					.append(knowledge).append('\n');
 		}
 
-		if (!notFound.isEmpty()) {
+		if (!sources.notFound().isEmpty()) {
 			body.append("## Not found\n\nThese were configured for you but could not be read. "
 					+ "Mention it if they matter.\n\n");
-			notFound.forEach(item -> body.append("- ").append(item).append('\n'));
+			sources.notFound().forEach(item -> body.append("- ").append(item).append('\n'));
 		}
 		if (body.isEmpty()) {
 			return "";
@@ -250,62 +397,41 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 		return "# Profile: " + profile.displayName() + "\n\n" + body.toString().stripTrailing() + "\n";
 	}
 
-	/** An instruction's text: written in place, or read from its file; git sources are not fetched yet. */
-	private static String content(ProfileRecord record, Paths home, List<String> notices, List<String> notFound,
-			String noun) {
-		return switch (record.getKind() == null ? RecordKind.TEXT : record.getKind()) {
-			case TEXT -> record.getText();
-			case FILE -> {
-				final Path path;
-				try {
-					path = home.resolve(record.getPath());
-				} catch (RuntimeException e) {
-					notFound.add(record.displayName() + " (" + record.getPath() + ")");
-					notices.add(noun + " \"" + record.displayName() + "\" has a path that is not valid here");
-					yield null;
-				}
-				try {
-					var text = readBounded(path, DOCUMENT_LIMIT);
-					yield text.length() <= DOCUMENT_LIMIT ? text
-							: text.substring(0, DOCUMENT_LIMIT) + "\n\n[... truncated; read " + path + " for the rest]";
-				} catch (IOException | RuntimeException e) {
-					notFound.add(record.displayName() + " (" + path + ")");
-					notices.add(noun + " \"" + record.displayName() + "\" was not found at " + path);
-					yield null;
-				}
-			}
-			case GIT -> {
-				notices.add(noun + " \"" + record.displayName() + "\" is in a git repository, which is not fetched yet");
-				notFound.add(record.displayName() + " (" + record.getRepository() + ")");
-				yield null;
-			}
-		};
-	}
-
-	private static String reference(ProfileRecord record, Paths home) {
-		if (record.getKind() == RecordKind.GIT) {
-			var text = new StringBuilder(record.getRepository() == null ? "" : record.getRepository());
-			if (!blank(record.getRef())) {
-				text.append(" at ").append(record.getRef().strip());
-			}
-			if (!blank(record.getPath())) {
-				text.append(", ").append(record.getPath().strip());
-			}
-			return text.toString();
+	/** An instruction's text: written in place, or read from its file or from a file in its repository. */
+	private static String instruction(ProfileRecord record, Sources sources) {
+		if (record.getKind() == null || record.getKind() == RecordKind.TEXT) {
+			return record.getText();
+		}
+		var path = sources.locate(record, "Instruction");
+		if (path == null) {
+			return null;
+		}
+		if (!Files.isRegularFile(path)) {
+			sources.unavailable(record, "Instruction", "is not a file: " + path);
+			return null;
 		}
 		try {
-			return home.resolve(record.getPath() == null ? "" : record.getPath()).toString();
-		} catch (RuntimeException e) {
-			return record.getPath();
+			var text = TextFiles.readBounded(path, DOCUMENT_LIMIT);
+			return text.length() <= DOCUMENT_LIMIT ? text
+					: text.substring(0, DOCUMENT_LIMIT) + "\n\n[... truncated; read " + path + " for the rest]";
+		} catch (IOException | RuntimeException e) {
+			sources.unavailable(record, "Instruction", "cannot be read at " + path);
+			return null;
 		}
 	}
+
+	// ------------------------------------------------------------------ where records point
 
 	/** Where a profile's paths point: {@code ~} is the home folder, and a relative path is under the working directory. */
 	private record Paths(String home, Path workingDirectory) {
 
+		/** The path, or {@code null} when it is relative and there is no working directory yet. */
 		Path resolve(String written) {
 			var path = Path.of(ExtraFolders.expandHome(written, home));
-			return path.isAbsolute() ? path : workingDirectory.resolve(path).normalize();
+			if (path.isAbsolute()) {
+				return path;
+			}
+			return workingDirectory == null ? null : workingDirectory.resolve(path).normalize();
 		}
 
 		/** {@link #resolve}, refusing the launch when the path cannot exist on this system. */
@@ -318,9 +444,92 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 		}
 	}
 
-	private static String readBounded(Path file, int limit) throws IOException {
-		return dev.nuclr.plugin.core.ai.projects.store.TextFiles.readBounded(file, limit);
+	/** Finds records on disk, fetching each repository once, and keeps what could not be found. */
+	private static final class Sources {
+
+		private final Paths paths;
+		private final GitSources git;
+		private final List<String> notices;
+		private final List<String> notFound = new ArrayList<>();
+		private final Map<String, Object> checkouts = new HashMap<>();
+
+		Sources(Paths paths, GitSources git, List<String> notices) {
+			this.paths = paths;
+			this.git = git;
+			this.notices = notices;
+		}
+
+		Paths paths() {
+			return paths;
+		}
+
+		List<String> notFound() {
+			return notFound;
+		}
+
+		/**
+		 * Where a file or git record is on this machine.
+		 *
+		 * @return the path, or {@code null} after noting why there is none
+		 */
+		Path locate(ProfileRecord record, String noun) {
+			if (record.getKind() == RecordKind.GIT) {
+				return inRepository(record, noun);
+			}
+			try {
+				var path = paths.resolve(record.getPath());
+				if (path == null) {
+					notices.add(noun + " \"" + record.displayName() + "\" is relative, so it is found in the agent's "
+							+ "working folder when it starts");
+					return null;
+				}
+				if (!Files.exists(path)) {
+					unavailable(record, noun, "was not found at " + path);
+					return null;
+				}
+				return path;
+			} catch (RuntimeException e) {
+				unavailable(record, noun, "has a path that is not valid here: " + record.getPath());
+				return null;
+			}
+		}
+
+		private Path inRepository(ProfileRecord record, String noun) {
+			var repository = record.getRepository().strip();
+			var ref = blank(record.getRef()) ? "" : record.getRef().strip();
+			var key = repository + "\n" + ref;
+			var result = checkouts.computeIfAbsent(key, ignored -> {
+				try {
+					var checkout = git.checkout(repository, ref);
+					if (checkout.cached()) {
+						notices.add("Used the copy of " + repository + " from an earlier start, as it could not be "
+								+ "updated: " + checkout.reason());
+					}
+					return checkout;
+				} catch (IOException e) {
+					return e.getMessage();
+				}
+			});
+			if (result instanceof String reason) {
+				unavailable(record, noun, "could not be fetched from " + repository + ": " + reason);
+				return null;
+			}
+			var copy = ((GitSources.Checkout) result).copy();
+			var path = blank(record.getPath()) ? copy : copy.resolve(record.getPath().strip()).normalize();
+			if (!path.startsWith(copy) || !Files.exists(path)) {
+				unavailable(record, noun, "names " + record.getPath() + ", which is not in " + repository);
+				return null;
+			}
+			return path;
+		}
+
+		void unavailable(ProfileRecord record, String noun, String why) {
+			notFound.add(record.displayName() + " (" + why + ")");
+			notices.add(noun + " \"" + record.displayName() + "\" " + why);
+		}
 	}
+
+	// ------------------------------------------------------------------ files
 
 	/**
 	 * Read {@code NAME=value} lines. Blank lines and {@code #} comments are skipped,
@@ -329,7 +538,7 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 	static void readEnvironmentFile(Path file, Map<String, String> into) {
 		final String text;
 		try {
-			text = readBounded(file, ENVIRONMENT_FILE_LIMIT);
+			text = TextFiles.readBounded(file, ENVIRONMENT_FILE_LIMIT);
 		} catch (IOException | RuntimeException e) {
 			throw new IllegalArgumentException("The environment file " + file + " cannot be read.");
 		}
@@ -354,6 +563,47 @@ public record LaunchPlan(AgentProvider provider, String executable, List<String>
 				value = value.substring(1, value.length() - 1);
 			}
 			into.put(line.substring(0, equals).strip(), value);
+		}
+	}
+
+	/** Copy a skill folder, leaving out version control, within the limits a skill should fit. */
+	private static void copyTree(Path from, Path to) throws IOException {
+		final List<Path> files;
+		try (var walk = Files.walk(from)) {
+			files = walk.filter(path -> !from.relativize(path).toString().replace('\\', '/').matches("(^|.*/)\\.git(/.*)?"))
+					.toList();
+		}
+		var count = 0;
+		var bytes = 0L;
+		for (var path : files) {
+			if (Files.isRegularFile(path)) {
+				count++;
+				bytes += Files.size(path);
+			}
+		}
+		if (count > SKILL_FILE_LIMIT || bytes > SKILL_BYTE_LIMIT) {
+			throw new IOException("The skill folder " + from + " is too large to load as a skill (" + count
+					+ " files, " + (bytes / (1024 * 1024)) + " MB).");
+		}
+		for (var path : files) {
+			var target = to.resolve(from.relativize(path).toString());
+			if (Files.isDirectory(path)) {
+				Files.createDirectories(target);
+			} else if (Files.isRegularFile(path)) {
+				Files.createDirectories(target.getParent());
+				Files.copy(path, target, StandardCopyOption.REPLACE_EXISTING);
+			}
+		}
+	}
+
+	private static void deleteTree(Path folder) throws IOException {
+		if (!Files.exists(folder)) {
+			return;
+		}
+		try (var walk = Files.walk(folder)) {
+			for (var path : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+				Files.delete(path);
+			}
 		}
 	}
 

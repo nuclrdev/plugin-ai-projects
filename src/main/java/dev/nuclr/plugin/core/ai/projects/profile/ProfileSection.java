@@ -39,16 +39,14 @@ public enum ProfileSection {
 			(profile, records) -> profile.getContext().setInstructions(records)),
 
 	SKILLS(Group.CONTEXT, "Skills", "skill",
-			"Skill definitions. Stored in the profile; part of an agent's context once it is started with them.",
-			TextStyle.DOCUMENT, Browse.FILES_AND_DIRECTORIES,
-			Set.of(RecordKind.TEXT, RecordKind.FILE, RecordKind.GIT),
+			"Skill folders, each with a SKILL.md. Agents read a skill only when its description matches the task.",
+			TextStyle.DOCUMENT, Browse.DIRECTORIES, Set.of(RecordKind.FILE, RecordKind.GIT),
 			profile -> profile.getContext().getSkills(),
 			(profile, records) -> profile.getContext().setSkills(records)),
 
 	KNOWLEDGE(Group.CONTEXT, "Knowledge", "knowledge source",
-			"Documents, folders and repositories agents are pointed at, rather than handed in full.",
-			TextStyle.DOCUMENT, Browse.FILES_AND_DIRECTORIES,
-			Set.of(RecordKind.TEXT, RecordKind.FILE, RecordKind.GIT),
+			"Files, folders and repositories agents are pointed at to consult when relevant, never handed in full.",
+			TextStyle.DOCUMENT, Browse.FILES_AND_DIRECTORIES, Set.of(RecordKind.FILE, RecordKind.GIT),
 			profile -> profile.getContext().getKnowledge(),
 			(profile, records) -> profile.getContext().setKnowledge(records));
 

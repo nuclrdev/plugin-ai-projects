@@ -298,6 +298,13 @@ public final class ProfileValidator {
 					problems.add(noun + ": \"" + record.getRepository().trim()
 							+ "\" does not look like a git repository URL.");
 				}
+				if (!blank(record.getRef()) && record.getRef().trim().startsWith("-")) {
+					// git would read it as an option.
+					problems.add(noun + ": a branch, tag or commit cannot start with \"-\".");
+				}
+				if (section == ProfileSection.INSTRUCTIONS && blank(record.getPath())) {
+					problems.add(noun + ": name the file in the repository, e.g. docs/CONVENTIONS.md.");
+				}
 				if (!blank(record.getRef()) && record.getRef().trim().chars().anyMatch(Character::isWhitespace)) {
 					problems.add(noun + ": a branch, tag or commit cannot contain spaces.");
 				}

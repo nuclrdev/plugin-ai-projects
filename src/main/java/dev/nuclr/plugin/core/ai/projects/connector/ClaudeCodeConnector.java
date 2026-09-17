@@ -172,6 +172,18 @@ final class ClaudeCodeConnector implements AgentConnector {
 	}
 
 	@Override
+	public SkillLoading skillLoading() {
+		// Checked against Claude Code 2.1: --plugin-dir loads skills/<name>/SKILL.md without a plugin manifest.
+		return SkillLoading.PLUGIN_FOLDER;
+	}
+
+	@Override
+	public String skillsMeaning() {
+		return "Loaded as real skills: the folders are copied into a plugin folder for the session and passed "
+				+ "with --plugin-dir, so Claude Code reads each one only when it is relevant.";
+	}
+
+	@Override
 	public String sandboxNetworkMeaning(AccessMode mode) {
 		// Blocking WebFetch and WebSearch is not isolation: curl, wget, Python and the like still run in the shell.
 		return "Claude Code does not sandbox commands by default, so they already reach the network. A profile "

@@ -10,6 +10,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,6 +26,7 @@ import dev.nuclr.plugin.core.ai.projects.model.McpServerSpec;
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileRecord;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets;
+import dev.nuclr.plugin.core.ai.projects.store.TextFiles;
 
 /** Starting an agent from a profile: what the command, environment, files and briefing are. */
 class LaunchPlanTest {
@@ -52,6 +54,23 @@ class LaunchPlanTest {
 		}
 	}
 
+	/** Repositories as folders already on disk, recording what was asked for. */
+	private static final class FakeGit implements GitSources {
+
+		final Map<String, Path> copies = new HashMap<>();
+		final List<String> asked = new ArrayList<>();
+
+		@Override
+		public Checkout checkout(String repository, String ref) throws IOException {
+			asked.add(repository + "@" + ref);
+			var copy = copies.get(repository);
+			if (copy == null) {
+				throw new IOException("could not resolve host");
+			}
+			return new Checkout(copy, false, null);
+		}
+	}
+
 	private Profile claude() {
 		var profile = new Profile();
 		profile.setName("Team Claude");
@@ -72,6 +91,27 @@ class LaunchPlanTest {
 		return profile;
 	}
 
+	private static Profile named(String provider) {
+		var profile = new Profile();
+		profile.setName("P");
+		profile.getHarness().setProvider(provider);
+		return profile;
+	}
+
+	private LaunchPlan plan(Profile profile) {
+		return LaunchPlan.of(profile, home.resolve("runtime"), home.toString(), home, GitSources.NONE);
+	}
+
+	/** A skill folder with front matter, and a script beside it. */
+	private Path skill(Path parent, String name, String description) throws IOException {
+		var folder = Files.createDirectories(parent.resolve(name));
+		Files.writeString(folder.resolve("SKILL.md"),
+				"---\nname: " + name + "\ndescription: \"" + description + "\"\n---\n\nHow to " + name + ".\n");
+		Files.createDirectories(folder.resolve("scripts"));
+		Files.writeString(folder.resolve("scripts/run.sh"), "echo " + name);
+		return folder;
+	}
+
 	private String underHome(String rest) {
 		return home + File.separator + rest;
 	}
@@ -79,7 +119,7 @@ class LaunchPlanTest {
 	@Test
 	void aClaudeProfileBecomesOneCommandLine() {
 		var runtime = home.resolve("runtime");
-		var plan = LaunchPlan.of(claude(), runtime, home.toString(), home);
+		var plan = plan(claude());
 
 		assertEquals("claude", plan.executable());
 		assertEquals(List.of("--verbose",
@@ -94,72 +134,188 @@ class LaunchPlanTest {
 		assertEquals(Map.of("MAVEN_OPTS", "-Xmx2g"), plan.environment());
 		assertEquals("", plan.briefing());
 		assertTrue(plan.notices().isEmpty());
+		assertNull(plan.skillsPlugin());
 	}
 
 	@Test
 	void aProfileThatDoesNotValidateOrNamesNoProviderIsRefused() {
 		var noProvider = new Profile();
 		noProvider.setName("Empty");
-		var refused = assertThrows(IllegalArgumentException.class,
-				() -> LaunchPlan.of(noProvider, home, home.toString(), home));
+		var refused = assertThrows(IllegalArgumentException.class, () -> plan(noProvider));
 		assertTrue(refused.getMessage().contains("no provider"), refused.getMessage());
 
-		var codex = new Profile();
+		var codex = named("codex");
 		codex.setName("Codex");
-		codex.getHarness().setProvider("codex");
 		codex.getHarness().getBlockedCommands().add("rm -rf");
-		refused = assertThrows(IllegalArgumentException.class, () -> LaunchPlan.of(codex, home, home.toString(), home));
+		refused = assertThrows(IllegalArgumentException.class, () -> plan(codex));
 		assertTrue(refused.getMessage().startsWith("Profile \"Codex\" cannot be used yet: Commands"), refused.getMessage());
 	}
 
 	@Test
-	void codexGetsItsSandboxNetworkAndPiItsSkills() {
-		var codex = new Profile();
-		codex.setName("Codex");
-		codex.getHarness().setProvider("codex");
+	void codexGetsItsSandboxNetwork() {
+		var codex = named("codex");
 		codex.getHarness().setAccessMode("auto");
 		codex.getHarness().setSandboxNetworkAccess(true);
-		var arguments = LaunchPlan.of(codex, home, home.toString(), home).arguments();
 		assertEquals(List.of("--sandbox", "workspace-write", "--approve-for-me",
-				"-c", "sandbox_workspace_write.network_access=true"), arguments);
-
-		var pi = new Profile();
-		pi.setName("Pi");
-		pi.getHarness().setProvider("pi");
-		pi.getContext().getSkills().add(ProfileRecord.file("Review", "~/skills/review"));
-		var plan = LaunchPlan.of(pi, home, home.toString(), home);
-		assertEquals(List.of("--skill", underHome("skills/review".replace('/', File.separatorChar))),
-				plan.arguments());
-		assertEquals("", plan.briefing(), "a skill Pi loads itself is not repeated in the briefing");
+				"-c", "sandbox_workspace_write.network_access=true"), plan(codex).arguments());
 	}
+
+	// ------------------------------------------------------------------ skills
+
+	@Test
+	void piLoadsEachSkillFolderWithItsOwnFlag() throws IOException {
+		var review = skill(home.resolve("skills"), "review", "Reviews code");
+		var pi = named("pi");
+		pi.getContext().getSkills().add(ProfileRecord.file("Review", "~/skills/review"));
+		// Pointing at the SKILL.md itself means its folder.
+		pi.getContext().getSkills().add(ProfileRecord.file(null, "~/skills/review/SKILL.md".replace("review/", "review2/")));
+		skill(home.resolve("skills"), "review2", "Also reviews");
+
+		var plan = plan(pi);
+
+		assertEquals(List.of("--skill", review.toString(), "--skill", home.resolve("skills").resolve("review2").toString()),
+				plan.arguments());
+		assertEquals("", plan.briefing(), "a skill loaded as one is not repeated in the briefing");
+	}
+
+	@Test
+	void claudeLoadsSkillsFromAPluginFolderOfCopies() throws IOException {
+		var review = skill(home.resolve("a"), "review", "Reviews code");
+		var sameName = skill(home.resolve("b"), "review", "Another review");
+		var profile = named("claude-code");
+		profile.getContext().getSkills().add(ProfileRecord.file(null, review.toString()));
+		profile.getContext().getSkills().add(ProfileRecord.file(null, sameName.toString()));
+		var runtime = home.resolve("runtime");
+
+		var plan = plan(profile);
+
+		var pluginFolder = runtime.resolve("nuclr-profile");
+		assertEquals(List.of("--permission-mode", "manual", "--plugin-dir", pluginFolder.toString()), plan.arguments());
+		assertEquals(pluginFolder, plan.skillsPlugin());
+		assertEquals("", plan.briefing());
+
+		// A stale copy from an earlier start is removed, not merged with.
+		Files.createDirectories(pluginFolder.resolve("skills/removed"));
+		plan.writeFiles();
+
+		assertTrue(Files.isRegularFile(pluginFolder.resolve("skills/review/SKILL.md")));
+		assertTrue(Files.isRegularFile(pluginFolder.resolve("skills/review/scripts/run.sh")), "the whole folder");
+		assertTrue(Files.readString(pluginFolder.resolve("skills/review-2/SKILL.md")).contains("Another review"),
+				"two skills with one name do not overwrite each other");
+		assertFalse(Files.exists(pluginFolder.resolve("skills/removed")));
+	}
+
+	@Test
+	void codexListsSkillsWithTheirDescriptions() throws IOException {
+		var review = skill(home.resolve("skills"), "review", "Reviews code for defects");
+		var codex = named("codex");
+		codex.getContext().getSkills().add(ProfileRecord.file("Mine", review.toString()));
+
+		var briefing = plan(codex).briefing();
+
+		assertTrue(briefing.contains("## Skills"), briefing);
+		assertTrue(briefing.contains("- review: Reviews code for defects (" + review.resolve("SKILL.md") + ")"), briefing);
+	}
+
+	@Test
+	void aFolderWithoutSkillMdIsNotLoadedAndSaysSo() throws IOException {
+		var notASkill = Files.createDirectories(home.resolve("docs"));
+		var profile = named("claude-code");
+		profile.getContext().getSkills().add(ProfileRecord.file("Docs", notASkill.toString()));
+
+		var plan = plan(profile);
+
+		assertFalse(plan.arguments().contains("--plugin-dir"));
+		assertTrue(plan.notices().getFirst().contains("has no SKILL.md"), plan.notices().toString());
+		assertTrue(plan.briefing().contains("## Not found"), plan.briefing());
+	}
+
+	@Test
+	void aSkillFolderTooLargeToCopyStopsTheLaunch() throws IOException {
+		var huge = skill(home.resolve("skills"), "huge", "Too big");
+		for (var index = 0; index <= LaunchPlan.SKILL_FILE_LIMIT; index++) {
+			Files.writeString(huge.resolve("f" + index + ".txt"), "x");
+		}
+		var profile = named("claude-code");
+		profile.getContext().getSkills().add(ProfileRecord.file(null, huge.toString()));
+
+		var refused = assertThrows(IOException.class, () -> plan(profile).writeFiles());
+		assertTrue(refused.getMessage().contains("too large"), refused.getMessage());
+	}
+
+	// ------------------------------------------------------------------ git
+
+	@Test
+	void gitSourcesAreReadFromTheirCheckoutAndEachRepositoryIsFetchedOnce() throws IOException {
+		var copy = Files.createDirectories(home.resolve("copy"));
+		Files.createDirectories(copy.resolve("docs"));
+		Files.writeString(copy.resolve("docs/RULES.md"), "Shared rules.");
+		skill(copy.resolve("skills"), "deploy", "Deploys");
+		var git = new FakeGit();
+		git.copies.put("https://git.example.com/team.git", copy);
+
+		var profile = named("pi");
+		var context = profile.getContext();
+		context.getInstructions().add(ProfileRecord.git("Rules", "https://git.example.com/team.git", "main", "docs/RULES.md"));
+		context.getSkills().add(ProfileRecord.git(null, "https://git.example.com/team.git", "main", "skills/deploy"));
+		context.getKnowledge().add(ProfileRecord.git("Docs", "https://git.example.com/team.git", "main", "docs"));
+		context.getKnowledge().add(ProfileRecord.git("Gone", "https://git.example.com/other.git", null, null));
+
+		var plan = LaunchPlan.of(profile, home.resolve("runtime"), home.toString(), home, git);
+
+		assertEquals(List.of("https://git.example.com/team.git@main", "https://git.example.com/other.git@"), git.asked,
+				"one fetch per repository and ref");
+		assertTrue(plan.briefing().contains("### Rules\n\nShared rules."), plan.briefing());
+		assertEquals(List.of("--skill", copy.resolve("skills").resolve("deploy").toString()), plan.arguments());
+		assertTrue(plan.briefing().contains("- Docs: " + copy.resolve("docs") + " (a copy of https://git.example.com/team.git at main)"),
+				plan.briefing());
+		assertTrue(plan.notices().stream().anyMatch(notice -> notice.contains("could not be fetched")
+				&& notice.contains("could not resolve host")), plan.notices().toString());
+		// A path leaving its repository ("..") is refused by the validator before a launch gets here.
+	}
+
+	@Test
+	void aCopyThatCouldNotBeUpdatedIsUsedAndSaidToBe() throws IOException {
+		var copy = Files.createDirectories(home.resolve("copy"));
+		Files.writeString(copy.resolve("RULES.md"), "Old rules.");
+		GitSources stale = (repository, ref) -> new GitSources.Checkout(copy, true, "offline");
+		var profile = named("claude-code");
+		profile.getContext().getInstructions().add(ProfileRecord.git("Rules", "https://git.example.com/r.git", null, "RULES.md"));
+
+		var plan = LaunchPlan.of(profile, home.resolve("runtime"), home.toString(), home, stale);
+
+		assertTrue(plan.briefing().contains("Old rules."));
+		assertTrue(plan.notices().getFirst().contains("from an earlier start") && plan.notices().getFirst().contains("offline"),
+				plan.notices().toString());
+	}
+
+	// ------------------------------------------------------------------ instructions and knowledge
 
 	@Test
 	void theContextBecomesABriefingAndWhatCannotBeReadIsSaid() throws IOException {
 		Files.writeString(home.resolve("style.md"), "Use British English.");
+		Files.createDirectories(home.resolve("specs"));
 		var profile = claude();
 		var context = profile.getContext();
 		context.getInstructions().add(ProfileRecord.text("Rules", "No force pushes."));
 		context.getInstructions().add(ProfileRecord.file("Style", "~/style.md"));
 		context.getInstructions().add(ProfileRecord.file("Gone", "~/gone.md"));
-		context.getInstructions().add(ProfileRecord.git("Shared", "https://git.example.com/rules.git", "main", "RULES.md"));
 		var off = ProfileRecord.text("Off", "Not this.");
 		off.setEnabled(false);
 		context.getInstructions().add(off);
-		context.getSkills().add(ProfileRecord.file("Review", home.resolve("skills").toString()));
-		context.getKnowledge().add(ProfileRecord.git("Docs", "https://git.example.com/docs.git", "v2", "api"));
+		context.getKnowledge().add(ProfileRecord.file("Specs", "~/specs"));
 
-		var plan = LaunchPlan.of(profile, home, home.toString(), home);
+		var plan = plan(profile);
 		var briefing = plan.briefing();
 
 		assertTrue(briefing.startsWith("# Profile: Team Claude"), briefing);
 		assertTrue(briefing.contains("### Rules\n\nNo force pushes."), briefing);
 		assertTrue(briefing.contains("### Style\n\nUse British English."), briefing);
 		assertFalse(briefing.contains("Not this."), "switched off");
-		assertTrue(briefing.contains("- Review: " + home.resolve("skills") + " - read its SKILL.md"), briefing);
-		assertTrue(briefing.contains("- Docs: https://git.example.com/docs.git at v2, api"), briefing);
+		assertTrue(briefing.contains("## Knowledge"), briefing);
+		assertTrue(briefing.contains("- Specs: " + home.resolve("specs")), briefing);
 		assertTrue(briefing.contains("## Not found"), briefing);
-		assertEquals(2, plan.notices().size(), plan.notices().toString());
-		assertTrue(plan.notices().get(1).contains("not fetched yet"), plan.notices().toString());
+		assertEquals(1, plan.notices().size(), plan.notices().toString());
 	}
 
 	@Test
@@ -173,12 +329,12 @@ class LaunchPlanTest {
 				""");
 		var profile = claude();
 		profile.getHarness().getEnvironment().add(ProfileRecord.file(null, "~/.env"));
-		var environment = LaunchPlan.of(profile, home, home.toString(), home).environment();
+		var environment = plan(profile).environment();
 		assertEquals(Map.of("MAVEN_OPTS", "-Xmx2g", "API_URL", "https://x.example", "QUOTED", "a b", "SINGLE", "c"),
 				new LinkedHashMap<>(environment));
 
 		profile.getHarness().getEnvironment().add(ProfileRecord.file(null, "~/missing.env"));
-		assertThrows(IllegalArgumentException.class, () -> LaunchPlan.of(profile, home, home.toString(), home));
+		assertThrows(IllegalArgumentException.class, () -> plan(profile));
 	}
 
 	@Test
@@ -187,25 +343,34 @@ class LaunchPlanTest {
 		Files.writeString(workingDirectory.resolve(".env"), "FROM_PROJECT=yes");
 		Files.createDirectories(workingDirectory.resolve("docs"));
 		Files.writeString(workingDirectory.resolve("docs/rules.md"), "Project rules.");
+		Files.createDirectories(home.resolve("specs"));
+		skill(workingDirectory.resolve("skills"), "review", "Reviews");
 
-		var profile = claude();
+		var profile = named("pi");
 		profile.getHarness().getEnvironment().add(ProfileRecord.file(null, ".env"));
 		profile.getContext().getInstructions().add(ProfileRecord.file("Rules", "docs/rules.md"));
 		profile.getContext().getKnowledge().add(ProfileRecord.file("Specs", "../specs"));
+		profile.getContext().getSkills().add(ProfileRecord.file("Review", "skills/review"));
 
-		var plan = LaunchPlan.of(profile, home.resolve("runtime"), home.toString(), workingDirectory);
+		var plan = LaunchPlan.of(profile, home.resolve("runtime"), home.toString(), workingDirectory, GitSources.NONE);
 
 		assertEquals("yes", plan.environment().get("FROM_PROJECT"));
 		assertTrue(plan.briefing().contains("### Rules\n\nProject rules."), plan.briefing());
 		assertTrue(plan.briefing().contains("- Specs: " + home.resolve("specs")), plan.briefing());
+		assertEquals(List.of("--skill", workingDirectory.resolve("skills").resolve("review").toString()), plan.arguments());
 		assertTrue(plan.notices().isEmpty(), plan.notices().toString());
+	}
 
-		var pi = new Profile();
-		pi.setName("Pi");
-		pi.getHarness().setProvider("pi");
-		pi.getContext().getSkills().add(ProfileRecord.file("Review", "skills/review"));
-		assertEquals(List.of("--skill", workingDirectory.resolve("skills").resolve("review").toString()),
-				LaunchPlan.of(pi, home, home.toString(), workingDirectory).arguments());
+	@Test
+	void aPreviewWithoutAWorkingFolderLeavesRelativePathsForTheStart() {
+		var profile = named("claude-code");
+		profile.getContext().getInstructions().add(ProfileRecord.file("Rules", "docs/rules.md"));
+
+		var plan = LaunchPlan.of(profile, home.resolve("runtime"), home.toString(), null, GitSources.NONE);
+
+		assertTrue(plan.notices().getFirst().contains("found in the agent's working folder when it starts"),
+				plan.notices().toString());
+		assertFalse(plan.briefing().contains("Not found"), "not missing, only not looked for yet: " + plan.briefing());
 	}
 
 	@Test
@@ -213,35 +378,29 @@ class LaunchPlanTest {
 		var big = home.resolve("big.md");
 		Files.writeString(big, "a".repeat(LaunchPlan.DOCUMENT_LIMIT * 3));
 
-		var readBounded = (java.util.function.BiFunction<Path, Integer, Integer>) (file, limit) -> {
-			try {
-				return dev.nuclr.plugin.core.ai.projects.store.TextFiles.readBounded(file, limit).length();
-			} catch (IOException e) {
-				throw new java.io.UncheckedIOException(e);
-			}
-		};
-		assertEquals(LaunchPlan.DOCUMENT_LIMIT + 1, readBounded.apply(big, LaunchPlan.DOCUMENT_LIMIT));
-		assertEquals(5, readBounded.apply(big, 4));
+		assertEquals(LaunchPlan.DOCUMENT_LIMIT + 1, TextFiles.readBounded(big, LaunchPlan.DOCUMENT_LIMIT).length());
+		assertEquals(5, TextFiles.readBounded(big, 4).length());
 
 		var profile = claude();
 		profile.getContext().getInstructions().add(ProfileRecord.file("Big", big.toString()));
-		var briefing = LaunchPlan.of(profile, home, home.toString(), home).briefing();
+		var briefing = plan(profile).briefing();
 		assertTrue(briefing.contains("[... truncated; read " + big), briefing.substring(briefing.length() - 200));
 		assertTrue(briefing.length() < LaunchPlan.DOCUMENT_LIMIT + 1_000);
 
 		var hugeEnvironment = home.resolve("huge.env");
 		Files.writeString(hugeEnvironment, "A=" + "x".repeat(LaunchPlan.ENVIRONMENT_FILE_LIMIT));
 		profile.getHarness().getEnvironment().add(ProfileRecord.file(null, hugeEnvironment.toString()));
-		var refused = assertThrows(IllegalArgumentException.class,
-				() -> LaunchPlan.of(profile, home, home.toString(), home));
+		var refused = assertThrows(IllegalArgumentException.class, () -> plan(profile));
 		assertTrue(refused.getMessage().contains("too large"), refused.getMessage());
 	}
+
+	// ------------------------------------------------------------------ secrets and files
 
 	@Test
 	void secretsAreReadAtLaunchAndNeverNamedInAMessage() {
 		var store = new MemoryStore();
 		var secrets = new ProfileSecrets(store);
-		var plan = LaunchPlan.of(claude(), home, home.toString(), home);
+		var plan = plan(claude());
 
 		var missing = assertThrows(IllegalStateException.class,
 				() -> LaunchPlan.resolveSecrets(plan.secrets(), secrets, Map.of()));
@@ -262,17 +421,13 @@ class LaunchPlanTest {
 
 	@Test
 	void theConfigFileIsWrittenOnlyWhenThereIsOne() throws IOException {
-		var runtime = home.resolve("runtime");
-		var plan = LaunchPlan.of(claude(), runtime, home.toString(), home);
-		plan.writeConfigFile();
+		var plan = plan(claude());
+		plan.writeFiles();
 		assertFalse(Files.readString(plan.configFile()).contains("ghp_"), "no secret on disk");
 
-		var pi = new Profile();
-		pi.setName("Pi");
-		pi.getHarness().setProvider("pi");
-		var none = LaunchPlan.of(pi, home.resolve("other"), home.toString(), home);
+		var none = LaunchPlan.of(named("pi"), home.resolve("other"), home.toString(), home, GitSources.NONE);
 		assertNull(none.configFile());
-		none.writeConfigFile();
+		none.writeFiles();
 		assertFalse(Files.exists(home.resolve("other")));
 	}
 }

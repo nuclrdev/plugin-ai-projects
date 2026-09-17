@@ -65,6 +65,7 @@ public final class ProfileForm extends JPanel {
 	private int toolsTab;
 	private final ToolListsPanel tools;
 	private final WrappingNote extraFoldersNote = new WrappingNote();
+	private ContextPreviewPanel contextPreview;
 	private int commandsTab;
 	private final CommandListsPanel commands;
 
@@ -174,6 +175,11 @@ public final class ProfileForm extends JPanel {
 		addSection(contextTabs, ProfileSection.INSTRUCTIONS, Glyphs.INSTRUCTION);
 		addSection(contextTabs, ProfileSection.SKILLS, Glyphs.SKILL);
 		addSection(contextTabs, ProfileSection.KNOWLEDGE, Glyphs.KNOWLEDGE);
+		contextPreview = new ContextPreviewPanel(this::toProfile);
+		contextTabs.addTab("What agents receive", Glyphs.icon(Glyphs.ZOOM), contextPreview);
+		// Built when looked at, from the profile as it is then.
+		contextTabs.addChangeListener(event -> refreshPreviewIfShown());
+		groups.addChangeListener(event -> refreshPreviewIfShown());
 
 		groups.addTab("Harness", Glyphs.icon(Glyphs.HARNESS),
 				group("<b>Harness</b> &mdash; what agents <i>can do</i>.", harnessTabs));
@@ -323,6 +329,13 @@ public final class ProfileForm extends JPanel {
 		var arguments = sandboxNetwork.isSelected() ? connector.sandboxNetworkArguments(mode) : List.<String>of();
 		sandboxNetworkNote.setText(connector.sandboxNetworkMeaning(mode) + "\n"
 				+ (arguments.isEmpty() ? "Nothing is passed." : "Passed as " + String.join(" ", arguments)));
+	}
+
+	private void refreshPreviewIfShown() {
+		if (contextPreview != null && contextTabs.getSelectedComponent() == contextPreview
+				&& groups.getSelectedIndex() >= 0 && groups.getSelectedComponent() == contextTabs.getParent()) {
+			contextPreview.refresh();
+		}
 	}
 
 	private void updateMcpTitle() {

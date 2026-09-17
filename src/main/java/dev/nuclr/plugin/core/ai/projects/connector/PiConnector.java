@@ -148,6 +148,16 @@ final class PiConnector implements AgentConnector {
 	}
 
 	@Override
+	public SkillLoading skillLoading() {
+		return SkillLoading.OWN_FLAG;
+	}
+
+	@Override
+	public String skillsMeaning() {
+		return "Loaded as real skills, each folder passed with --skill.";
+	}
+
+	@Override
 	public String sandboxNetworkMeaning(AccessMode mode) {
 		return "Pi has no sandbox, so commands already reach the network. A profile cannot keep Pi off it: that "
 				+ "needs its bash and powershell tools blocked on the Tools tab, or an OS-level sandbox or firewall.";

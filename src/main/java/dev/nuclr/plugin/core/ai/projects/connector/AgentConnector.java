@@ -223,6 +223,24 @@ public interface AgentConnector {
 		return Optional.empty();
 	}
 
+	// ------------------------------------------------------------------ Skills
+
+	/** How a CLI can be given a skill folder - one with a {@code SKILL.md} - for one session. */
+	enum SkillLoading {
+		/** A flag per skill folder, e.g. Pi's {@code --skill}. */
+		OWN_FLAG,
+		/** Skill folders copied into a plugin folder the CLI loads, e.g. Claude Code's {@code --plugin-dir}. */
+		PLUGIN_FOLDER,
+		/** No way to add one: the briefing lists them for the agent to read when relevant. */
+		BRIEFING
+	}
+
+	/** How this CLI is given skill folders. */
+	SkillLoading skillLoading();
+
+	/** How skills reach this CLI, one or two sentences for the editor. */
+	String skillsMeaning();
+
 	// ------------------------------------------------------------------ Network
 
 	/**

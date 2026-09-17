@@ -218,23 +218,59 @@ public class Profile {
 		private List<ProfileRecord> instructions = new ArrayList<>();
 
 		/**
-		 * Records read from the sections that became instructions - Files, which was
-		 * the same thing under another name, and Variables - waiting to be added
-		 * after whatever {@link #instructions} is read. Loading rules are dropped.
+		 * Records that belong with the instructions, waiting to be added after whatever
+		 * {@link #instructions} is read: the old Files and Variables sections, and text
+		 * written into Skills or Knowledge, which only take folders, files and
+		 * repositories now. Loading rules are dropped.
 		 */
 		@JsonIgnore
 		@lombok.EqualsAndHashCode.Exclude
 		@lombok.ToString.Exclude
 		private final List<ProfileRecord> legacyInstructions = new ArrayList<>();
 
-		/** Skills. */
+		/** Skill folders - each with a {@code SKILL.md} - on disk or in a repository. */
 		private List<ProfileRecord> skills = new ArrayList<>();
 
-		/** Project knowledge agents are pointed at. */
+		/** Files, folders and repositories agents are pointed at. */
 		private List<ProfileRecord> knowledge = new ArrayList<>();
 
 		/** Creates an empty context. */
 		public Context() {}
+
+		/**
+		 * Set the skills. Text is not a skill - a skill is a folder with a {@code SKILL.md}
+		 * - so text written as one, in an older profile, becomes an instruction.
+		 *
+		 * @param skills the records
+		 */
+		public void setSkills(List<ProfileRecord> skills) {
+			this.skills = withoutText(skills);
+		}
+
+		/**
+		 * Set the knowledge sources. Knowledge is pointed to, never pasted in, so text
+		 * written as knowledge, in an older profile, becomes an instruction.
+		 *
+		 * @param knowledge the records
+		 */
+		public void setKnowledge(List<ProfileRecord> knowledge) {
+			this.knowledge = withoutText(knowledge);
+		}
+
+		private List<ProfileRecord> withoutText(List<ProfileRecord> records) {
+			var kept = new ArrayList<ProfileRecord>();
+			if (records == null) {
+				return kept;
+			}
+			for (var record : records) {
+				if (record != null && (record.getKind() == null || record.getKind() == RecordKind.TEXT)) {
+					legacyInstructions.add(record);
+				} else {
+					kept.add(record);
+				}
+			}
+			return kept;
+		}
 
 		/** The instructions, including any carried over from an older profile. */
 		public List<ProfileRecord> getInstructions() {
