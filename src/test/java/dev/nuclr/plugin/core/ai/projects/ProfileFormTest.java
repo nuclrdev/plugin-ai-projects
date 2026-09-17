@@ -43,7 +43,9 @@ class ProfileFormTest {
 		harness.setToolAccess(Profile.Harness.TOOL_ACCESS_ONLY);
 		harness.getAllowedTools().add("Bash");
 		harness.getBlockedTools().add("Bash(git push *)");
-		harness.getSoftware().add(ProfileRecord.text(null, "git"));
+		harness.getAllowedCommands().add("git status");
+		harness.getBlockedCommands().add("git push");
+		harness.getNetwork().add(ProfileRecord.text(null, "github.com"));
 		harness.getEnvironment().add(ProfileRecord.file(null, "/srv/.env"));
 		var disabled = ProfileRecord.text("TOKEN", "x");
 		disabled.setEnabled(false);
@@ -89,7 +91,7 @@ class ProfileFormTest {
 		var original = ProfileRecord.text(null, "Bash");
 		var records = new List<?>[1];
 		onEdt(() -> {
-			var editor = new RecordListEditor(ProfileSection.SOFTWARE, List.of(original));
+			var editor = new RecordListEditor(ProfileSection.NETWORK, List.of(original));
 			var copy = editor.records();
 			copy.getFirst().setText("changed");
 			records[0] = editor.records();

@@ -139,6 +139,90 @@ public interface AgentConnector {
 		return tools().stream().anyMatch(tool -> tool.name().equals(wanted));
 	}
 
+	// ------------------------------------------------------------------ Shell commands
+
+	/**
+	 * Whether the CLI can take rules for the commands its shell tool runs: command
+	 * prefixes that run without asking, and ones that never run.
+	 */
+	boolean supportsCommandRules();
+
+	/** What the allowed commands mean for this CLI, or why it has none; one or two sentences. */
+	String allowedCommandsMeaning();
+
+	/** What the blocked commands mean for this CLI, or why it has none; one sentence. */
+	String blockedCommandsMeaning();
+
+	/**
+	 * The flags that let commands run without asking.
+	 *
+	 * @param commands the command prefixes, already validated; empty for none
+	 * @return the arguments, empty when the list is empty
+	 */
+	default List<String> allowedCommandArguments(List<String> commands) {
+		return List.of();
+	}
+
+	/**
+	 * The blocked-tool patterns that stop commands from running. They are passed
+	 * together with the blocked tools, so the CLI is given a single list.
+	 *
+	 * @param commands the command prefixes, already validated; empty for none
+	 * @return the patterns, empty when the list is empty
+	 */
+	default List<String> blockedCommandPatterns(List<String> commands) {
+		return List.of();
+	}
+
+	/**
+	 * Everything that would make these command lists wrong for this CLI.
+	 *
+	 * @param allowed      the commands that run without asking
+	 * @param blocked      the commands that never run
+	 * @param allowedTools the tools agents are limited to, or empty when every tool is available
+	 * @return messages, empty when the lists can be used
+	 */
+	default List<String> commandProblems(List<String> allowed, List<String> blocked, List<String> allowedTools) {
+		var problems = new ArrayList<String>();
+		if (allowed.isEmpty() && blocked.isEmpty()) {
+			return problems;
+		}
+		if (!supportsCommandRules()) {
+			problems.add("Commands: " + allowedCommandsMeaning());
+			return problems;
+		}
+		for (var command : allowed) {
+			commandEntryProblem(command).ifPresent(problems::add);
+			if (blocked.contains(command)) {
+				problems.add("Commands: \"" + command + "\" is both allowed and blocked.");
+			}
+		}
+		for (var command : blocked) {
+			commandEntryProblem(command).ifPresent(problems::add);
+		}
+		return problems;
+	}
+
+	/**
+	 * What is wrong with one command prefix, whatever the CLI.
+	 *
+	 * @param command the entry
+	 * @return a message, or empty when it can be used
+	 */
+	static Optional<String> commandEntryProblem(String command) {
+		if (command == null || command.isBlank()) {
+			return Optional.of("Commands: an entry is empty.");
+		}
+		if (command.chars().anyMatch(c -> c == '\n' || c == '\r')) {
+			return Optional.of("Commands: \"" + command.strip() + "\" must be a single line.");
+		}
+		if (command.chars().anyMatch(c -> c == '(' || c == ')' || c == ',' || c == '*')) {
+			return Optional.of("Commands: \"" + command + "\" - write the command and its first arguments, "
+					+ "e.g. git push, without parentheses, commas or wildcards: every argument after it is included.");
+		}
+		return Optional.empty();
+	}
+
 	// ------------------------------------------------------------------ MCP servers
 
 	/** Whether the CLI can use MCP servers at all. */
@@ -294,6 +378,28 @@ public interface AgentConnector {
 	 */
 	default List<String> launchArguments(String model, String effort, AccessMode mode, List<String> allowed,
 			List<String> blocked) {
+		return launchArguments(model, effort, mode, allowed, blocked, List.of(), List.of());
+	}
+
+	/**
+	 * The flags for a model, effort, access mode, tool lists and command lists together.
+	 *
+	 * @param model           the model, or blank for the CLI's default
+	 * @param effort          the effort, or blank for the model's default
+	 * @param mode            the access mode, or {@code null} for {@link #defaultAccessMode()}
+	 * @param allowed         the allowed tools, possibly empty
+	 * @param blocked         the blocked tools, possibly empty
+	 * @param allowedCommands the commands that run without asking, possibly empty
+	 * @param blockedCommands the commands that never run, possibly empty
+	 * @return the arguments, in that order
+	 * @throws IllegalArgumentException when the access mode, the tool lists or the command lists cannot be honoured
+	 */
+	default List<String> launchArguments(String model, String effort, AccessMode mode, List<String> allowed,
+			List<String> blocked, List<String> allowedCommands, List<String> blockedCommands) {
+		var commandProblems = commandProblems(allowedCommands, blockedCommands, allowed);
+		if (!commandProblems.isEmpty()) {
+			throw new IllegalArgumentException(commandProblems.getFirst());
+		}
 		var arguments = new ArrayList<String>();
 		if (model != null && !model.isBlank()) {
 			arguments.addAll(modelArguments(model.trim()));
@@ -309,7 +415,10 @@ public interface AgentConnector {
 		arguments.addAll(accessArguments(access, allowed)
 				.orElseThrow(() -> new IllegalArgumentException(unsupportedReason(access))));
 		arguments.addAll(allowedToolArguments(allowed));
-		arguments.addAll(blockedToolArguments(blocked));
+		arguments.addAll(allowedCommandArguments(allowedCommands));
+		var denied = new ArrayList<>(blocked);
+		denied.addAll(blockedCommandPatterns(blockedCommands));
+		arguments.addAll(blockedToolArguments(denied));
 		return List.copyOf(arguments);
 	}
 

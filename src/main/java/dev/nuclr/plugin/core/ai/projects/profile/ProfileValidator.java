@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
+import dev.nuclr.plugin.core.ai.projects.connector.AgentConnector;
 import dev.nuclr.plugin.core.ai.projects.provider.AccessMode;
 import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
 
@@ -81,6 +82,7 @@ public final class ProfileValidator {
 		}
 		if (harness != null) {
 			problems.addAll(toolProblems(harness));
+			problems.addAll(commandProblems(harness));
 			problems.addAll(mcpProblems(harness));
 		}
 		if (harness != null) {
@@ -169,6 +171,46 @@ public final class ProfileValidator {
 			}
 		}
 		return problems;
+	}
+
+	/**
+	 * Command prefixes are the same for every provider, so they are checked without
+	 * one; whether they can be passed at all is the provider's to say.
+	 */
+	private static List<Problem> commandProblems(Profile.Harness harness) {
+		var problems = new ArrayList<Problem>();
+		var allowed = nullToEmpty(harness.getAllowedCommands()).stream().map(ProfileValidator::strip).toList();
+		var blocked = nullToEmpty(harness.getBlockedCommands()).stream().map(ProfileValidator::strip).toList();
+		var provider = AgentProvider.byId(harness.getProvider());
+		var messages = new ArrayList<String>();
+		if (provider.isPresent()) {
+			var restrictedTo = harness.restrictsTools() ? nullToEmpty(harness.getAllowedTools()) : List.<String>of();
+			messages.addAll(provider.get().connector().commandProblems(allowed, blocked, restrictedTo));
+		} else {
+			for (var command : concat(allowed, blocked)) {
+				AgentConnector.commandEntryProblem(command).ifPresent(messages::add);
+			}
+		}
+		for (var list : List.of(allowed, blocked)) {
+			for (var command : list) {
+				if (java.util.Collections.frequency(list, command) > 1) {
+					messages.add("Commands: \"" + command + "\" is listed more than once.");
+					break;
+				}
+			}
+		}
+		messages.stream().distinct().forEach(message -> problems.add(new Problem(null, -1, message)));
+		return problems;
+	}
+
+	private static String strip(String value) {
+		return value == null ? null : value.strip();
+	}
+
+	private static List<String> concat(List<String> first, List<String> second) {
+		var all = new ArrayList<String>(first);
+		all.addAll(second);
+		return all;
 	}
 
 	/** MCP settings beyond the server list itself are provider-specific, and so is what they allow. */

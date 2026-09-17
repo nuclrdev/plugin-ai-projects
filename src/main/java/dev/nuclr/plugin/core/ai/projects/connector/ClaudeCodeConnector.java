@@ -171,6 +171,62 @@ final class ClaudeCodeConnector implements AgentConnector {
 		return problems;
 	}
 
+	/** The tools that run commands; a command rule is written for each. */
+	private static final List<String> SHELL_TOOLS = List.of("Bash", "PowerShell");
+
+	@Override
+	public boolean supportsCommandRules() {
+		return true;
+	}
+
+	@Override
+	public String allowedCommandsMeaning() {
+		return "These run without asking, in Ask and Auto modes; other commands still ask. "
+				+ "Full access already runs everything.";
+	}
+
+	@Override
+	public String blockedCommandsMeaning() {
+		return "These never run, in every access mode, including Full access.";
+	}
+
+	@Override
+	public List<String> allowedCommandArguments(List<String> commands) {
+		return commands.isEmpty() ? List.of() : List.of("--allowedTools", String.join(",", commandPatterns(commands)));
+	}
+
+	@Override
+	public List<String> blockedCommandPatterns(List<String> commands) {
+		return commandPatterns(commands);
+	}
+
+	@Override
+	public List<String> commandProblems(List<String> allowed, List<String> blocked, List<String> allowedTools) {
+		var problems = new ArrayList<>(AgentConnector.super.commandProblems(allowed, blocked, allowedTools));
+		if (!allowed.isEmpty() && !allowedTools.isEmpty() && SHELL_TOOLS.stream().noneMatch(allowedTools::contains)) {
+			problems.add("Commands: agents are limited to tools that cannot run commands. "
+					+ "Allow Bash or PowerShell on the Tools tab, or remove the allowed commands.");
+		}
+		return problems;
+	}
+
+	/**
+	 * Each command as a rule for each shell tool: the command on its own, and with
+	 * any arguments after it - so blocking {@code git push} also stops a bare
+	 * {@code git push}, without also stopping {@code git pushx}.
+	 */
+	private static List<String> commandPatterns(List<String> commands) {
+		var patterns = new ArrayList<String>();
+		for (var tool : SHELL_TOOLS) {
+			for (var command : commands) {
+				var prefix = command.strip();
+				patterns.add(tool + "(" + prefix + ")");
+				patterns.add(tool + "(" + prefix + " *)");
+			}
+		}
+		return patterns;
+	}
+
 	/** The file the profile's servers are written to; {@code --mcp-config} names it. */
 	static final String MCP_CONFIG_FILE = "nuclr-mcp.json";
 

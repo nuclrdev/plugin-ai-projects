@@ -152,6 +152,23 @@ final class CodexConnector implements AgentConnector {
 		return problems;
 	}
 
+	@Override
+	public boolean supportsCommandRules() {
+		return false;
+	}
+
+	@Override
+	public String allowedCommandsMeaning() {
+		// Codex's prefix rules live in rules files under its home folder; no flag or -c override takes them.
+		return "Codex reads command rules only from its own rules files (~/.codex/rules), "
+				+ "so they cannot be set per profile. Use Read-only or Ask access instead.";
+	}
+
+	@Override
+	public String blockedCommandsMeaning() {
+		return allowedCommandsMeaning();
+	}
+
 	/** A TOML bare key: the only server and variable names that need no quoting in a {@code -c} path. */
 	private static final java.util.regex.Pattern BARE_KEY = java.util.regex.Pattern.compile("^[A-Za-z0-9_-]+$");
 

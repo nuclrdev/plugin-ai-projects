@@ -147,6 +147,22 @@ final class PiConnector implements AgentConnector {
 		return accessArguments(mode);
 	}
 
+	@Override
+	public boolean supportsCommandRules() {
+		return false;
+	}
+
+	@Override
+	public String allowedCommandsMeaning() {
+		return "Pi runs commands with no approval and no command rules. "
+				+ "Block its bash and powershell tools on the Tools tab to stop commands altogether.";
+	}
+
+	@Override
+	public String blockedCommandsMeaning() {
+		return allowedCommandsMeaning();
+	}
+
 	private static List<String> concat(List<String> first, List<String> second) {
 		var all = new ArrayList<>(first);
 		all.addAll(second);

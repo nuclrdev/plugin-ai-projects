@@ -9,33 +9,15 @@ import java.util.function.Function;
 /**
  * Every record list a profile holds, with what each one accepts.
  *
- * <p>Not every source makes sense everywhere. A software entry is a name, so it is plain
+ * <p>Not every source makes sense everywhere. A network rule is a host, so it is plain
  * text; an allowed root is a folder, so it is a file link; an instruction can
  * be written in place, linked from disk or taken from a repository. The editor
  * offers exactly what is listed here and the validator enforces it.
  */
 public enum ProfileSection {
 
-	// Harness - what agents can do. Built-in tools are not records: they are plain
-	// allowed and blocked name lists that a connector turns into flags.
-	SOFTWARE(Group.HARNESS, "Software", "software entry",
-			"Programs, package managers and services agents may drive, e.g. git, docker, npm.",
-			TextStyle.VALUE, Browse.NONE, Set.of(RecordKind.TEXT),
-			profile -> profile.getHarness().getSoftware(),
-			(profile, records) -> profile.getHarness().setSoftware(records)),
-
-	HARDWARE(Group.HARNESS, "Hardware", "hardware entry",
-			"Devices and resources agents may reach, e.g. gpu, camera, /dev/ttyUSB0.",
-			TextStyle.VALUE, Browse.NONE, Set.of(RecordKind.TEXT),
-			profile -> profile.getHarness().getHardware(),
-			(profile, records) -> profile.getHarness().setHardware(records)),
-
-	PERMISSIONS(Group.HARNESS, "Permissions", "permission",
-			"Permission grants in the harness's own vocabulary, or a settings file that holds them.",
-			TextStyle.VALUE, Browse.FILES, Set.of(RecordKind.TEXT, RecordKind.FILE),
-			profile -> profile.getHarness().getPermissions(),
-			(profile, records) -> profile.getHarness().setPermissions(records)),
-
+	// Harness - what agents can do. Built-in tools and shell commands are not records:
+	// they are plain allowed and blocked lists that a connector turns into flags.
 	ALLOWED_ROOTS(Group.HARNESS, "Allowed roots", "allowed root", "Folders agents may read and write.",
 			TextStyle.VALUE, Browse.DIRECTORIES, Set.of(RecordKind.FILE),
 			profile -> profile.getHarness().getAllowedRoots(),

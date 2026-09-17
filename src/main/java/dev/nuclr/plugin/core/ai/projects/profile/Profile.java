@@ -61,7 +61,8 @@ public class Profile {
 			count += section.records(this).size();
 		}
 		return count + nullToEmpty(harness.getMcpServers()).size() + nullToEmpty(harness.getAllowedTools()).size()
-				+ nullToEmpty(harness.getBlockedTools()).size();
+				+ nullToEmpty(harness.getBlockedTools()).size() + nullToEmpty(harness.getAllowedCommands()).size()
+				+ nullToEmpty(harness.getBlockedCommands()).size();
 	}
 
 	/** A deep copy, through the same JSON form the profile is stored in. */
@@ -131,14 +132,16 @@ public class Profile {
 		/** MCP servers configured outside the profile to switch off, by name. */
 		private List<String> switchedOffMcpServers = new ArrayList<>();
 
-		/** Software agents may drive. */
-		private List<ProfileRecord> software = new ArrayList<>();
+		/**
+		 * Shell commands that run without asking, as command prefixes: {@code git status}
+		 * also covers {@code git status --short}. Replaces the old Software list, which
+		 * no provider could enforce; old Software, Hardware and Permissions entries are
+		 * dropped on read.
+		 */
+		private List<String> allowedCommands = new ArrayList<>();
 
-		/** Hardware agents may reach. */
-		private List<ProfileRecord> hardware = new ArrayList<>();
-
-		/** Permission grants, or files holding them. */
-		private List<ProfileRecord> permissions = new ArrayList<>();
+		/** Shell commands that never run, as command prefixes. */
+		private List<String> blockedCommands = new ArrayList<>();
 
 		/** Folders agents may touch. */
 		private List<ProfileRecord> allowedRoots = new ArrayList<>();

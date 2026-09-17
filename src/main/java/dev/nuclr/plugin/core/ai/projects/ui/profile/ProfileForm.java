@@ -60,10 +60,13 @@ public final class ProfileForm extends JPanel {
 	private final JTabbedPane contextTabs = new JTabbedPane(JTabbedPane.LEFT);
 	private final Map<ProfileSection, Integer> tabIndex = new EnumMap<>(ProfileSection.class);
 	private int limitsTab;
+	private int accessTab;
 	private int mcpTab;
 	private McpServersPanel mcp;
 	private int toolsTab;
 	private final ToolListsPanel tools;
+	private int commandsTab;
+	private final CommandListsPanel commands;
 
 	/**
 	 * Build the form, asking the installed CLIs for their models.
@@ -138,6 +141,15 @@ public final class ProfileForm extends JPanel {
 		harnessTabs.addTab("Tools", Glyphs.icon(Glyphs.TOOLS), tools);
 		tools.addChangeListener(this::updateToolsTitle);
 		updateToolsTitle();
+		commands = new CommandListsPanel(
+				harness.getAllowedCommands() == null ? List.of() : harness.getAllowedCommands(),
+				harness.getBlockedCommands() == null ? List.of() : harness.getBlockedCommands(),
+				providerFields.selectedProvider());
+		providerFields.addProviderListener(commands::setProvider);
+		commandsTab = harnessTabs.getTabCount();
+		harnessTabs.addTab("Commands", Glyphs.icon(Glyphs.TERMINAL), commands);
+		commands.addChangeListener(this::updateCommandsTitle);
+		updateCommandsTitle();
 		mcpTab = harnessTabs.getTabCount();
 		mcp = new McpServersPanel(harness, mcpServers, providerFields.selectedProvider(), catalogs,
 				() -> providerFields.executable().getText());
@@ -145,15 +157,10 @@ public final class ProfileForm extends JPanel {
 		harnessTabs.addTab("MCP servers", Glyphs.icon(Glyphs.TOOL), mcp);
 		mcp.addChangeListener(this::updateMcpTitle);
 		updateMcpTitle();
-		addSection(harnessTabs, ProfileSection.SOFTWARE, Glyphs.SOFTWARE);
-		addSection(harnessTabs, ProfileSection.HARDWARE, Glyphs.HARDWARE);
-		var accessForm = form(
+		accessTab = harnessTabs.getTabCount();
+		harnessTabs.addTab("Access", Glyphs.icon(Glyphs.PERMISSION), scroll(form(
 				noted("Access mode", providerFields.access(), stack(providerFields.accessNote(),
-						providerFields.accessWarning())));
-		// No filler row: the permission list below takes the remaining space.
-		accessForm.remove(accessForm.getComponentCount() - 1);
-		accessForm.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
-		addSection(harnessTabs, ProfileSection.PERMISSIONS, Glyphs.PERMISSION, accessForm);
+						providerFields.accessWarning())))));
 		addSection(harnessTabs, ProfileSection.ALLOWED_ROOTS, Glyphs.ROOT);
 		addSection(harnessTabs, ProfileSection.NETWORK, Glyphs.NETWORK);
 		addSection(harnessTabs, ProfileSection.ENVIRONMENT, Glyphs.ENVIRONMENT);
@@ -230,6 +237,8 @@ public final class ProfileForm extends JPanel {
 		harness.setToolAccess(tools.restrictsTools() ? Profile.Harness.TOOL_ACCESS_ONLY : null);
 		harness.setAllowedTools(new ArrayList<>(tools.allowedTools()));
 		harness.setBlockedTools(new ArrayList<>(tools.blockedTools()));
+		harness.setAllowedCommands(new ArrayList<>(commands.allowedCommands()));
+		harness.setBlockedCommands(new ArrayList<>(commands.blockedCommands()));
 		return profile;
 	}
 
@@ -256,8 +265,10 @@ public final class ProfileForm extends JPanel {
 			var message = problem.message();
 			if (message.startsWith("Tools")) {
 				showTab(harnessTabs, toolsTab);
+			} else if (message.startsWith("Commands")) {
+				showTab(harnessTabs, commandsTab);
 			} else if (message.startsWith("Access mode")) {
-				showTab(harnessTabs, tabIndex.get(ProfileSection.PERMISSIONS));
+				showTab(harnessTabs, accessTab);
 			} else if (message.startsWith("Provider")) {
 				showTab(harnessTabs, 0);
 			} else if (message.contains("MCP")) {
@@ -292,20 +303,8 @@ public final class ProfileForm extends JPanel {
 	}
 
 	private void addSection(JTabbedPane tabs, ProfileSection section, String glyph) {
-		addSection(tabs, section, glyph, null);
-	}
-
-	/** A section tab, optionally with fields above its list. */
-	private void addSection(JTabbedPane tabs, ProfileSection section, String glyph, JComponent header) {
 		tabIndex.put(section, tabs.getTabCount());
-		Component content = sections.get(section);
-		if (header != null) {
-			var panel = new JPanel(new BorderLayout());
-			panel.add(header, BorderLayout.NORTH);
-			panel.add(content, BorderLayout.CENTER);
-			content = panel;
-		}
-		tabs.addTab(section.title(), Glyphs.icon(glyph), content);
+		tabs.addTab(section.title(), Glyphs.icon(glyph), sections.get(section));
 		updateTitle(section);
 	}
 
@@ -324,6 +323,11 @@ public final class ProfileForm extends JPanel {
 	private void updateToolsTitle() {
 		var count = tools.count();
 		harnessTabs.setTitleAt(toolsTab, count == 0 ? "Tools" : "Tools (" + count + ")");
+	}
+
+	private void updateCommandsTitle() {
+		var count = commands.count();
+		harnessTabs.setTitleAt(commandsTab, count == 0 ? "Commands" : "Commands (" + count + ")");
 	}
 
 	private void updateTitle(ProfileSection section) {
