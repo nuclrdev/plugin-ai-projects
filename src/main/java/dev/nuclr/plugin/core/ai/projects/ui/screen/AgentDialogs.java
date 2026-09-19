@@ -28,6 +28,7 @@ import javax.swing.JTextArea;
 import javax.swing.JTextField;
 
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowProvider;
+import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces;
@@ -57,13 +58,14 @@ public final class AgentDialogs {
 	 * @param parent        component to centre on
 	 * @param registry      the available window kinds
 	 * @param existing      the agent to edit, or {@code null} to define a new one
+	 * @param projectRoot   the project root, which a blank or relative working directory resolves against
 	 * @param profiles      the profiles an agent can start from, the project's first
 	 * @param sharedProject whether the project is kept in its repository, for others to open
 	 * @param copyToProject copies a library profile into the project, returning the copy, or empty when it could not
 	 * @return the edited copy, or {@code null} when cancelled
 	 */
 	public static AgentDefinition editAgent(Component parent, AgentWindowRegistry registry, AgentDefinition existing,
-			List<ProfilePlaces.Located> profiles, boolean sharedProject,
+			java.nio.file.Path projectRoot, List<ProfilePlaces.Located> profiles, boolean sharedProject,
 			java.util.function.Function<ProfilePlaces.Located, java.util.Optional<ProfilePlaces.Located>> copyToProject) {
 
 		var draft = copyOf(existing);
@@ -72,6 +74,12 @@ public final class AgentDialogs {
 		var workingDirectory = new JTextField(
 				existing == null || existing.getWorkingDirectory() == null ? "" : existing.getWorkingDirectory(), 26);
 		workingDirectory.setToolTipText("Blank means the project root. Relative paths resolve against it.");
+		var browse = new JButton("Browse...");
+		browse.setToolTipText("Choose the working folder");
+		browse.addActionListener(event -> browseWorkingDirectory(browse, workingDirectory, projectRoot));
+		var workingDirectoryRow = new JPanel(new BorderLayout(4, 0));
+		workingDirectoryRow.add(workingDirectory, BorderLayout.CENTER);
+		workingDirectoryRow.add(browse, BorderLayout.EAST);
 
 		var providers = registry.providers();
 		var kindChoice = new JComboBox<>(providers.toArray(new AgentWindowProvider[0]));
@@ -79,6 +87,19 @@ public final class AgentDialogs {
 				? provider.displayName() + (provider.isAvailable() ? "" : "  (unavailable)")
 				: ""));
 		selectKind(kindChoice, providers, existing != null ? existing.getWindowKind() : null, registry.defaultKind());
+
+		// The kind a profile does not decide: what the user last picked, restored when the profile goes.
+		var manualKind = new String[] { existing != null && existing.getWindowKind() != null
+				? existing.getWindowKind()
+				: registry.defaultKind() };
+		var syncing = new boolean[1];
+		kindChoice.addActionListener(event -> {
+			if (!syncing[0] && kindChoice.getSelectedItem() instanceof AgentWindowProvider chosen) {
+				manualKind[0] = chosen.kind();
+			}
+		});
+		var kindHint = new JLabel(" ");
+		kindHint.setVisible(false);
 
 		var profileChoice = new JComboBox<Object>();
 		profileChoice.addItem(NO_PROFILE);
@@ -124,11 +145,22 @@ public final class AgentDialogs {
 			var chosen = profileChoice.getSelectedItem();
 			reminderPanel.setVisible(sharedProject && !dismissed[0] && chosen instanceof ProfilePlaces.Located located
 					&& located.ref().place() == ProfileRef.Place.LIBRARY);
-			if (chosen instanceof ProfilePlaces.Located located) {
-				// Show the profile's CLI in a window of its kind, when there is one.
-				AgentProvider.byId(located.profile().getHarness().getProvider())
-						.ifPresent(provider -> selectKind(kindChoice, providers, "terminal." + provider.id(), null));
+			// A profile decides the whole launch, so it decides the window too: the kind
+			// becomes a statement about the profile rather than a choice, and is shown as
+			// one. A kind no profile can speak for - a window that is not a terminal - is
+			// left to the user, since the profile says nothing about it.
+			var decided = decidedBy(chosen instanceof ProfilePlaces.Located located ? located.profile() : null,
+					manualKind[0], providers).orElse(null);
+			syncing[0] = true;
+			if (decided == null) {
+				selectKind(kindChoice, providers, manualKind[0], registry.defaultKind());
+			} else {
+				selectKind(kindChoice, providers, AgentCli.KIND_PREFIX + decided.id(), null);
+				kindHint.setText("Set by the profile - " + decided.displayName() + ".");
 			}
+			syncing[0] = false;
+			kindChoice.setEnabled(decided == null);
+			kindHint.setVisible(decided != null);
 			var window = javax.swing.SwingUtilities.getWindowAncestor(reminderPanel);
 			if (window != null) {
 				window.pack();
@@ -167,7 +199,8 @@ public final class AgentDialogs {
 		addRow(form, constraints, row++, "Profile", profileChoice);
 		addRow(form, constraints, row++, "", reminderPanel);
 		addRow(form, constraints, row++, "Window kind", kindChoice);
-		addRow(form, constraints, row, "Working directory", workingDirectory);
+		addRow(form, constraints, row++, "", kindHint);
+		addRow(form, constraints, row, "Working directory", workingDirectoryRow);
 
 		while (true) {
 			var choice = Dialogs.showConfirmDialog(parent, form,
@@ -190,6 +223,33 @@ public final class AgentDialogs {
 			draft.setProfileId(chosenProfile instanceof ProfilePlaces.Located located ? located.ref().toString()
 					: chosenProfile instanceof MissingProfile missing ? missing.ref().toString() : null);
 			return draft;
+		}
+	}
+
+	/** Pick the working folder with a chooser, starting at the one the field names now. */
+	private static void browseWorkingDirectory(Component parent, JTextField field, java.nio.file.Path projectRoot) {
+		var chooser = Dialogs.fileChooser();
+		chooser.setDialogTitle("Choose working folder");
+		chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
+		var root = projectRoot.toAbsolutePath().normalize();
+		var start = root;
+		try {
+			var current = field.getText().trim();
+			if (!current.isEmpty()) {
+				var candidate = root.resolve(current).normalize();
+				if (java.nio.file.Files.isDirectory(candidate)) {
+					start = candidate;
+				}
+			}
+		} catch (java.nio.file.InvalidPathException e) {
+			// Start at the project root.
+		}
+		if (java.nio.file.Files.isDirectory(start)) {
+			chooser.setSelectedFile(start.toFile());
+		}
+		if (chooser.showOpenDialog(parent) == javax.swing.JFileChooser.APPROVE_OPTION) {
+			var value = ProjectDesktop.workingDirectoryValue(chooser.getSelectedFile().toPath(), root);
+			field.setText(value == null ? "" : value);
 		}
 	}
 
@@ -354,15 +414,44 @@ public final class AgentDialogs {
 	private record MissingProfile(ProfileRef ref) {
 	}
 
-	private static void selectKind(JComboBox<AgentWindowProvider> choice, List<AgentWindowProvider> providers,
+	/**
+	 * The provider a profile decides the window kind for, if any.
+	 *
+	 * <p>A profile decides the whole launch, so the kind it implies is a statement
+	 * about the profile rather than a choice - unless nothing can carry the statement:
+	 * no profile, a provider this installation has no terminal kind for, or a kind that
+	 * is not a terminal at all and so is none of the profile's business.
+	 *
+	 * @param profile   the chosen profile, or {@code null} for none
+	 * @param kind      the kind the user last chose
+	 * @param providers the window kinds available
+	 * @return the provider that decides the kind, or empty when the user still does
+	 */
+	static java.util.Optional<AgentProvider> decidedBy(dev.nuclr.plugin.core.ai.projects.profile.Profile profile,
+			String kind, List<AgentWindowProvider> providers) {
+		if (profile == null || kind != null && !kind.startsWith(AgentCli.KIND_PREFIX)) {
+			return java.util.Optional.empty();
+		}
+		return AgentProvider.byId(profile.getHarness().getProvider())
+				.filter(provider -> providers.stream()
+						.anyMatch(each -> each.kind().equals(AgentCli.KIND_PREFIX + provider.id())));
+	}
+
+	/**
+	 * Select a window kind by name.
+	 *
+	 * @return whether a provider of that kind was there to select
+	 */
+	private static boolean selectKind(JComboBox<AgentWindowProvider> choice, List<AgentWindowProvider> providers,
 			String kind, String fallback) {
 		var wanted = kind == null ? fallback : kind;
 		for (var index = 0; index < providers.size(); index++) {
 			if (providers.get(index).kind().equals(wanted)) {
 				choice.setSelectedIndex(index);
-				return;
+				return true;
 			}
 		}
+		return false;
 	}
 
 	private static DefaultListCellRenderer renderer(java.util.function.Function<Object, String> label) {

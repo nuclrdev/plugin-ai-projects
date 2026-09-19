@@ -375,7 +375,7 @@ public final class ProjectDesktop extends JPanel
 	 * the committable half and a path from someone else's machine is no use in it.
 	 * Blank means the project root.
 	 */
-	private static String workingDirectoryValue(Path folder, Path root) {
+	static String workingDirectoryValue(Path folder, Path root) {
 		var target = folder.toAbsolutePath().normalize();
 		var base = root.toAbsolutePath().normalize();
 		if (target.equals(base)) {
@@ -766,7 +766,7 @@ public final class ProjectDesktop extends JPanel
 	@Override
 	public void newAgent() {
 
-		var definition = AgentDialogs.editAgent(this, registry, null, profilePlaces().list(), sharedProject(),
+		var definition = AgentDialogs.editAgent(this, registry, null, store.paths().root(), profilePlaces().list(), sharedProject(),
 				this::copyToProject);
 		if (definition == null) {
 			return;
@@ -786,7 +786,7 @@ public final class ProjectDesktop extends JPanel
 		if (existing == null) {
 			return;
 		}
-		var edited = AgentDialogs.editAgent(this, registry, existing, profilePlaces().list(), sharedProject(),
+		var edited = AgentDialogs.editAgent(this, registry, existing, store.paths().root(), profilePlaces().list(), sharedProject(),
 				this::copyToProject);
 		if (edited == null) {
 			return;

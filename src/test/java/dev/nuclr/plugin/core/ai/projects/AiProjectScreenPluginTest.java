@@ -293,6 +293,60 @@ class AiProjectScreenPluginTest {
 	}
 
 	@Test
+	void anAgentOnTheDesktopRunsWhatItsProfileConfigures() throws Exception {
+
+		// The profile's command is a small Java program that prints its arguments. Pi's default
+		// access adds no flags, so what runs is exactly the profile's executable and startup
+		// arguments - and its output in the transcript proves the profile was what started.
+		var javaExecutable = ProcessHandle.current().info().command().orElseThrow();
+		var classes = Path.of(WindowsCommandLineTest.Echo.class.getProtectionDomain().getCodeSource().getLocation()
+				.toURI()).toString();
+		var root = Files.createDirectories(workspace.resolve("profiled"));
+		var project = ProjectCreator.define("profiled", root, ProjectStorageMode.PROJECT_LOCAL);
+		var agent = new AgentDefinition();
+		agent.setId("a0");
+		agent.setName("Agent");
+		// A window kind whose own command would not run: only the profile can start this agent.
+		agent.setWindowKind("terminal.codex");
+		project.getAgents().add(agent);
+		final Path transcript;
+		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
+			var profile = new dev.nuclr.plugin.core.ai.projects.profile.Profile();
+			profile.setName("Echo");
+			profile.getHarness().setProvider("pi");
+			profile.getHarness().setExecutable(javaExecutable);
+			profile.getHarness().setStartupArgs(List.of("-cp", classes, WindowsCommandLineTest.Echo.class.getName(),
+					"from-the-profile"));
+			agent.setProfileId("project:" + new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(
+					store.paths().profilesDirectory()).create(profile).getId());
+			transcript = store.paths().transcriptFile("a0");
+			store.markProjectDirty();
+			store.flush();
+		}
+		var entry = ProjectCreator.entry(project);
+		catalog.register(entry);
+
+		onEdt(() -> plugin.openResource(resourceFor(entry), new java.util.concurrent.atomic.AtomicBoolean()));
+		onEdt(() -> plugin.act(null, AiProjectEvents.SCREEN_START_ALL, List.of(), null, new HashMap<>(), null));
+
+		var printed = "ARG[" + String.join(",", "from-the-profile".chars().mapToObj(Integer::toString).toList()) + "]";
+		var deadline = System.currentTimeMillis() + 30_000;
+		var text = "";
+		while (System.currentTimeMillis() < deadline) {
+			drainEdt();
+			text = Files.exists(transcript) ? Files.readString(transcript) : "";
+			if (text.contains(printed)) {
+				break;
+			}
+			Thread.sleep(100);
+		}
+		onEdt(plugin::closeResource);
+
+		assertTrue(text.contains(printed), "the profile's command did not run: " + text);
+		assertTrue(text.contains("Started from a profile for Pi"), text);
+	}
+
+	@Test
 	void startAllOnAgentsWithNoInstalledCliMarksThemFailedRatherThanPretending() throws Exception {
 
 		var root = Files.createDirectories(workspace.resolve("beta"));

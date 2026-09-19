@@ -378,7 +378,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 		startButton.setEnabled(false);
 
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> spawn(
-				new Launch(command, List.of(resolved.get().toString()), environment, notice), workingDirectory));
+				new Launch(command, List.of(resolved.get().toString()), environment, notice, cli.displayName()),
+				workingDirectory));
 	}
 
 	/**
@@ -410,8 +411,18 @@ public final class TerminalAgentWindow implements AgentWindow {
 	 * the executable resolved and the briefing added - its environment, and a note
 	 * for the transcript.
 	 */
+	/**
+	 * One prepared launch.
+	 *
+	 * @param command     the command line as the user reads it
+	 * @param launched    the command line as it is actually spawned
+	 * @param environment the variables it starts with
+	 * @param notice      one line of explanation shown above the terminal
+	 * @param name        the label the terminal shows; the profile's CLI when there is a
+	 *                    profile, which need not be the window kind's own
+	 */
 	private record Launch(List<String> command, List<String> launched, java.util.Map<String, String> environment,
-			String notice) {
+			String notice, String name) {
 	}
 
 	/** Thrown while preparing a launch off the event thread, with a message for the user. */
@@ -514,7 +525,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 		} catch (IllegalStateException e) {
 			throw new StartRefused(e.getMessage());
 		}
-		return new Launch(command, launched, environment, profileNotice(plan, delivery));
+		return new Launch(command, launched, environment, profileNotice(plan, delivery),
+				plan.provider().displayName());
 	}
 
 	/**
@@ -546,10 +558,12 @@ public final class TerminalAgentWindow implements AgentWindow {
 			SwingUtilities.invokeLater(() -> handleStartFailure("Could not start the agent: " + e.getMessage()));
 			return;
 		}
-		SwingUtilities.invokeLater(() -> attach(started, launch.command(), workingDirectory.toString(), launch.notice()));
+		SwingUtilities.invokeLater(
+				() -> attach(started, launch.command(), workingDirectory.toString(), launch.notice(), launch.name()));
 	}
 
-	private void attach(PtyProcess started, List<String> command, String workingDirectory, String launchNotice) {
+	private void attach(PtyProcess started, List<String> command, String workingDirectory, String launchNotice,
+			String name) {
 
 		if (closed) {
 			destroyProcessTree(started);
@@ -568,7 +582,7 @@ public final class TerminalAgentWindow implements AgentWindow {
 		JediTermWidget attachedWidget = null;
 		try {
 			attachedConnector = new AgentTtyConnector(started, StandardCharsets.UTF_8, command,
-					cli.displayName(), this::onOutput);
+					name, this::onOutput);
 			attachedWidget = new JediTermWidget(COLUMNS, ROWS, TerminalTheme.settingsProvider(fontScale));
 			attachedWidget.setBackground(TerminalTheme.backgroundColor());
 			attachedWidget.setTtyConnector(attachedConnector);
