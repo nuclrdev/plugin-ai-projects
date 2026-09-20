@@ -59,6 +59,18 @@ abstract class JsonLineSession implements AgentSession {
 		this.onExit = onExit;
 	}
 
+	/**
+	 * Write what would go to the process to this writer instead.
+	 *
+	 * <p>For tests. A session with no process refuses to send, which is right in a window
+	 * and useless in a test of what a command puts on the wire.
+	 *
+	 * @param writer where messages go
+	 */
+	final synchronized void sendTo(Writer writer) {
+		this.input = writer;
+	}
+
 	@Override
 	public final void start() throws IOException {
 		var builder = new ProcessBuilder(WindowsCommandLine.forProcessBuilder(command)).directory(workingDirectory.toFile());

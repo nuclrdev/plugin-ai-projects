@@ -23,6 +23,13 @@ final class ClaudeCodeBackend implements ChatBackend {
 	}
 
 	@Override
+	public boolean expandsSlashCommands() {
+		// Verified against Claude Code 2.1: a "/cost" user message is run locally and its
+		// output returned as a synthetic assistant message, costing nothing.
+		return true;
+	}
+
+	@Override
 	public String description() {
 		return "Claude Code in a conversation window: replies, tool calls and permission prompts drawn natively.";
 	}

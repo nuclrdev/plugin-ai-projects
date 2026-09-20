@@ -30,6 +30,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 		@JsonSubTypes.Type(value = AgentEvent.PermissionResolved.class, name = "permissionResolved"),
 		@JsonSubTypes.Type(value = AgentEvent.TurnEnded.class, name = "turnEnded"),
 		@JsonSubTypes.Type(value = AgentEvent.Notice.class, name = "notice"),
+		@JsonSubTypes.Type(value = AgentEvent.CommandsAvailable.class, name = "commands"),
 		@JsonSubTypes.Type(value = AgentEvent.Image.class, name = "image") })
 public sealed interface AgentEvent {
 
@@ -197,6 +198,33 @@ public sealed interface AgentEvent {
 	 * @param durationMs how long the turn took, or {@code null}
 	 */
 	record TurnEnded(boolean error, String message, Double costUsd, Long durationMs) implements AgentEvent {
+	}
+
+	/**
+	 * The commands this agent answers, as it listed them when the session began.
+	 *
+	 * <p>Every CLI has slash commands of its own - {@code /compact}, {@code /context},
+	 * whatever the project keeps in its commands folder - and the window cannot know them
+	 * in advance. Those that it reports are offered in the composer beside the window's
+	 * own, and typing one sends it to the agent to run.
+	 *
+	 * @param commands what it offers, in the order it named them
+	 */
+	record CommandsAvailable(java.util.List<Command> commands) implements AgentEvent {
+
+		/** Defensive copy, and a missing list read as none. */
+		public CommandsAvailable {
+			commands = commands == null ? java.util.List.of() : java.util.List.copyOf(commands);
+		}
+	}
+
+	/**
+	 * One command an agent offers.
+	 *
+	 * @param name        what is typed after the slash
+	 * @param description one line about it, or {@code null} when the agent gave none
+	 */
+	record Command(String name, String description) {
 	}
 
 	/**

@@ -66,6 +66,30 @@ final class PiSession extends JsonLineSession {
 		send(Map.of("type", "abort"));
 	}
 
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>Pi names a model by its provider and its own id, and the catalogue joins the two
+	 * with a slash - {@code openrouter/z-ai/glm-5.1}. Only the first slash separates them:
+	 * the rest belongs to the model's name.
+	 */
+	@Override
+	public boolean setModel(String model) throws IOException {
+		var slash = model == null ? -1 : model.indexOf('/');
+		if (slash <= 0 || slash == model.length() - 1) {
+			// Not a provider-qualified name; Pi has nothing to look it up by.
+			return false;
+		}
+		send(Map.of("type", "set_model", "provider", model.substring(0, slash), "modelId", model.substring(slash + 1)));
+		return true;
+	}
+
+	@Override
+	public boolean setEffort(String effort) throws IOException {
+		send(Map.of("type", "set_thinking_level", "level", effort));
+		return true;
+	}
+
 	@Override
 	public void answerPermission(String requestId, String optionId) throws IOException {
 		var method = dialogs.remove(requestId);

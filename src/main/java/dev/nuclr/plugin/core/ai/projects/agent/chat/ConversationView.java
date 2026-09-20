@@ -207,6 +207,10 @@ final class ConversationView extends JPanel {
 				add(note(sessionLine(started), false));
 			}
 			case AgentEvent.Notice notice -> add(note(notice.text(), notice.error()));
+			// What the agent offers in the composer, not something that happened in the
+			// conversation: the window keeps it, and the page says nothing about it.
+			case AgentEvent.CommandsAvailable ignored -> {
+			}
 			case AgentEvent.Image picture -> {
 				// Only the stored shape can be shown. The window writes an inline one to disk
 				// and hands it back, so one arriving here with only its bytes was never stored
@@ -1318,6 +1322,9 @@ final class ConversationView extends JPanel {
 				}
 				case AgentEvent.TurnEnded turn -> text.append(turn.error() ? "--- turn failed: " + turn.message() : "---");
 				case AgentEvent.SessionStarted started -> text.append("[nuclr] ").append(sessionLine(started));
+				case AgentEvent.CommandsAvailable ignored -> {
+					// Not part of the conversation.
+				}
 				case AgentEvent.Notice notice -> text.append("[nuclr] ").append(notice.text());
 				case AgentEvent.Image picture -> text.append("[image] ")
 						.append(picture.name() == null ? picture.path() : picture.name());

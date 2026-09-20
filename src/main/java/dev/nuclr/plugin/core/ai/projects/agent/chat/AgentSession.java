@@ -42,6 +42,48 @@ interface AgentSession extends AutoCloseable {
 	 */
 	void answerPermission(String requestId, String optionId) throws IOException;
 
+	/**
+	 * Change the model this conversation runs on, without ending it.
+	 *
+	 * <p>Every CLI this plugin drives can do it - Claude Code takes a {@code set_model}
+	 * control request, Codex a {@code thread/settings/update}, Pi a {@code set_model}
+	 * command - but a session that cannot says so, and the window starts the agent again
+	 * with the model on its command line instead.
+	 *
+	 * @param model the model, as the CLI names it
+	 * @return whether the session took it; {@code false} means nothing was sent
+	 * @throws IOException when the process is no longer reading
+	 */
+	default boolean setModel(String model) throws IOException {
+		return false;
+	}
+
+	/**
+	 * Change how hard the model thinks, without ending the conversation.
+	 *
+	 * @param effort the level, in the CLI's own vocabulary
+	 * @return whether the session took it; {@code false} means nothing was sent
+	 * @throws IOException when the process is no longer reading
+	 */
+	default boolean setEffort(String effort) throws IOException {
+		return false;
+	}
+
+	/**
+	 * Run one of the CLI's own commands, for a CLI whose commands are protocol calls
+	 * rather than text - Codex compacts a thread with {@code thread/compact/start}, not
+	 * with the word "/compact".
+	 *
+	 * @param name     the command, without its slash
+	 * @param argument what was typed after it, possibly empty
+	 * @return whether it was sent; {@code false} when this session has no such command
+	 *         or nothing to run it against yet
+	 * @throws IOException when the process is no longer reading
+	 */
+	default boolean runCommand(String name, String argument) throws IOException {
+		return false;
+	}
+
 	/** The process id, or 0 before it starts. */
 	long pid();
 

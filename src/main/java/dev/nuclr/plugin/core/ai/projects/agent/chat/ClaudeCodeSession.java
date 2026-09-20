@@ -104,6 +104,15 @@ final class ClaudeCodeSession extends JsonLineSession {
 				"response", Map.of("subtype", "success", "request_id", requestId, "response", answer)));
 	}
 
+	@Override
+	public boolean setModel(String model) throws IOException {
+		// Verified against Claude Code 2.1: the control protocol takes the model and
+		// answers with an error naming it when there is no such model.
+		send(Map.of("type", "control_request", "request_id", nextRequestId(),
+				"request", Map.of("subtype", "set_model", "model", model)));
+		return true;
+	}
+
 	private String nextRequestId() {
 		return "nuclr-" + requests.incrementAndGet();
 	}
@@ -112,6 +121,15 @@ final class ClaudeCodeSession extends JsonLineSession {
 	protected void handle(JsonNode message) {
 		if ("control_request".equals(message.path("type").asString(""))) {
 			controlRequest(message);
+			return;
+		}
+		if ("control_response".equals(message.path("type").asString(""))) {
+			// Only a refusal is worth saying: a model that does not exist, an interrupt
+			// that came too late. Success is what the rest of the stream already shows.
+			var response = message.path("response");
+			if ("error".equals(response.path("subtype").asString(""))) {
+				emit(new AgentEvent.Notice(response.path("error").asString("The agent refused a request."), true));
+			}
 			return;
 		}
 		translator.translate(message).forEach(this::emit);

@@ -68,7 +68,10 @@ final class CodexSession extends JsonLineSession {
 
 	@Override
 	protected void opened() throws IOException {
-		request("initialize", Map.of("clientInfo", Map.of("name", "nuclr-commander", "title", "Nuclr Commander",
+		// experimentalApi unlocks thread/settings/update, which is how the model and the
+		// thinking level are changed without starting the thread again.
+		request("initialize", Map.of("capabilities", Map.of("experimentalApi", true),
+				"clientInfo", Map.of("name", "nuclr-commander", "title", "Nuclr Commander",
 				"version", "1")), response -> {
 					try {
 						send(Map.of("jsonrpc", "2.0", "method", "initialized"));
@@ -160,6 +163,71 @@ final class CodexSession extends JsonLineSession {
 						turnId = text(response.path("result").path("turn"), "id");
 					}
 				});
+	}
+
+	@Override
+	public boolean setModel(String model) throws IOException {
+		return updateSettings("model", model);
+	}
+
+	@Override
+	public boolean setEffort(String effort) throws IOException {
+		return updateSettings("effort", effort);
+	}
+
+	/**
+	 * Change one of the thread's settings for the turns to come.
+	 *
+	 * @param setting the field, as {@code thread/settings/update} names it
+	 * @param value   what to set it to
+	 * @return whether it was sent; there is no thread to change before one has started
+	 * @throws IOException when the process is no longer reading
+	 */
+	private boolean updateSettings(String setting, String value) throws IOException {
+		var thread = threadId;
+		if (thread == null) {
+			return false;
+		}
+		request("thread/settings/update", Map.of("threadId", thread, setting, value), response -> {
+			if (response.has("error")) {
+				emit(new AgentEvent.Notice("Codex would not set the " + setting + ": "
+						+ response.path("error").path("message").asString("no reason given"), true));
+			}
+		});
+		return true;
+	}
+
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The two worth having from a window: compacting the thread, and reviewing what
+	 * is uncommitted. Codex takes a review target of its own vocabulary; anything typed
+	 * after {@code /review} is ignored rather than guessed at, because the shapes it
+	 * accepts - a branch, a commit - are not free text.
+	 */
+	@Override
+	public boolean runCommand(String name, String argument) throws IOException {
+		var thread = threadId;
+		if (thread == null) {
+			return false;
+		}
+		switch (name) {
+			case "compact" -> request("thread/compact/start", Map.of("threadId", thread), this::refused);
+			case "review" -> request("review/start",
+					Map.of("threadId", thread, "target", Map.of("type", "uncommittedChanges")), this::refused);
+			default -> {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** Say so when Codex turned a request down; a silent nothing looks like a broken window. */
+	private void refused(JsonNode response) {
+		if (response.has("error")) {
+			emit(new AgentEvent.Notice("Codex refused: "
+					+ response.path("error").path("message").asString("no reason given"), true));
+		}
 	}
 
 	@Override

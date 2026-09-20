@@ -74,7 +74,9 @@ class ChatAgentWindowTest {
 		static final String PIXEL = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 		private static void turn(BufferedReader in, String sessionId, boolean draws) throws IOException {
-			say("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + sessionId + "\",\"model\":\"fake\"}");
+			say("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + sessionId
+					+ "\",\"model\":\"fake\",\"slash_commands\":[\"compact\",\"doctor\"],"
+					+ "\"terminal_slash_commands\":[\"doctor\"]}");
 			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"m1\"}}}");
 			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}}");
 			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}}");
@@ -127,6 +129,10 @@ class ChatAgentWindowTest {
 	}
 
 	private ChatAgentWindow window() throws Exception {
+		return window(new ClaudeCodeBackend());
+	}
+
+	private ChatAgentWindow window(ChatBackend backend) throws Exception {
 		return onEdt(() -> new ChatAgentWindow(new AgentWindowContext(store, agent, new AgentWindowHost() {
 			@Override
 			public void statusChanged(String agentId, AgentStatus status) {
@@ -140,7 +146,7 @@ class ChatAgentWindowTest {
 			@Override
 			public void sessionUpdated(String agentId) {
 			}
-		}, RuntimeStamp.CURRENT), new ClaudeCodeBackend(), AgentCli::resolveOnPath));
+		}, RuntimeStamp.CURRENT), backend, AgentCli::resolveOnPath));
 	}
 
 	@Test
@@ -252,9 +258,11 @@ class ChatAgentWindowTest {
 	}
 
 	@Test
-	void anUnknownCommandIsRefusedRatherThanSentToTheModel() throws Exception {
+	void anUnknownCommandIsRefusedWhereTheCliCannotRunItsOwn() throws Exception {
 
-		var window = window();
+		// Pi's commands are RPC calls, not text: handing it "/wat" would put the word in
+		// front of the model, which is never what was meant.
+		var window = window(new PiBackend());
 
 		type(window, "/wat");
 
@@ -273,6 +281,54 @@ class ChatAgentWindowTest {
 
 		waitFor(() -> window.outputForCopy().contains("> /model is the command I meant"), window);
 		onEdt(window::close);
+	}
+
+	@Test
+	void aCommandTheCliKnowsIsSentToItRatherThanRefused() throws Exception {
+
+		var window = window();
+
+		// Claude Code runs its own slash commands when they arrive as a message, so one
+		// this window does not know is its business, not an error.
+		type(window, "/compact");
+
+		waitFor(() -> window.outputForCopy().contains("> /compact"), window);
+		onEdt(window::stop);
+		waitFor(() -> window.status() == AgentStatus.STOPPED);
+		onEdt(window::close);
+	}
+
+	@Test
+	void theCommandsTheCliOffersJoinTheOnesTheWindowHas() throws Exception {
+
+		var window = window();
+		onEdt(() -> window.sendInstruction("hello"));
+		waitFor(() -> window.outputForCopy().contains("[permission] Bash ls"), window);
+		onEdt(() -> button(window.component(), "Allow").doClick());
+		waitFor(() -> window.outputForCopy().endsWith("---"), window);
+
+		var offered = onEdt(() -> names(window));
+		assertTrue(offered.contains("compact"), offered.toString());
+		assertFalse(offered.contains("doctor"), "a terminal-only command was offered: " + offered);
+		assertTrue(offered.contains("model"), offered.toString());
+
+		onEdt(window::stop);
+		waitFor(() -> window.status() == AgentStatus.STOPPED);
+		onEdt(window::close);
+
+		// The list is part of the record, so a rebuilt window has it before it starts.
+		var reopened = window();
+		assertTrue(onEdt(() -> names(reopened)).contains("compact"), "the list did not survive the transcript");
+		onEdt(reopened::close);
+	}
+
+	/** The names in the composer's completion list, as typing a bare slash would show them. */
+	private static List<String> names(ChatAgentWindow window) throws Exception {
+		var method = ChatAgentWindow.class.getDeclaredMethod("availableCommands");
+		method.setAccessible(true);
+		@SuppressWarnings("unchecked")
+		var commands = (List<SlashCommand>) method.invoke(window);
+		return commands.stream().map(SlashCommand::name).toList();
 	}
 
 	/** Type into the composer and press Send, as the user does. */

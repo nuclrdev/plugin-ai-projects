@@ -43,6 +43,14 @@ final class CodexBackend implements ChatBackend {
 	}
 
 	@Override
+	public List<AgentEvent.Command> ownCommands() {
+		// Codex has no slash commands in its protocol: each is a method of the app server,
+		// so the ones worth offering are named here and run by CodexSession.
+		return List.of(new AgentEvent.Command("compact", "Summarise the conversation so far, freeing context"),
+				new AgentEvent.Command("review", "Review the uncommitted changes in the working folder"));
+	}
+
+	@Override
 	public List<String> defaultCommand() {
 		return List.of(AgentProvider.CODEX.defaultExecutable());
 	}

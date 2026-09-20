@@ -1,6 +1,7 @@
 package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,7 +31,68 @@ class ChatBackendsTest {
 		return Json.fromJson(text, JsonNode.class);
 	}
 
+	/** What a session wrote, for a session with a writer in place of a process. */
+	private static java.io.StringWriter wire(JsonLineSession session) {
+		var written = new java.io.StringWriter();
+		session.sendTo(written);
+		return written;
+	}
+
 	// ------------------------------------------------------------------ Codex
+
+	@Test
+	void codexChangesItsModelAndThinkingWithoutStartingTheThreadAgain() throws IOException {
+		var session = new CodexSession(List.of("codex"), Map.of(), Path.of("."), null, events::add, code -> {
+		});
+		var written = wire(session);
+
+		// Nothing to change before the thread exists, and the window then restarts instead.
+		assertFalse(session.setModel("gpt-5.1-codex"));
+
+		// The handshake the app server expects: initialize, then a thread.
+		session.opened();
+		session.handle(json("""
+				{"id":1,"result":{}}"""));
+		session.handle(json("""
+				{"id":2,"result":{"thread":{"id":"t-1"}}}"""));
+		assertTrue(session.setModel("gpt-5.1-codex"));
+		assertTrue(session.setEffort("high"));
+
+		// Shapes taken from Codex 0.154's app server, which refuses anything else.
+		assertTrue(written.toString().contains("\"method\":\"thread/settings/update\""), written.toString());
+		assertTrue(written.toString().contains("\"model\":\"gpt-5.1-codex\""), written.toString());
+		assertTrue(written.toString().contains("\"effort\":\"high\""), written.toString());
+	}
+
+	@Test
+	void codexRunsItsOwnCommandsAsAppServerMethods() throws IOException {
+		var session = new CodexSession(List.of("codex"), Map.of(), Path.of("."), null, events::add, code -> {
+		});
+		var written = wire(session);
+		session.opened();
+		session.handle(json("""
+				{"id":1,"result":{}}"""));
+		session.handle(json("""
+				{"id":2,"result":{"thread":{"id":"t-1"}}}"""));
+
+		assertTrue(session.runCommand("compact", ""));
+		assertTrue(session.runCommand("review", ""));
+		assertFalse(session.runCommand("whatever", ""), "an unknown command must not be invented");
+
+		assertTrue(written.toString().contains("\"method\":\"thread/compact/start\""), written.toString());
+		assertTrue(written.toString().contains("\"method\":\"review/start\""), written.toString());
+		assertTrue(written.toString().contains("\"type\":\"uncommittedChanges\""), written.toString());
+	}
+
+	@Test
+	void codexAsksForTheExperimentalApiItNeedsToChangeSettings() throws IOException {
+		var session = new CodexSession(List.of("codex"), Map.of(), Path.of("."), null, events::add, code -> {
+		});
+		var written = wire(session);
+		session.opened();
+		// Without this capability the app server answers "requires experimentalApi capability".
+		assertTrue(written.toString().contains("\"experimentalApi\":true"), written.toString());
+	}
 
 	@Test
 	void codexFlagsBecomeAppServerConfiguration() throws AgentLaunch.Refused {
@@ -105,6 +167,24 @@ class ChatBackendsTest {
 	}
 
 	// ------------------------------------------------------------------ Pi
+
+	@Test
+	void piChangesItsModelAndThinkingLevelInPlace() throws IOException {
+		var session = new PiSession(List.of("pi"), Map.of(), Path.of("."), events::add, code -> {
+		});
+		var written = wire(session);
+
+		// The catalogue names a Pi model "provider/id", and the id has slashes of its own.
+		assertTrue(session.setModel("openrouter/z-ai/glm-5.1"));
+		assertTrue(session.setEffort("high"));
+		assertFalse(session.setModel("unqualified"), "Pi has nothing to look up a bare name by");
+
+		var sent = written.toString();
+		assertTrue(sent.contains("\"provider\":\"openrouter\""), sent);
+		assertTrue(sent.contains("\"modelId\":\"z-ai/glm-5.1\""), sent);
+		assertTrue(sent.contains("\"type\":\"set_thinking_level\""), sent);
+		assertTrue(sent.contains("\"level\":\"high\""), sent);
+	}
 
 	@Test
 	void piEventsBecomeATurn() throws IOException {

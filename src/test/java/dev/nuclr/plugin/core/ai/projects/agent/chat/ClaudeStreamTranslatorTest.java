@@ -34,6 +34,23 @@ class ClaudeStreamTranslatorTest {
 	}
 
 	@Test
+	void theCommandsTheCliOffersAreTakenFromItsInitLine() throws IOException {
+		var events = feed("""
+				{"type":"system","subtype":"init","session_id":"s-1","model":"claude-opus-5",
+				 "slash_commands":["compact","context","doctor","color"],
+				 "terminal_slash_commands":["doctor","color"]}""");
+		// Its own terminal's commands are left out: they redraw a terminal we are not.
+		assertEquals(new AgentEvent.CommandsAvailable(List.of(new AgentEvent.Command("compact", null),
+				new AgentEvent.Command("context", null))), events.get(1));
+	}
+
+	@Test
+	void aCliThatListsNoCommandsSaysNothingAboutThem() throws IOException {
+		assertEquals(1, feed("""
+				{"type":"system","subtype":"init","session_id":"s-1","model":"claude-opus-5"}""").size());
+	}
+
+	@Test
 	void streamedTextIsTakenFromTheStreamAndNotRepeatedByTheWholeMessage() throws IOException {
 		var events = feed(
 				"""

@@ -86,6 +86,8 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final JButton sendButton = Glyphs.decorate(new JButton(), Glyphs.SEND, "Send");
 	private final JButton interruptButton = Glyphs.decorate(new JButton(), Glyphs.STOP, "Interrupt");
 	private final List<SlashCommand> commands = new ArrayList<>();
+	/** The commands the running agent said it has, as {@link AgentEvent.CommandsAvailable} named them. */
+	private final List<SlashCommand> agentCommands = new ArrayList<>();
 	private final List<AgentEvent> history = new ArrayList<>();
 	private final List<AgentEvent> unsaved = new ArrayList<>();
 	private final Timer saveTimer;
@@ -199,6 +201,11 @@ public final class ChatAgentWindow implements AgentWindow {
 				var event = Json.fromJson(line, AgentEvent.class);
 				if (event != null) {
 					history.add(event);
+					// The commands the agent last offered are worth having before it is
+					// started again: they are the same CLI in the same folder.
+					if (event instanceof AgentEvent.CommandsAvailable available) {
+						adopt(available);
+					}
 					view.accept(event, false);
 				}
 			} catch (IOException e) {
@@ -413,6 +420,7 @@ public final class ChatAgentWindow implements AgentWindow {
 		}
 		record(event);
 		switch (event) {
+			case AgentEvent.CommandsAvailable available -> adopt(available);
 			case AgentEvent.SessionStarted started -> {
 				sessionNotStarted = false;
 				unconfirmed = null;
@@ -530,6 +538,66 @@ public final class ChatAgentWindow implements AgentWindow {
 		commands.add(SlashCommand.of("clear", "Clear the screen, keeping the transcript", this::clearScreen));
 		commands.add(SlashCommand.of("stop", "Stop the agent", this::stop));
 		commands.add(SlashCommand.of("help", "List these commands", this::showCommands));
+		for (var own : backend.ownCommands()) {
+			commands.add(new SlashCommand(own.name(), own.description(), "",
+					argument -> runAgentCommand(own.name(), argument)));
+		}
+	}
+
+	/**
+	 * Run one of the CLI's own commands through its protocol.
+	 *
+	 * <p>Unlike the window's own commands these need the agent running: they act on the
+	 * conversation the CLI is holding, and there is none until it is started.
+	 *
+	 * @param name     the command
+	 * @param argument what was typed after it
+	 */
+	private void runAgentCommand(String name, String argument) {
+		var running = session;
+		if (running == null || !status.isLive()) {
+			record(new AgentEvent.Notice("/" + name + " needs the agent running; start it first.", true));
+			return;
+		}
+		try {
+			if (!running.runCommand(name, argument)) {
+				record(new AgentEvent.Notice("/" + name + " is not ready yet; the conversation has not begun.", true));
+				return;
+			}
+		} catch (IOException e) {
+			record(new AgentEvent.Notice("Could not run /" + name + ": " + e.getMessage(), true));
+			return;
+		}
+		record(new AgentEvent.Notice("/" + name, false));
+		view.scrollToEnd();
+	}
+
+	/**
+	 * Take the list of commands the agent says it has.
+	 *
+	 * <p>Each becomes a command that sends itself back: the CLI expanded it once and will
+	 * again. One that shares a name with the window's own is dropped - {@code /model} here
+	 * offers every model the CLI reported and works while the agent is stopped, which is
+	 * more than its own can do from inside a conversation.
+	 *
+	 * @param available what the agent listed
+	 */
+	private void adopt(AgentEvent.CommandsAvailable available) {
+		agentCommands.clear();
+		if (!backend.expandsSlashCommands()) {
+			// Listing what cannot be run would be worse than not listing it.
+			return;
+		}
+		for (var command : available.commands()) {
+			if (SlashCommands.find(commands, command.name()).isPresent()) {
+				continue;
+			}
+			var summary = command.description() == null || command.description().isBlank()
+					? backend.displayName() + " command"
+					: command.description();
+			agentCommands.add(new SlashCommand(command.name(), summary, "[arguments]",
+					argument -> send(("/" + command.name() + " " + argument).strip())));
+		}
 	}
 
 	/**
@@ -542,12 +610,16 @@ public final class ChatAgentWindow implements AgentWindow {
 	 * @return the commands to list and to answer
 	 */
 	private List<SlashCommand> availableCommands() {
-		if (backend.provider() != null) {
-			return commands;
+		var mine = backend.provider() != null ? commands
+				: commands.stream()
+						.filter(command -> !command.name().equals("model") && !command.name().equals("thinking"))
+						.toList();
+		if (agentCommands.isEmpty()) {
+			return mine;
 		}
-		return commands.stream()
-				.filter(command -> !command.name().equals("model") && !command.name().equals("thinking"))
-				.toList();
+		var all = new ArrayList<>(mine);
+		all.addAll(agentCommands);
+		return List.copyOf(all);
 	}
 
 	private void showCommands() {
@@ -669,13 +741,7 @@ public final class ChatAgentWindow implements AgentWindow {
 		stored.setModel(model);
 		context.host().sessionUpdated(context.agentId());
 		view.setLaunchFacts(context.workingDirectory(), model, stored.getEffort());
-		record(new AgentEvent.Notice("Model: " + model + (status.isLive()
-				? " - starting the session again to apply it; the conversation is resumed." : "."), false));
-		view.scrollToEnd();
-		save();
-		if (status.isLive()) {
-			restart();
-		}
+		apply("Model", model, session -> session.setModel(model));
 	}
 
 	/**
@@ -688,13 +754,51 @@ public final class ChatAgentWindow implements AgentWindow {
 		stored.setEffort(effort);
 		context.host().sessionUpdated(context.agentId());
 		view.setLaunchFacts(context.workingDirectory(), stored.getModel(), effort);
-		record(new AgentEvent.Notice("Thinking: " + effort + (status.isLive()
+		apply("Thinking", effort, session -> session.setEffort(effort));
+	}
+
+	/**
+	 * Put a setting into effect, in the running session where it can be and by starting
+	 * the session again where it cannot.
+	 *
+	 * <p>Three of the three CLIs can change a model mid-conversation, and two of them a
+	 * thinking level; the restart is the floor, not the plan. It keeps the CLI's
+	 * conversation id, so what comes back is this conversation and not another.
+	 *
+	 * @param what    the setting, for the line shown
+	 * @param value   what it was set to
+	 * @param inplace asks the session to take it, answering whether it did
+	 */
+	private void apply(String what, String value, Change inplace) {
+		var running = session;
+		var taken = false;
+		if (running != null && status.isLive()) {
+			try {
+				taken = inplace.apply(running);
+			} catch (IOException e) {
+				record(new AgentEvent.Notice("Could not tell the agent: " + e.getMessage(), true));
+			}
+		}
+		var restarting = !taken && status.isLive();
+		record(new AgentEvent.Notice(what + ": " + value + (restarting
 				? " - starting the session again to apply it; the conversation is resumed." : "."), false));
 		view.scrollToEnd();
 		save();
-		if (status.isLive()) {
+		if (restarting) {
 			restart();
 		}
+	}
+
+	/** One setting handed to a running session. */
+	@FunctionalInterface
+	private interface Change {
+
+		/**
+		 * @param session the running session
+		 * @return whether it took the setting
+		 * @throws IOException when the process is no longer reading
+		 */
+		boolean apply(AgentSession session) throws IOException;
 	}
 
 	/**
@@ -769,12 +873,19 @@ public final class ChatAgentWindow implements AgentWindow {
 	 */
 	private void run(SlashCommands.Invocation invocation) {
 		var command = SlashCommands.find(availableCommands(), invocation.name()).orElse(null);
-		if (command == null) {
-			record(new AgentEvent.Notice("There is no /" + invocation.name() + " here. Type / to see what there is,"
-					+ " or start the line with // to send a message that really does begin with a slash.", true));
+		if (command != null) {
+			command.run().accept(invocation.argument());
 			return;
 		}
-		command.run().accept(invocation.argument());
+		if (backend.expandsSlashCommands()) {
+			// The CLI keeps its own commands - a project's own among them - and knows the
+			// ones it has not told us about. It answers "unknown command" better than a
+			// guess here would.
+			send(("/" + invocation.name() + " " + invocation.argument()).strip());
+			return;
+		}
+		record(new AgentEvent.Notice("There is no /" + invocation.name() + " here. Type / to see what there is,"
+				+ " or start the line with // to send a message that really does begin with a slash.", true));
 	}
 
 	/** Send a prompt, starting the agent first when it is not running. */

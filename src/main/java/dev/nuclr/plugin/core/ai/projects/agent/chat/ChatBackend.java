@@ -31,6 +31,34 @@ interface ChatBackend {
 	/** The provider whose profiles can start it, or {@code null} when no profile can. */
 	AgentProvider provider();
 
+	/**
+	 * Whether this CLI runs its own slash commands when they arrive as an ordinary
+	 * message.
+	 *
+	 * <p>Claude Code does: {@code /compact} sent over stream-JSON is expanded and run
+	 * locally, and its output comes back as a reply. Codex does not - its commands are
+	 * app-server methods - so a command it does not know must be refused rather than
+	 * handed to the model as the word "/compact".
+	 *
+	 * @return whether to send an unrecognised command as a prompt
+	 */
+	default boolean expandsSlashCommands() {
+		return false;
+	}
+
+	/**
+	 * The CLI's own commands that this backend can run as protocol calls.
+	 *
+	 * <p>For a CLI that expands slash commands itself there is nothing to declare here -
+	 * it reports what it has when the session starts. This is for the others, where each
+	 * command is a method and so has to be named in advance.
+	 *
+	 * @return the commands, none by default
+	 */
+	default List<AgentEvent.Command> ownCommands() {
+		return List.of();
+	}
+
 	/** The command started when there is no profile, executable first. */
 	List<String> defaultCommand();
 

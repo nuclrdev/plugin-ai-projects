@@ -56,12 +56,46 @@ final class ClaudeStreamTranslator {
 
 	private static void system(JsonNode message, List<AgentEvent> events) {
 		switch (message.path("subtype").asString("")) {
-			case "init" -> events.add(new AgentEvent.SessionStarted(text(message, "session_id"), text(message, "model"),
-					text(message, "permissionMode") == null ? null : text(message, "permissionMode") + " mode"));
+			case "init" -> {
+				events.add(new AgentEvent.SessionStarted(text(message, "session_id"), text(message, "model"),
+						text(message, "permissionMode") == null ? null : text(message, "permissionMode") + " mode"));
+				commands(message, events);
+			}
 			case "compact_boundary" -> events.add(new AgentEvent.Notice("The conversation was compacted.", false));
 			default -> {
 				// status and hook messages say nothing the window shows
 			}
+		}
+	}
+
+	/**
+	 * The slash commands the CLI says it has, less the ones only its own terminal can run.
+	 *
+	 * <p>Claude Code names those separately - {@code /doctor} and its like redraw the
+	 * terminal it is not running in - and offering them here would be offering something
+	 * that cannot work.
+	 *
+	 * @param message the init message
+	 * @param events  where the list is added, when there is one
+	 */
+	private static void commands(JsonNode message, List<AgentEvent> events) {
+		var offered = message.path("slash_commands");
+		if (!offered.isArray() || offered.isEmpty()) {
+			return;
+		}
+		var terminalOnly = new java.util.HashSet<String>();
+		for (var name : message.path("terminal_slash_commands")) {
+			terminalOnly.add(name.asString(""));
+		}
+		var commands = new ArrayList<AgentEvent.Command>();
+		for (var name : offered) {
+			var command = name.asString("");
+			if (!command.isBlank() && !terminalOnly.contains(command)) {
+				commands.add(new AgentEvent.Command(command, null));
+			}
+		}
+		if (!commands.isEmpty()) {
+			events.add(new AgentEvent.CommandsAvailable(commands));
 		}
 	}
 
