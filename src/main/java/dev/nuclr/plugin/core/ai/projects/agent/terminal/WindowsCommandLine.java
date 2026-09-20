@@ -48,6 +48,36 @@ public final class WindowsCommandLine {
 	}
 
 	/**
+	 * Arguments for {@link ProcessBuilder} that arrive unchanged.
+	 *
+	 * <p>{@code ProcessBuilder} has the same flaw as pty4j - it wraps an argument with a
+	 * space in quotes and escapes nothing inside - but it passes an argument that is
+	 * already quoted through untouched. So on Windows each argument that needs it is
+	 * quoted here, by the runtime's rules. A {@code .cmd} or {@code .bat} target is left
+	 * to Java, which refuses a quote it cannot pass to {@code cmd.exe} safely.
+	 *
+	 * @param arguments the program, then its arguments
+	 * @return the list to give the builder
+	 */
+	public static List<String> forProcessBuilder(List<String> arguments) {
+		if (!applies() || arguments.isEmpty()) {
+			return arguments;
+		}
+		var program = arguments.getFirst().toLowerCase(Locale.ROOT);
+		if (program.endsWith(".cmd") || program.endsWith(".bat")) {
+			return arguments;
+		}
+		var quoted = new java.util.ArrayList<String>(arguments.size());
+		quoted.add(arguments.getFirst());
+		for (var argument : arguments.subList(1, arguments.size())) {
+			var line = new StringBuilder();
+			quote(argument, line);
+			quoted.add(line.toString());
+		}
+		return quoted;
+	}
+
+	/**
 	 * Join arguments into one command line.
 	 *
 	 * @param arguments the program, then its arguments

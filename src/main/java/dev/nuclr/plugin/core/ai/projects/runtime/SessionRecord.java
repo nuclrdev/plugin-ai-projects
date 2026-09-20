@@ -56,6 +56,12 @@ public class SessionRecord {
 	 */
 	private String runtimeStamp;
 
+	/**
+	 * The CLI's own id for the conversation, for agents that can resume one - a
+	 * conversation window starts the next session from it. {@code null} starts afresh.
+	 */
+	private String conversationId;
+
 	/** Creates an empty record. */
 	public SessionRecord() {}
 

@@ -37,9 +37,9 @@ import com.jediterm.terminal.ui.JediTermWidget;
 import com.pty4j.PtyProcess;
 import com.pty4j.PtyProcessBuilder;
 
+import dev.nuclr.plugin.core.ai.projects.agent.AgentLaunch;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
-import dev.nuclr.plugin.core.ai.projects.connector.LaunchPlan;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import lombok.extern.slf4j.Slf4j;
@@ -378,61 +378,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 		startButton.setEnabled(false);
 
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> spawn(
-				new Launch(command, List.of(resolved.get().toString()), environment, notice, cli.displayName()),
+				new AgentLaunch(command, List.of(resolved.get().toString()), environment, notice, cli.displayName()),
 				workingDirectory));
-	}
-
-	/**
-	 * Write a briefing and add what hands it to the CLI. Off the event thread.
-	 *
-	 * @return how it was delivered; {@link ContextDelivery#NONE} when there is nothing to tell the agent
-	 */
-	private static ContextDelivery deliverBriefing(String briefingText, java.nio.file.Path briefingFile,
-			String executable, java.nio.file.Path resolvedExecutable, List<String> launched,
-			java.util.Map<String, String> environment) throws StartRefused {
-		if (briefingText.isEmpty()) {
-			return ContextDelivery.NONE;
-		}
-		try {
-			Files.createDirectories(briefingFile.getParent());
-			Files.writeString(briefingFile, briefingText, StandardCharsets.UTF_8);
-		} catch (IOException | RuntimeException e) {
-			throw new StartRefused("Could not write the agent's briefing to " + briefingFile + ": " + e.getMessage()
-					+ ". Not starting an agent without its instructions.");
-		}
-		var delivery = ContextDelivery.plan(executable, resolvedExecutable, briefingFile, briefingText, environment);
-		launched.addAll(delivery.arguments());
-		environment.putAll(delivery.environment());
-		return delivery;
-	}
-
-	/**
-	 * What to start: the command as shown and recorded, the command as run - with
-	 * the executable resolved and the briefing added - its environment, and a note
-	 * for the transcript.
-	 */
-	/**
-	 * One prepared launch.
-	 *
-	 * @param command     the command line as the user reads it
-	 * @param launched    the command line as it is actually spawned
-	 * @param environment the variables it starts with
-	 * @param notice      one line of explanation shown above the terminal
-	 * @param name        the label the terminal shows; the profile's CLI when there is a
-	 *                    profile, which need not be the window kind's own
-	 */
-	private record Launch(List<String> command, List<String> launched, java.util.Map<String, String> environment,
-			String notice, String name) {
-	}
-
-	/** Thrown while preparing a launch off the event thread, with a message for the user. */
-	private static final class StartRefused extends Exception {
-
-		private static final long serialVersionUID = 1L;
-
-		StartRefused(String message) {
-			super(message);
-		}
 	}
 
 	/**
@@ -458,75 +405,17 @@ public final class TerminalAgentWindow implements AgentWindow {
 		startButton.setEnabled(false);
 
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> {
-			final Launch launch;
+			final AgentLaunch launch;
 			try {
-				launch = prepareProfileLaunch(ref, workingDirectory, commanderVariables, briefingFile, runtimeDirectory,
-						home);
-			} catch (StartRefused e) {
+				launch = AgentLaunch.fromProfile(context, ref, workingDirectory, commanderVariables,
+						baseEnvironment(commanderVariables), briefingFile, runtimeDirectory, home, GIT_SOURCES,
+						executableResolver, AgentLaunch.Adapter.AS_PLANNED);
+			} catch (AgentLaunch.Refused e) {
 				SwingUtilities.invokeLater(() -> handleStartFailure(e.getMessage()));
 				return;
 			}
 			spawn(launch, workingDirectory);
 		});
-	}
-
-	/** Build a profile launch. Off the event thread. */
-	private Launch prepareProfileLaunch(dev.nuclr.plugin.core.ai.projects.profile.ProfileRef ref,
-			java.nio.file.Path workingDirectory, java.util.Map<String, String> commanderVariables,
-			java.nio.file.Path briefingFile, java.nio.file.Path runtimeDirectory, String home) throws StartRefused {
-
-		final dev.nuclr.plugin.core.ai.projects.profile.Profile profile;
-		try {
-			profile = context.profile(ref);
-		} catch (java.nio.file.NoSuchFileException e) {
-			throw new StartRefused("This agent starts from a profile that no longer exists"
-					+ (ref.place() == dev.nuclr.plugin.core.ai.projects.profile.ProfileRef.Place.LIBRARY
-							? " in your library" : " in this project")
-					+ ". Edit the agent and choose another.");
-		} catch (IOException e) {
-			throw new StartRefused("This agent's profile cannot be read: " + e.getMessage());
-		}
-		final LaunchPlan plan;
-		try {
-			plan = LaunchPlan.of(profile, runtimeDirectory, home, workingDirectory, GIT_SOURCES);
-		} catch (IllegalArgumentException e) {
-			throw new StartRefused(e.getMessage());
-		}
-
-		var command = plan.commandLine();
-		var executable = command.getFirst();
-		final Optional<java.nio.file.Path> resolved;
-		try {
-			resolved = executableResolver.apply(executable);
-		} catch (RuntimeException e) {
-			throw new StartRefused("The profile's executable is not a valid path: " + e.getMessage());
-		}
-		if (resolved.isEmpty()) {
-			throw new StartRefused("Could not find '" + executable
-					+ "' on PATH. Install it, or point the profile at its full path.");
-		}
-
-		var environment = baseEnvironment(commanderVariables);
-		putNamed(environment, plan.environment());
-		// The plugin's own variables win over a profile's, so an agent always knows where it is.
-		putNamed(environment, commanderVariables);
-		var launched = new ArrayList<>(command);
-		launched.set(0, resolved.get().toString());
-
-		var delivery = deliverBriefing(plan.briefing(), briefingFile, executable, resolved.get(), launched, environment);
-
-		try {
-			plan.writeFiles();
-		} catch (IOException | RuntimeException e) {
-			throw new StartRefused("Could not write the files the agent's profile needs: " + e.getMessage());
-		}
-		try {
-			environment.putAll(LaunchPlan.resolveSecrets(plan.secrets(), context.profileSecrets(), System.getenv()));
-		} catch (IllegalStateException e) {
-			throw new StartRefused(e.getMessage());
-		}
-		return new Launch(command, launched, environment, profileNotice(plan, delivery),
-				plan.provider().displayName());
 	}
 
 	/**
@@ -536,13 +425,13 @@ public final class TerminalAgentWindow implements AgentWindow {
 	 */
 	private static java.util.Map<String, String> baseEnvironment(java.util.Map<String, String> commanderVariables) {
 		var environment = new LinkedHashMap<>(System.getenv());
-		putNamed(environment, commanderVariables);
+		AgentLaunch.putNamed(environment, commanderVariables);
 		environment.put("TERM", environment.getOrDefault("TERM", "xterm-256color"));
 		return environment;
 	}
 
 	/** Start the process and hand it to the event thread. Off the event thread. */
-	private void spawn(Launch launch, java.nio.file.Path workingDirectory) {
+	private void spawn(AgentLaunch launch, java.nio.file.Path workingDirectory) {
 		PtyProcess started;
 		try {
 			started = WindowsCommandLine.setCommand(new PtyProcessBuilder(), launch.launched())
@@ -1068,27 +957,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 				log.debug("Could not stop the process itself: {}", fallbackFailure.getMessage());
 			}
 		}
-	}
-
-	/** Say which profile started the agent, how its briefing was delivered, and what was not applied. */
-	private static String profileNotice(LaunchPlan plan, ContextDelivery delivery) {
-		var notes = new ArrayList<String>();
-		notes.add("Started from a profile for " + plan.provider().displayName());
-		if (delivery.delivered()) {
-			notes.add(delivery.description());
-		}
-		if (!plan.notices().isEmpty()) {
-			notes.add("Not applied: " + String.join(", ", plan.notices()));
-		}
-		return String.join("; ", notes);
-	}
-
-	private static void putNamed(java.util.Map<String, String> target, java.util.Map<String, String> source) {
-		source.forEach((name, value) -> {
-			if (name != null && !name.isBlank() && value != null) {
-				target.put(name, value);
-			}
-		});
 	}
 
 	private static String escape(String text) {

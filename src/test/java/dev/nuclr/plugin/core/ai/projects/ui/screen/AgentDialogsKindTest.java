@@ -48,6 +48,16 @@ class AgentDialogsKindTest {
 	}
 
 	@Test
+	void aConversationWindowStaysWhenTheProfileIsForItsCli() {
+		assertEquals(Optional.of(AgentProvider.CLAUDE_CODE),
+				AgentDialogs.decidedBy(profileFor("claude-code"), "chat.claude-code", PROVIDERS));
+		assertEquals(List.of("terminal.claude-code", "chat.claude-code"),
+				AgentDialogs.kindsFor(AgentProvider.CLAUDE_CODE, PROVIDERS).stream().map(each -> each.kind()).toList());
+		assertEquals(List.of("terminal.codex", "chat.codex"),
+				AgentDialogs.kindsFor(AgentProvider.CODEX, PROVIDERS).stream().map(each -> each.kind()).toList());
+	}
+
+	@Test
 	void aProviderWithNoWindowKindInstalledDecidesNothing() {
 		assertTrue(AgentDialogs.decidedBy(profileFor("codex"), "terminal.shell", List.of()).isEmpty());
 	}

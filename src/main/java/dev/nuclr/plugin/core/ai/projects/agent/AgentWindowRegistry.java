@@ -7,13 +7,14 @@ import java.util.Optional;
 import java.nio.file.Path;
 import java.util.function.Function;
 
+import dev.nuclr.plugin.core.ai.projects.agent.chat.ChatAgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.terminal.TerminalAgentWindowProvider;
 
 /**
  * The kinds of agent window available in this installation.
  *
- * <p>Ships with the terminal providers and takes registrations for anything
+ * <p>Ships with the terminal and conversation providers and takes registrations for anything
  * else, so adding a log viewer or a task board later is a registration rather
  * than a change to the desktop. Lookups are by the stable kind string recorded
  * in {@code project.json}, and a kind that resolves to nothing yields a
@@ -32,6 +33,7 @@ public final class AgentWindowRegistry {
 	/** Create a registry with an injectable executable resolver. */
 	public AgentWindowRegistry(Function<String, Optional<Path>> executableResolver) {
 		TerminalAgentWindowProvider.builtIn(executableResolver).forEach(this::register);
+		ChatAgentWindowProvider.builtIn(executableResolver).forEach(this::register);
 	}
 
 	/**

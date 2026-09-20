@@ -61,8 +61,25 @@ class WindowsCommandLineTest {
 		var command = new ArrayList<>(List.of(javaExecutable, "-cp", classes, Echo.class.getName()));
 		command.addAll(AWKWARD);
 
-		var output = run(command);
+		assertEquals(AWKWARD, decode(run(command)));
+	}
 
+	@Test
+	void argumentsArriveUnchangedThroughAProcessBuilder() throws Exception {
+		// The conversation windows start agents with ProcessBuilder, which has pty4j's flaw.
+		var javaExecutable = ProcessHandle.current().info().command().orElseThrow();
+		var classes = Path.of(Echo.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toString();
+		var command = new ArrayList<>(List.of(javaExecutable, "-cp", classes, Echo.class.getName()));
+		command.addAll(AWKWARD);
+
+		var process = new ProcessBuilder(WindowsCommandLine.forProcessBuilder(command)).redirectErrorStream(true).start();
+		var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		assertTrue(process.waitFor(60, TimeUnit.SECONDS));
+
+		assertEquals(AWKWARD, decode(output));
+	}
+
+	private static List<String> decode(String output) {
 		var received = new ArrayList<String>();
 		var matcher = java.util.regex.Pattern.compile("ARG\\[([0-9,]*)]").matcher(output);
 		while (matcher.find()) {
@@ -74,7 +91,7 @@ class WindowsCommandLineTest {
 			}
 			received.add(text.toString());
 		}
-		assertEquals(AWKWARD, received, output);
+		return received;
 	}
 
 	@Test

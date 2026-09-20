@@ -128,7 +128,7 @@ public record ContextDelivery(List<String> arguments, Map<String, String> enviro
 	 * A TOML basic string, on one line. Codex parses a {@code -c} value as TOML, so a
 	 * quoted value is taken exactly, where raw text could parse as something else.
 	 */
-	static String tomlString(String text) {
+	public static String tomlString(String text) {
 		var escaped = new StringBuilder("\"");
 		for (var c : text.toCharArray()) {
 			switch (c) {
