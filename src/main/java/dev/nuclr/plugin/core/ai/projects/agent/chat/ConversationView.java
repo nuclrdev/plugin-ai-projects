@@ -533,6 +533,14 @@ final class ConversationView extends JPanel {
 			picture.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
 			add(top, BorderLayout.NORTH);
 			add(picture, BorderLayout.CENTER);
+			// The same three things the buttons do, where the hand goes for them. Set on
+			// the block and inherited by what is inside it, so a right-click anywhere over
+			// the picture - or over the line naming it - finds the menu; Swing knows which
+			// gesture opens one on this platform better than a mouse listener would.
+			setComponentPopupMenu(menu());
+			picture.setInheritsPopupMenu(true);
+			top.setInheritsPopupMenu(true);
+			header.setInheritsPopupMenu(true);
 			// Re-scaled as the window is resized, so a picture uses the width it is given
 			// without ever forcing the conversation wider than the frame.
 			addComponentListener(new java.awt.event.ComponentAdapter() {
@@ -542,6 +550,28 @@ final class ConversationView extends JPanel {
 				}
 			});
 			theme();
+		}
+
+		/**
+		 * The menu a right-click opens.
+		 *
+		 * <p>Open is offered whatever the format, unlike the button beside it: the button
+		 * row stays as short as it can be and only shows Open where nothing else will do,
+		 * while a menu that has been asked for should hold everything that can be done.
+		 */
+		private javax.swing.JPopupMenu menu() {
+			var menu = new javax.swing.JPopupMenu();
+			menu.add(item("Open", Glyphs.LINK, this::open));
+			menu.add(item("Copy to clipboard", Glyphs.COPY, this::copy));
+			menu.add(item("Save as...", Glyphs.SAVE, this::saveAs));
+			return menu;
+		}
+
+		/** One entry, with its glyph where a menu expects an icon. */
+		private static javax.swing.JMenuItem item(String label, String glyph, Runnable action) {
+			var entry = Glyphs.decorate(new javax.swing.JMenuItem(), glyph, label);
+			entry.addActionListener(event -> action.run());
+			return entry;
 		}
 
 		/** The image, or {@code null} when Java has no reader for it. */

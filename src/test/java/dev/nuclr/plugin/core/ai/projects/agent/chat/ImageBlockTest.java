@@ -171,6 +171,80 @@ class ImageBlockTest {
 		assertEquals(2, visible, "expected only copy and save to be offered");
 	}
 
+	/** The menu a right-click opens on a block. */
+	private static javax.swing.JPopupMenu menuOf(java.awt.Component block) {
+		return ((javax.swing.JComponent) block).getComponentPopupMenu();
+	}
+
+	private static javax.swing.JMenuItem entry(javax.swing.JPopupMenu menu, String label) {
+		for (var component : menu.getComponents()) {
+			if (component instanceof javax.swing.JMenuItem item && label.equals(item.getText())) {
+				return item;
+			}
+		}
+		throw new AssertionError("no \"" + label + "\" in " + menu.getComponentCount() + " entries");
+	}
+
+	@Test
+	void rightClickingAPictureOffersTheSameThreeThings() throws Exception {
+
+		var file = png("chart.png", 8, 8);
+		var view = view();
+		onEdt(() -> view.accept(event(file), false));
+		var block = blocks(view).getComponent(0);
+
+		var menu = menuOf(block);
+		assertNotNull(menu, "a picture has no context menu");
+		assertEquals(3, menu.getComponentCount(), "expected open, copy and save");
+		assertNotNull(entry(menu, "Open"));
+		assertNotNull(entry(menu, "Copy to clipboard"));
+		assertNotNull(entry(menu, "Save as..."));
+	}
+
+	@Test
+	void theMenuReachesTheWholeBlockAndNotOnlyItsEdge() throws Exception {
+
+		// The picture and the line naming it are what the pointer is actually over, so
+		// they have to lead to the same menu rather than to none.
+		var file = png("chart.png", 8, 8);
+		var view = view();
+		onEdt(() -> view.accept(event(file), false));
+		var block = (Container) blocks(view).getComponent(0);
+
+		for (var label : all(block, JLabel.class)) {
+			assertTrue(label.getInheritsPopupMenu(), "a right-click here would find nothing");
+		}
+	}
+
+	@Test
+	void theMenuIsThereForAPictureJavaCannotRead() throws Exception {
+
+		// Where it matters most: nothing is drawn, so the menu is the obvious way to open
+		// the thing in something that can show it.
+		var file = folder.resolve("diagram.svg");
+		Files.writeString(file, "<svg xmlns='http://www.w3.org/2000/svg'/>");
+		var view = view();
+		onEdt(() -> view.accept(event(file), false));
+
+		assertEquals(3, menuOf(blocks(view).getComponent(0)).getComponentCount());
+	}
+
+	@Test
+	void theMenusCopyDoesWhatTheButtonDoes() throws Exception {
+
+		var file = png("chart.png", 8, 8);
+		var view = view();
+		var clipboard = new java.awt.datatransfer.Clipboard("test");
+		clipboard.setContents(new java.awt.datatransfer.StringSelection("something else"), null);
+		view.clipboard(clipboard);
+		onEdt(() -> view.accept(event(file), false));
+
+		onEdt(() -> entry(menuOf(blocks(view).getComponent(0)), "Copy to clipboard").doClick());
+
+		assertTrue(List.of(clipboard.getAvailableDataFlavors())
+				.contains(java.awt.datatransfer.DataFlavor.imageFlavor), "the picture was not copied");
+	}
+
 	@Test
 	void savingPutsTheFileWhereItWasAskedForAndSaysSo() throws Exception {
 

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -114,8 +115,19 @@ class WindowsCommandLineTest {
 		var end = output.lastIndexOf(']');
 		Assumptions.assumeTrue(start >= 0 && end > start, "codex debug prompt-input gave no model input: " + output);
 
+		// A capture that will not parse says the pty lost some of it, not that Codex read
+		// the briefing wrongly - that would show up as a developer message that differs.
+		// Reported as something this run could not check rather than as a defect.
+		JsonNode input;
+		try {
+			input = Json.fromJson(output.substring(start, end + 1), JsonNode.class);
+		} catch (IOException e) {
+			Assumptions.abort("codex debug prompt-input could not be captured whole: " + e.getMessage());
+			return;
+		}
+
 		var developerText = "";
-		for (var item : Json.fromJson(output.substring(start, end + 1), JsonNode.class)) {
+		for (var item : input) {
 			if ("developer".equals(item.path("role").asString(""))) {
 				for (var part : item.path("content")) {
 					if (part.path("text").asString("").startsWith("MARK")) {
@@ -133,9 +145,11 @@ class WindowsCommandLineTest {
 		var process = WindowsCommandLine.setCommand(new PtyProcessBuilder(), command)
 				.setEnvironment(environment)
 				.setDirectory(System.getProperty("user.home"))
-				// Wide enough that no line of output is wrapped.
+				// Wide enough that no line of output is wrapped, and tall enough that it
+				// does not scroll: a pty is a screen, and what scrolls off the top of one
+				// under load is simply gone. Codex prints about a hundred lines here.
 				.setInitialColumns(20_000)
-				.setInitialRows(50)
+				.setInitialRows(1_000)
 				.setConsole(false)
 				.start();
 		var output = new ByteArrayOutputStream();
