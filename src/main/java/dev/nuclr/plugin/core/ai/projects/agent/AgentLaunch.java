@@ -28,9 +28,13 @@ import dev.nuclr.plugin.core.ai.projects.profile.ProfileRef;
  * @param notice      one line of explanation shown with the session
  * @param name        the label the window shows; the profile's CLI when there is a
  *                    profile, which need not be the window kind's own
+ * @param model       the model the profile asks for, or {@code null} when it names none
+ *                    and the CLI uses its own default
+ * @param effort      the reasoning effort the profile asks for, in the CLI's own
+ *                    vocabulary, or {@code null} for the model's default
  */
 public record AgentLaunch(List<String> command, List<String> launched, Map<String, String> environment,
-		String notice, String name) {
+		String notice, String name, String model, String effort) {
 
 	/** Thrown while preparing a launch off the event thread, with a message for the user. */
 	public static final class Refused extends Exception {
@@ -136,7 +140,8 @@ public record AgentLaunch(List<String> command, List<String> launched, Map<Strin
 			throw new Refused(e.getMessage());
 		}
 		return new AgentLaunch(command, launched, environment, profileNotice(plan, delivery),
-				plan.provider().displayName());
+				plan.provider().displayName(), blankToNull(profile.getHarness().getModel()),
+				blankToNull(profile.getHarness().getEffort()));
 	}
 
 	/**
@@ -160,6 +165,11 @@ public record AgentLaunch(List<String> command, List<String> launched, Map<Strin
 		launched.addAll(delivery.arguments());
 		environment.putAll(delivery.environment());
 		return delivery;
+	}
+
+	/** A profile field as something to show, or {@code null} when it is not filled in. */
+	private static String blankToNull(String value) {
+		return value == null || value.isBlank() ? null : value.strip();
 	}
 
 	/** Say which profile started the agent, how its briefing was delivered, and what was not applied. */

@@ -270,4 +270,103 @@ class ConversationViewTest {
 
 		assertEquals(started + 3, text.getFont().getSize());
 	}
+
+	/** Fire one entry of a component's right-click menu, found by its label. */
+	private static void chooseMenuItem(javax.swing.JComponent component, String label) throws Exception {
+		var menu = component.getComponentPopupMenu();
+		assertNotNull(menu, "no context menu on " + component.getClass().getSimpleName());
+		onEdt(() -> {
+			for (var listener : menu.getPopupMenuListeners()) {
+				listener.popupMenuWillBecomeVisible(new javax.swing.event.PopupMenuEvent(menu));
+			}
+			for (var child : menu.getComponents()) {
+				if (child instanceof javax.swing.JMenuItem entry && label.equals(entry.getText())) {
+					entry.doClick();
+					return;
+				}
+			}
+			throw new AssertionError("no \"" + label + "\" in the menu");
+		});
+	}
+
+	@Test
+	void theLineThatClosesATurnSaysWhatTheAgentIsRunningAs() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		var folder = java.nio.file.Path.of("work", "project").toAbsolutePath();
+		onEdt(() -> {
+			view.setLaunchFacts(folder, "claude-opus-5", "high");
+			view.accept(new AgentEvent.TurnEnded(false, null, null, 2_400L), true);
+		});
+
+		var line = lastLabel(blocks(view));
+		assertTrue(line.contains("Done"), line);
+		assertTrue(line.contains("claude-opus-5"), line);
+		assertTrue(line.contains("thinking high"), line);
+		assertTrue(line.contains(folder.toString()), "the whole path, not part of it: " + line);
+	}
+
+	@Test
+	void theModelTheSessionReportsBeatsTheOneTheProfileAsksFor() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		onEdt(() -> {
+			view.setLaunchFacts(java.nio.file.Path.of("."), "an-alias", "high");
+			view.accept(new AgentEvent.SessionStarted("s1", "openrouter/glm-5.1", "thinking medium"), true);
+			view.accept(new AgentEvent.TurnEnded(false, null, null, null), true);
+		});
+
+		var line = lastLabel(blocks(view));
+		assertTrue(line.contains("openrouter/glm-5.1"), line);
+		assertTrue(line.contains("thinking medium"), line);
+		assertFalse(line.contains("an-alias"), line);
+	}
+
+	/** The text of the last label in the column, which is the line closing a turn. */
+	private static String lastLabel(Container container) {
+		String found = null;
+		for (var child : container.getComponents()) {
+			if (child instanceof JLabel label) {
+				found = label.getText();
+			} else if (child instanceof Container nested) {
+				var deeper = lastLabel(nested);
+				if (deeper != null) {
+					found = deeper;
+				}
+			}
+		}
+		return found;
+	}
+
+	@Test
+	void aReplyCopiesItselfAsTheMarkdownItWasWrittenIn() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		var clipboard = clipboardFor(view);
+		onEdt(() -> view.accept(new AgentEvent.MessageChunk("Some **bold** text."), true));
+
+		chooseMenuItem(firstEditorPane(blocks(view)), "Copy as Markdown");
+
+		assertEquals("Some **bold** text.", clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
+	}
+
+	@Test
+	void whatTheUserSentCanBeCopiedWholeFromItsMenu() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		var clipboard = clipboardFor(view);
+		onEdt(() -> view.accept(new AgentEvent.UserMessage("hello there"), true));
+
+		chooseMenuItem(firstTextArea(blocks(view)), "Copy All");
+
+		assertEquals("hello there", clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
+	}
 }

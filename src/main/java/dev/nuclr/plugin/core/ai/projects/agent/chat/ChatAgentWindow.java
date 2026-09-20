@@ -114,6 +114,7 @@ public final class ChatAgentWindow implements AgentWindow {
 		this.backend = backend;
 		this.executableResolver = executableResolver;
 		buildLayout();
+		view.setLaunchFacts(context.workingDirectory(), null, null);
 		replay();
 		adoptRestoredSession();
 		saveTimer = new Timer(1_000, event -> save());
@@ -302,7 +303,7 @@ public final class ChatAgentWindow implements AgentWindow {
 		launched.set(0, resolved.get().toString());
 		var name = backend.provider() == null ? backend.displayName() : backend.provider().displayName();
 		return new AgentLaunch(command, launched, environment, backend.provider() == null ? ""
-				: "Started without a profile: " + name + " uses its own settings", name);
+				: "Started without a profile: " + name + " uses its own settings", name, null, null);
 	}
 
 	private void attach(AgentSession started, AgentLaunch launch, Path workingDirectory) {
@@ -322,6 +323,9 @@ public final class ChatAgentWindow implements AgentWindow {
 		}
 		session = started;
 		turnActive = false;
+		// What this session runs as, until it says otherwise itself.
+		view.forgetSessionFacts();
+		view.setLaunchFacts(workingDirectory, launch.model(), launch.effort());
 
 		var record = context.session();
 		record.setCommandLine(List.copyOf(launch.command()));

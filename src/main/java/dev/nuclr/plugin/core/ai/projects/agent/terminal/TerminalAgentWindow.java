@@ -386,7 +386,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 		startButton.setEnabled(false);
 
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> spawn(
-				new AgentLaunch(command, List.of(resolved.get().toString()), environment, notice, cli.displayName()),
+				new AgentLaunch(command, List.of(resolved.get().toString()), environment, notice, cli.displayName(),
+						null, null),
 				workingDirectory));
 	}
 

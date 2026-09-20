@@ -44,6 +44,7 @@ import javax.swing.event.HyperlinkEvent;
 import javax.swing.text.html.HTMLDocument;
 import javax.swing.text.html.HTMLEditorKit;
 
+import dev.nuclr.plugin.core.ai.projects.ui.CopyContextMenu;
 import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.ui.Reveal;
@@ -104,6 +105,16 @@ final class ConversationView extends JPanel {
 	private final Map<String, ToolBlock> tools = new HashMap<>();
 	private final Map<String, PermissionBlock> permissions = new HashMap<>();
 	private JComponent last;
+	/** The folder the agent runs in, shown on the line that closes a turn; {@code null} until it is known. */
+	private String folder;
+	/** The model the profile asks for, used when the CLI has not said which it is using. */
+	private String launchModel;
+	/** The reasoning effort the profile asks for, used when the CLI has not reported one. */
+	private String launchEffort;
+	/** The model the running session reported, which beats the profile's; {@code null} until it says. */
+	private String sessionModel;
+	/** The thinking level the running session reported, if it reports one. */
+	private String sessionEffort;
 	/** Points added to every font, as the user has zoomed; see {@link #zoom(int)}. */
 	private int fontScale;
 	/** Where copied code goes; {@code null} means the display's own, which is the only case that ships. */
@@ -190,7 +201,11 @@ final class ConversationView extends JPanel {
 				}
 			}
 			case AgentEvent.TurnEnded turn -> add(footer(turn));
-			case AgentEvent.SessionStarted started -> add(note(sessionLine(started), false));
+			case AgentEvent.SessionStarted started -> {
+				sessionModel = blankToNull(started.model());
+				sessionEffort = thinkingLevel(started.permissionMode());
+				add(note(sessionLine(started), false));
+			}
 			case AgentEvent.Notice notice -> add(note(notice.text(), notice.error()));
 			case AgentEvent.Image picture -> {
 				// Only the stored shape can be shown. The window writes an inline one to disk
@@ -334,6 +349,30 @@ final class ConversationView extends JPanel {
 		return line.toString();
 	}
 
+	/**
+	 * What the agent is running as, for the line that closes a turn: the model, the
+	 * thinking level and the folder it works in.
+	 *
+	 * <p>The session's own word beats the profile's where it gives one - a CLI may
+	 * resolve an alias, or have been told otherwise - and each part is left out when
+	 * neither knows it.
+	 *
+	 * @param workingDirectory where the agent runs, or {@code null} when not yet known
+	 * @param model            the model the profile asks for, or {@code null}
+	 * @param effort           the reasoning effort the profile asks for, or {@code null}
+	 */
+	void setLaunchFacts(Path workingDirectory, String model, String effort) {
+		folder = workingDirectory == null ? null : workingDirectory.toAbsolutePath().normalize().toString();
+		launchModel = blankToNull(model);
+		launchEffort = blankToNull(effort);
+	}
+
+	/** Forget what the last session reported, so the next one's facts are its own. */
+	void forgetSessionFacts() {
+		sessionModel = null;
+		sessionEffort = null;
+	}
+
 	private JComponent footer(AgentEvent.TurnEnded turn) {
 		var parts = new StringBuilder();
 		if (turn.error()) {
@@ -347,10 +386,39 @@ final class ConversationView extends JPanel {
 		if (turn.costUsd() != null && turn.costUsd() > 0) {
 			parts.append("  ·  ").append(String.format(Locale.ROOT, "$%.4f total", turn.costUsd()));
 		}
+		var model = sessionModel != null ? sessionModel : launchModel;
+		if (model != null) {
+			parts.append("  ·  ").append(model);
+		}
+		var effort = sessionEffort != null ? sessionEffort : launchEffort;
+		if (effort != null) {
+			parts.append("  ·  thinking ").append(effort);
+		}
+		if (folder != null) {
+			parts.append("  ·  ").append(folder);
+		}
 		var label = note(parts.toString(), turn.error());
 		label.setHorizontalAlignment(SwingConstants.TRAILING);
 		return label;
 	}
+
+	/** A value worth showing, or {@code null} when it is empty. */
+	private static String blankToNull(String value) {
+		return value == null || value.isBlank() ? null : value.strip();
+	}
+
+	/**
+	 * The thinking level a session reported, where it reports one at all: Pi says
+	 * {@code thinking medium} in the field the others use for a permission mode.
+	 *
+	 * @param mode what the session called its mode, or {@code null}
+	 * @return the level alone, or {@code null} when the field is something else
+	 */
+	private static String thinkingLevel(String mode) {
+		var text = blankToNull(mode);
+		return text != null && text.regionMatches(true, 0, "thinking ", 0, 9) ? blankToNull(text.substring(9)) : null;
+	}
+
 
 	private NoteLabel note(String text, boolean error) {
 		return new NoteLabel(text, error);
@@ -431,7 +499,8 @@ final class ConversationView extends JPanel {
 		return Math.max(7f, base + fontScale);
 	}
 
-	private static JTextArea textArea(String text, Font font) {
+	/** Text of a conversation, which can be read, selected and copied but not changed. */
+	private JTextArea textArea(String text, Font font) {
 		var area = new JTextArea(text);
 		area.setEditable(false);
 		area.setLineWrap(true);
@@ -439,6 +508,7 @@ final class ConversationView extends JPanel {
 		area.setOpaque(false);
 		area.setFont(font);
 		area.setBorder(BorderFactory.createEmptyBorder());
+		CopyContextMenu.install(area, () -> clipboard);
 		return area;
 	}
 
@@ -858,6 +928,11 @@ final class ConversationView extends JPanel {
 					}
 				}
 			});
+			// The reply is the one block with a source behind what is drawn, so it is the
+			// one that can offer the Markdown it was written in - rather than the pane's
+			// own document, which is full of the copy links and the shading that make it
+			// readable here and nowhere else.
+			CopyContextMenu.install(pane, () -> clipboard, markdown::toString);
 			add(pane, BorderLayout.CENTER);
 			render = new Timer(RENDER_DELAY_MS, event -> render());
 			render.setRepeats(false);
