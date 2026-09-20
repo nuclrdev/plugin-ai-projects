@@ -3,6 +3,7 @@ package dev.nuclr.plugin.core.ai.projects.agent.chat;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import dev.nuclr.plugin.core.ai.projects.store.Json;
@@ -114,8 +115,9 @@ final class ClaudeStreamTranslator {
 					events.add(new AgentEvent.ToolCall(text(block, "id"), parent, name, title(name, input),
 							detail(name, input)));
 				}
+				case "image" -> image(block).ifPresent(events::add);
 				default -> {
-					// images and server tool blocks are not shown yet
+					// server tool blocks are not shown yet
 				}
 			}
 		}
@@ -130,8 +132,35 @@ final class ClaudeStreamTranslator {
 			if ("tool_result".equals(block.path("type").asString(""))) {
 				events.add(new AgentEvent.ToolResult(text(block, "tool_use_id"), block.path("is_error").asBoolean(false),
 						limit(contentText(block.path("content")), OUTPUT_LIMIT)));
+				// A tool that returns a picture - a screenshot, a rendered chart - hands it
+				// back inside its result, after the result itself so it reads in order.
+				var returned = block.path("content");
+				if (returned.isArray()) {
+					for (var part : returned) {
+						if ("image".equals(part.path("type").asString(""))) {
+							image(part).ifPresent(events::add);
+						}
+					}
+				}
 			}
 		}
+	}
+
+	/**
+	 * A Claude image block as an event, if it carries anything.
+	 *
+	 * <p>The bytes are base64 in {@code source.data}, with the type beside them. Only the
+	 * inline shape is read: a {@code url} source is somewhere else's picture, not one the
+	 * agent produced here.
+	 */
+	private static Optional<AgentEvent> image(JsonNode block) {
+		var source = block.path("source");
+		var data = source.path("data").asString("");
+		if (data.isBlank()) {
+			return Optional.empty();
+		}
+		var mediaType = source.path("media_type").asString("image/png");
+		return Optional.of(new AgentEvent.Image(null, data, mediaType, null));
 	}
 
 	private static void result(JsonNode message, List<AgentEvent> events) {
@@ -232,6 +261,8 @@ final class ClaudeStreamTranslator {
 				}
 				text.append(block.path("text").asString(""));
 			} else if ("image".equals(block.path("type").asString(""))) {
+				// The picture itself is emitted beside the result by the caller; the
+				// result's own text only says one was there.
 				text.append("[image]");
 			}
 		}

@@ -1,6 +1,7 @@
 package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Component;
@@ -64,12 +65,15 @@ class ChatAgentWindowTest {
 					say("{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\""
 							+ id + "\",\"response\":{}}}");
 				} else if (line.contains("\"type\":\"user\"")) {
-					turn(in, sessionId);
+					turn(in, sessionId, line.contains("draw"));
 				}
 			}
 		}
 
-		private static void turn(BufferedReader in, String sessionId) throws IOException {
+		/** A one-pixel png, so the window has something ImageIO genuinely reads. */
+		static final String PIXEL = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+		private static void turn(BufferedReader in, String sessionId, boolean draws) throws IOException {
 			say("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + sessionId + "\",\"model\":\"fake\"}");
 			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"m1\"}}}");
 			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}}");
@@ -85,6 +89,10 @@ class ChatAgentWindowTest {
 			say("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\","
 					+ "\"tool_use_id\":\"t1\",\"is_error\":" + !allowed + ",\"content\":\""
 					+ (allowed ? "a.txt" + (always ? " (always)" : "") : "denied") + "\"}]}}");
+			if (draws) {
+				say("{\"type\":\"assistant\",\"message\":{\"id\":\"m2\",\"content\":[{\"type\":\"image\","
+						+ "\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"" + PIXEL + "\"}}]}}");
+			}
 			say("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"total_cost_usd\":0.01,\"duration_ms\":5}");
 		}
 
@@ -169,6 +177,37 @@ class ChatAgentWindowTest {
 		onEdt(() -> button(reopened.component(), "Deny").doClick());
 		waitFor(() -> reopened.outputForCopy().contains("[failed] denied"));
 		assertEquals("resumed-fake-1", store.session("a1").getConversationId());
+		onEdt(reopened::close);
+	}
+
+	@Test
+	void aPictureTheAgentSendsIsKeptAsAFileAndNotAsBase64() throws Exception {
+
+		var window = window();
+		onEdt(() -> window.sendInstruction("draw me something"));
+		waitFor(() -> window.outputForCopy().contains("[permission] Bash ls"), window);
+		onEdt(() -> button(window.component(), "Allow").doClick());
+		waitFor(() -> window.outputForCopy().contains("[image]"), window);
+
+		var images = store.paths().runtimeDirectory("a1").resolve("images");
+		try (var found = java.nio.file.Files.list(images)) {
+			var file = found.toList();
+			assertEquals(1, file.size(), "expected one stored picture, got " + file);
+			assertTrue(file.get(0).getFileName().toString().endsWith(".png"), file.get(0).toString());
+			assertTrue(javax.imageio.ImageIO.read(file.get(0).toFile()) != null, "the stored bytes are not an image");
+		}
+
+		// The point of storing it: a megabyte of base64 on a line of the transcript would
+		// be read again in full every time the window is rebuilt.
+		onEdt(window::close);
+		var transcript = java.nio.file.Files.readString(store.paths().transcriptFile("a1"));
+		assertTrue(transcript.contains("\"type\":\"image\""), "the picture was not recorded at all");
+		assertFalse(transcript.contains(FakeClaude.PIXEL), "the base64 reached the transcript");
+		assertTrue(transcript.contains("images"), "the recorded picture does not name its file");
+
+		// And a rebuilt window draws it from that file.
+		var reopened = window();
+		assertTrue(onEdt(reopened::outputForCopy).contains("[image]"), onEdt(reopened::outputForCopy));
 		onEdt(reopened::close);
 	}
 

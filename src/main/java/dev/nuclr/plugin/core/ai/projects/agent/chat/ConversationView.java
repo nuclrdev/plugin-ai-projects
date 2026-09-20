@@ -7,9 +7,14 @@ import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.Image;
 import java.awt.Rectangle;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
@@ -22,6 +27,7 @@ import java.util.function.BiConsumer;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JEditorPane;
@@ -38,7 +44,9 @@ import javax.swing.event.HyperlinkEvent;
 import javax.swing.text.html.HTMLDocument;
 import javax.swing.text.html.HTMLEditorKit;
 
+import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
+import dev.nuclr.plugin.core.ai.projects.ui.Reveal;
 
 /**
  * A conversation, drawn as Swing components rather than as a terminal screen.
@@ -68,6 +76,9 @@ final class ConversationView extends JPanel {
 	 * ever asked to open it.
 	 */
 	private static final String COPY_LINK = "nuclr-copy:";
+
+	/** How tall a picture is allowed to be before it is scaled down to fit a screenful. */
+	private static final int MAX_IMAGE_HEIGHT = 520;
 
 	/** How long a copied block says so before going back to offering the copy. */
 	private static final int COPIED_SHOWN_MS = 1_400;
@@ -181,6 +192,16 @@ final class ConversationView extends JPanel {
 			case AgentEvent.TurnEnded turn -> add(footer(turn));
 			case AgentEvent.SessionStarted started -> add(note(sessionLine(started), false));
 			case AgentEvent.Notice notice -> add(note(notice.text(), notice.error()));
+			case AgentEvent.Image picture -> {
+				// Only the stored shape can be shown. The window writes an inline one to disk
+				// and hands it back, so one arriving here with only its bytes was never stored
+				// and has no file to point at.
+				if (picture.path() == null) {
+					add(note("An image arrived that could not be stored.", true));
+				} else {
+					add(new ImageBlock(Path.of(picture.path()), picture.name()));
+				}
+			}
 		}
 		column.revalidate();
 		column.repaint();
@@ -456,6 +477,264 @@ final class ConversationView extends JPanel {
 		@Override
 		public boolean getScrollableTracksViewportHeight() {
 			return getParent() != null && getParent().getHeight() > getPreferredSize().height;
+		}
+	}
+
+	/**
+	 * A picture the agent produced: shown where Java can read it, offered where it cannot.
+	 *
+	 * <p>A real component rather than an image in a reply's HTML. The pane redraws a reply
+	 * from its Markdown after every chunk, which would decode the picture again each time,
+	 * and Swing's HTML would give it no way to be copied or saved. As its own block it is
+	 * decoded once, scaled to the width there is, and carries its own actions.
+	 */
+	private final class ImageBlock extends JPanel implements Themed {
+
+		private static final long serialVersionUID = 1L;
+		private final Path file;
+		private final String name;
+		private final JLabel header = new JLabel();
+		private final JLabel picture = new JLabel();
+		private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.TRAILING, 4, 0));
+		private final JButton copyButton = Glyphs.decorate(new JButton(), Glyphs.COPY, "Copy");
+		private final JButton saveButton = Glyphs.decorate(new JButton(), Glyphs.SAVE, "Save as...");
+		private final JButton openButton = Glyphs.decorate(new JButton(), Glyphs.LINK, "Open");
+		private final BufferedImage image;
+		private String note = "";
+
+		ImageBlock(Path file, String name) {
+			super(new BorderLayout());
+			this.file = file;
+			this.name = name == null || name.isBlank() ? file.getFileName().toString() : name;
+			this.image = read(file);
+
+			setOpaque(false);
+			copyButton.setToolTipText(image != null ? "Copy the image" : "Copy the file");
+			copyButton.addActionListener(event -> copy());
+			saveButton.setToolTipText("Save a copy, and show it in the file manager");
+			saveButton.addActionListener(event -> saveAs());
+			openButton.setToolTipText("Open in the application this system uses for it");
+			openButton.addActionListener(event -> open());
+			// Java draws png, jpeg, gif and bmp; anything else - an svg, a webp on a JDK
+			// without the reader - is a file the system knows better than this window does.
+			openButton.setVisible(image == null);
+			for (var button : new JButton[] { openButton, copyButton, saveButton }) {
+				button.putClientProperty("JButton.buttonType", "toolBarButton");
+				button.setFocusable(false);
+				actions.add(button);
+			}
+			actions.setOpaque(false);
+
+			var top = new JPanel(new BorderLayout());
+			top.setOpaque(false);
+			top.add(header, BorderLayout.CENTER);
+			top.add(actions, BorderLayout.EAST);
+			picture.setHorizontalAlignment(SwingConstants.LEADING);
+			picture.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
+			add(top, BorderLayout.NORTH);
+			add(picture, BorderLayout.CENTER);
+			// Re-scaled as the window is resized, so a picture uses the width it is given
+			// without ever forcing the conversation wider than the frame.
+			addComponentListener(new java.awt.event.ComponentAdapter() {
+				@Override
+				public void componentResized(java.awt.event.ComponentEvent event) {
+					showPicture();
+				}
+			});
+			theme();
+		}
+
+		/** The image, or {@code null} when Java has no reader for it. */
+		private static BufferedImage read(Path file) {
+			try {
+				return javax.imageio.ImageIO.read(file.toFile());
+			} catch (IOException | RuntimeException | OutOfMemoryError e) {
+				// Unreadable, unknown to ImageIO, or too large to hold: it is still a file.
+				return null;
+			}
+		}
+
+		/** Whether Java could read the picture, and so whether it is drawn here at all. */
+		boolean isDrawn() {
+			return image != null;
+		}
+
+		/** Draw the image at the width there is, never enlarged and never past a screenful. */
+		private void showPicture() {
+			if (image == null) {
+				picture.setIcon(null);
+				return;
+			}
+			var insets = getInsets();
+			var available = getWidth() - insets.left - insets.right;
+			var width = Math.min(image.getWidth(), available > 0 ? available : image.getWidth());
+			var height = Math.round(image.getHeight() * (width / (float) image.getWidth()));
+			if (height > MAX_IMAGE_HEIGHT) {
+				height = MAX_IMAGE_HEIGHT;
+				width = Math.round(image.getWidth() * (height / (float) image.getHeight()));
+			}
+			if (width <= 0 || height <= 0) {
+				return;
+			}
+			var shown = picture.getIcon();
+			if (shown != null && shown.getIconWidth() == width && shown.getIconHeight() == height) {
+				return;
+			}
+			picture.setIcon(new ImageIcon(image.getScaledInstance(width, height, Image.SCALE_SMOOTH)));
+		}
+
+		/** The image itself for anything that takes one, and the file for anything that does not. */
+		private void copy() {
+			try {
+				var target = clipboard != null ? clipboard : getToolkit().getSystemClipboard();
+				target.setContents(new ImageTransfer(image, file), null);
+				say("copied");
+			} catch (IllegalStateException | java.awt.HeadlessException e) {
+				say("could not copy it");
+			}
+		}
+
+		/** Save a copy wherever the user says, and then show it to them where it landed. */
+		private void saveAs() {
+			var chooser = new javax.swing.JFileChooser();
+			chooser.setDialogTitle("Save image");
+			chooser.setSelectedFile(new java.io.File(name));
+			if (chooser.showSaveDialog(this) != javax.swing.JFileChooser.APPROVE_OPTION) {
+				return;
+			}
+			var target = chooser.getSelectedFile().toPath().toAbsolutePath().normalize();
+			// The chooser does not ask, and saving a picture is not worth losing a file
+			// somebody already had under that name.
+			if (Files.exists(target) && Dialogs.showConfirmDialog(this,
+					target.getFileName() + " already exists. Replace it?", "Save image",
+					javax.swing.JOptionPane.OK_CANCEL_OPTION,
+					javax.swing.JOptionPane.WARNING_MESSAGE) != javax.swing.JOptionPane.OK_OPTION) {
+				return;
+			}
+			try {
+				var saved = saveTo(target);
+				say("saved to " + saved);
+				Reveal.show(saved);
+			} catch (IOException | RuntimeException e) {
+				say("could not save it: " + e.getMessage());
+			}
+		}
+
+		/**
+		 * Copy the picture to where the user chose.
+		 *
+		 * <p>Saves and nothing else: what to say about it, and showing it in the file
+		 * manager afterwards, belong to whoever asked for the save.
+		 *
+		 * @param target where to put it
+		 * @return where it landed
+		 * @throws IOException when it could not be written there
+		 */
+		Path saveTo(Path target) throws IOException {
+			var absolute = target.toAbsolutePath().normalize();
+			if (Files.isDirectory(absolute)) {
+				// Copying onto a folder would delete it when it happens to be empty.
+				throw new IOException(absolute.getFileName() + " is a folder");
+			}
+			if (absolute.getParent() != null) {
+				Files.createDirectories(absolute.getParent());
+			}
+			Files.copy(file, absolute, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+			return absolute;
+		}
+
+		/** Hand the file to whatever this system opens it with. */
+		private void open() {
+			try {
+				if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+					Desktop.getDesktop().open(file.toFile());
+					return;
+				}
+				say("no application to open it with");
+			} catch (IOException | RuntimeException e) {
+				say("could not open it: " + e.getMessage());
+			}
+		}
+
+		/** Say something about the picture, beside its name, until something else is said. */
+		private void say(String said) {
+			note = said;
+			updateHeader();
+		}
+
+		/** What the header says now, for the tests and for anything that asks. */
+		String headerText() {
+			return header.getText();
+		}
+
+		private void updateHeader() {
+			var parts = new StringBuilder(name);
+			if (image != null) {
+				parts.append("  ").append(image.getWidth()).append('x').append(image.getHeight());
+			}
+			if (!note.isEmpty()) {
+				parts.append("  - ").append(note);
+			}
+			header.setText(parts.toString());
+		}
+
+		@Override
+		public void theme() {
+			header.setForeground(muted());
+			var font = labelFont();
+			if (font != null) {
+				header.setFont(font);
+			}
+			updateHeader();
+			showPicture();
+		}
+	}
+
+	/**
+	 * A picture on the clipboard, and the file it came from.
+	 *
+	 * <p>Both, because what is wanted depends on where it is going: an editor or a chat
+	 * takes the image, a file manager or a mail client takes the file. An image Java
+	 * could not read offers only the file, which is all there is to give.
+	 */
+	private static final class ImageTransfer implements java.awt.datatransfer.Transferable {
+
+		private final Image image;
+		private final Path file;
+
+		ImageTransfer(Image image, Path file) {
+			this.image = image;
+			this.file = file;
+		}
+
+		@Override
+		public java.awt.datatransfer.DataFlavor[] getTransferDataFlavors() {
+			return image == null
+					? new java.awt.datatransfer.DataFlavor[] { java.awt.datatransfer.DataFlavor.javaFileListFlavor }
+					: new java.awt.datatransfer.DataFlavor[] { java.awt.datatransfer.DataFlavor.imageFlavor,
+							java.awt.datatransfer.DataFlavor.javaFileListFlavor };
+		}
+
+		@Override
+		public boolean isDataFlavorSupported(java.awt.datatransfer.DataFlavor flavor) {
+			for (var supported : getTransferDataFlavors()) {
+				if (supported.equals(flavor)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		@Override
+		public Object getTransferData(java.awt.datatransfer.DataFlavor flavor)
+				throws java.awt.datatransfer.UnsupportedFlavorException {
+			if (java.awt.datatransfer.DataFlavor.imageFlavor.equals(flavor) && image != null) {
+				return image;
+			}
+			if (java.awt.datatransfer.DataFlavor.javaFileListFlavor.equals(flavor)) {
+				return List.of(file.toFile());
+			}
+			throw new java.awt.datatransfer.UnsupportedFlavorException(flavor);
 		}
 	}
 
@@ -934,6 +1213,8 @@ final class ConversationView extends JPanel {
 				case AgentEvent.TurnEnded turn -> text.append(turn.error() ? "--- turn failed: " + turn.message() : "---");
 				case AgentEvent.SessionStarted started -> text.append("[nuclr] ").append(sessionLine(started));
 				case AgentEvent.Notice notice -> text.append("[nuclr] ").append(notice.text());
+				case AgentEvent.Image picture -> text.append("[image] ")
+						.append(picture.name() == null ? picture.path() : picture.name());
 			}
 			previous = event.getClass();
 		}

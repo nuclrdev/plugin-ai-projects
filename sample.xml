@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bookstore>
+  <book id="1" category="fiction">
+    <title>The Great Gatsby</title>
+    <author>F. Scott Fitzgerald</author>
+    <year>1925</year>
+    <price currency="USD">10.99</price>
+    <isbn>978-0-7432-7356-5</isbn>
+    <description>A novel of the Jazz Age, exploring themes of wealth and the American Dream.</description>
+  </book>
+  <book id="2" category="science-fiction">
+    <title>Dune</title>
+    <author>Frank Herbert</author>
+    <year>1965</year>
+    <price currency="USD">14.99</price>
+    <isbn>978-0-441-17271-9</isbn>
+    <description>A sweeping epic set on the desert planet Arrakis.</description>
+  </book>
+  <book id="3" category="non-fiction">
+    <title>A Brief History of Time</title>
+    <author>Stephen Hawking</author>
+    <year>1988</year>
+    <price currency="USD">12.99</price>
+    <isbn>978-0-553-38016-3</isbn>
+    <description>An exploration of the universe's origins and fundamental laws.</description>
+  </book>
+</bookstore>

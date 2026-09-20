@@ -604,13 +604,52 @@ public final class ChatAgentWindow implements AgentWindow {
 
 	/** Show an event and keep it: in memory for copying, on disk for the next window. */
 	private void record(AgentEvent event) {
-		view.accept(event, true);
-		if (event instanceof AgentEvent.ToolOutput) {
+		var shown = stored(event);
+		view.accept(shown, true);
+		if (shown instanceof AgentEvent.ToolOutput) {
 			// Progress only: the result that follows is what is kept.
 			return;
 		}
-		coalesce(history, event);
-		coalesce(unsaved, event);
+		coalesce(history, shown);
+		coalesce(unsaved, shown);
+		if (shown instanceof AgentEvent.ToolResult result) {
+			// A tool that made a picture and only said where it put it.
+			for (var file : ImageMentions.in(result.output(), imageRoots())) {
+				record(new AgentEvent.Image(file.toString(), null, null, file.getFileName().toString()));
+			}
+		}
+	}
+
+	/**
+	 * An image event in the shape that is kept: bytes written to the agent's runtime
+	 * folder and the path in their place. Everything else is passed through untouched.
+	 *
+	 * <p>Done before the event is shown or written, so the base64 exists only for as long
+	 * as it takes to decode it and never reaches the transcript or the window.
+	 */
+	private AgentEvent stored(AgentEvent event) {
+		if (!(event instanceof AgentEvent.Image picture) || !picture.isInline()) {
+			return event;
+		}
+		try {
+			var file = ImageStore.store(context.runtimeDirectory(), picture.data(), picture.mediaType());
+			return new AgentEvent.Image(file.toString(), null, picture.mediaType(),
+					picture.name() == null ? file.getFileName().toString() : picture.name());
+		} catch (IOException | RuntimeException e) {
+			log.debug("Could not store an image for {}: {}", context.agentId(), e.getMessage());
+			return new AgentEvent.Notice("An image arrived but could not be stored: " + e.getMessage(), true);
+		}
+	}
+
+	/**
+	 * Where a path named in a tool result may point for it to count as a picture the
+	 * agent made: the folder it is working in, and the one its own files go to.
+	 */
+	private List<Path> imageRoots() {
+		var roots = new java.util.ArrayList<Path>();
+		roots.add(context.workingDirectory());
+		roots.add(context.runtimeDirectory());
+		return roots;
 	}
 
 	/** Consecutive chunks are one message; kept as one they cost one line on disk rather than hundreds. */

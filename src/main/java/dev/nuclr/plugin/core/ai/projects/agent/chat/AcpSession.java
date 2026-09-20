@@ -240,6 +240,8 @@ final class AcpSession extends JsonLineSession {
 				if (!text.isEmpty()) {
 					emit(new AgentEvent.MessageChunk(text));
 				}
+				// A picture the agent sent mid-reply, after the line that stands for it.
+				contentImage(update.path("content")).ifPresent(this::emit);
 			}
 			case "agent_thought_chunk" -> {
 				var text = contentText(update.path("content"));
@@ -342,6 +344,22 @@ final class AcpSession extends JsonLineSession {
 			text.append('\n');
 		}
 		text.append(more);
+	}
+
+	/**
+	 * The picture in a content block, if it is one carrying bytes.
+	 *
+	 * @param content the block
+	 * @return the event, or empty
+	 */
+	static java.util.Optional<AgentEvent> contentImage(JsonNode content) {
+		if (!"image".equals(content.path("type").asString(""))) {
+			return java.util.Optional.empty();
+		}
+		var data = content.path("data").asString("");
+		return data.isBlank() ? java.util.Optional.empty()
+				: java.util.Optional.of(new AgentEvent.Image(null, data,
+						content.path("mimeType").asString("image/png"), null));
 	}
 
 	/** A content block's text; images and resources by name only. */

@@ -29,7 +29,8 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 		@JsonSubTypes.Type(value = AgentEvent.PermissionRequest.class, name = "permission"),
 		@JsonSubTypes.Type(value = AgentEvent.PermissionResolved.class, name = "permissionResolved"),
 		@JsonSubTypes.Type(value = AgentEvent.TurnEnded.class, name = "turnEnded"),
-		@JsonSubTypes.Type(value = AgentEvent.Notice.class, name = "notice") })
+		@JsonSubTypes.Type(value = AgentEvent.Notice.class, name = "notice"),
+		@JsonSubTypes.Type(value = AgentEvent.Image.class, name = "image") })
 public sealed interface AgentEvent {
 
 	/**
@@ -96,6 +97,29 @@ public sealed interface AgentEvent {
 	 * @param output everything so far, possibly cut short
 	 */
 	record ToolOutput(String id, String output) implements AgentEvent {
+	}
+
+	/**
+	 * An image the agent produced, or one a tool it ran wrote to disk.
+	 *
+	 * <p>Two shapes, and only one of them is ever written down. A backend that receives
+	 * an image inline - a base64 content block - emits it with {@code data} and no
+	 * {@code path}; the window writes the bytes into the agent's runtime folder and keeps
+	 * the event again with {@code path} and no {@code data}. A megabyte of base64 on
+	 * every line of the transcript would be re-read in full each time the window is
+	 * rebuilt, for a picture already sitting in a file.
+	 *
+	 * @param path      where the image is, once it is on disk; {@code null} until then
+	 * @param data      the image as base64, before it has been stored; {@code null} after
+	 * @param mediaType its media type, such as {@code image/png}, or {@code null}
+	 * @param name      what to call it, for the block's header and the save dialog
+	 */
+	record Image(String path, String data, String mediaType, String name) implements AgentEvent {
+
+		/** Whether this is the unstored shape, still carrying its bytes. */
+		public boolean isInline() {
+			return path == null && data != null && !data.isBlank();
+		}
 	}
 
 	/**
