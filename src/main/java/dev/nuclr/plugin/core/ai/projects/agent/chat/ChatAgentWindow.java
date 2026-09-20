@@ -36,8 +36,11 @@ import dev.nuclr.plugin.core.ai.projects.connector.GitCheckouts;
 import dev.nuclr.plugin.core.ai.projects.connector.GitSources;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
+import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalog;
+import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalogs;
 import dev.nuclr.plugin.core.ai.projects.store.Json;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectPaths;
+import dev.nuclr.plugin.core.ai.projects.ui.ChoicePicker;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.ui.TextContextMenu;
 import lombok.extern.slf4j.Slf4j;
@@ -82,6 +85,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final JTextArea input = new JTextArea(3, 40);
 	private final JButton sendButton = Glyphs.decorate(new JButton(), Glyphs.SEND, "Send");
 	private final JButton interruptButton = Glyphs.decorate(new JButton(), Glyphs.STOP, "Interrupt");
+	private final List<SlashCommand> commands = new ArrayList<>();
 	private final List<AgentEvent> history = new ArrayList<>();
 	private final List<AgentEvent> unsaved = new ArrayList<>();
 	private final Timer saveTimer;
@@ -101,6 +105,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	private boolean closed;
 	private String pendingPrompt;
 	private String summary = "";
+	private CommandPopup commandPopup;
 
 	/**
 	 * Build the window for one agent. Nothing is started here.
@@ -151,6 +156,16 @@ public final class ChatAgentWindow implements AgentWindow {
 				sendFromInput();
 			}
 		});
+		buildCommands();
+		// After the Enter binding above: the popup falls through to it when no list is up.
+		commandPopup = new CommandPopup(input, this::availableCommands, command -> command.run().accept(""));
+		input.addFocusListener(new java.awt.event.FocusAdapter() {
+			@Override
+			public void focusLost(java.awt.event.FocusEvent event) {
+				commandPopup.hide();
+			}
+		});
+
 		sendButton.addActionListener(event -> sendFromInput());
 		interruptButton.setToolTipText("Stop the current turn; the conversation goes on");
 		interruptButton.addActionListener(event -> interrupt());
@@ -234,6 +249,8 @@ public final class ChatAgentWindow implements AgentWindow {
 		var runtimeDirectory = context.runtimeDirectory();
 		var home = System.getProperty("user.home");
 		var resumeId = context.session().getConversationId();
+		var chosenModel = context.session().getModel();
+		var chosenEffort = context.session().getEffort();
 
 		stopRequested = false;
 		sessionNotStarted = true;
@@ -246,9 +263,9 @@ public final class ChatAgentWindow implements AgentWindow {
 		Thread.ofVirtual().name("nuclr-ai-chat-" + context.agentId()).start(() -> {
 			var environment = new LinkedHashMap<>(System.getenv());
 			AgentLaunch.putNamed(environment, commanderVariables);
-			final AgentLaunch launch;
+			final AgentLaunch planned;
 			try {
-				launch = ref != null
+				planned = ref != null
 						? AgentLaunch.fromProfile(context, ref, workingDirectory, commanderVariables, environment,
 								briefingFile, runtimeDirectory, home, GIT_SOURCES, executableResolver, plan -> {
 									if (plan.provider() != backend.provider()) {
@@ -268,6 +285,7 @@ public final class ChatAgentWindow implements AgentWindow {
 				SwingUtilities.invokeLater(() -> startFailed(e.getMessage()));
 				return;
 			}
+			var launch = withChosen(planned, chosenModel, chosenEffort);
 			// Events name the session they came from, so a late one from a replaced process is ignored.
 			var source = new AgentSession[1];
 			var started = backend.open(launch.launched(), launch.environment(), workingDirectory, resumeId,
@@ -500,6 +518,206 @@ public final class ChatAgentWindow implements AgentWindow {
 		}
 	}
 
+	// ------------------------------------------------------------ slash commands
+
+	/** Build the commands this window offers; which of them apply is decided per call. */
+	private void buildCommands() {
+		commands.add(new SlashCommand("model", "Choose the model this conversation runs on", "[model]",
+				this::chooseModel));
+		commands.add(new SlashCommand("thinking", "Choose how hard the model thinks", "[level]", this::chooseThinking));
+		commands.add(SlashCommand.of("new", "Forget this conversation and start the next one afresh",
+				this::newConversation));
+		commands.add(SlashCommand.of("clear", "Clear the screen, keeping the transcript", this::clearScreen));
+		commands.add(SlashCommand.of("stop", "Stop the agent", this::stop));
+		commands.add(SlashCommand.of("help", "List these commands", this::showCommands));
+	}
+
+	/**
+	 * The commands that mean something here and now.
+	 *
+	 * <p>A window with no provider behind it - a CLI this plugin has no connector for -
+	 * has no model or thinking level to offer, and listing them would be offering
+	 * something that cannot be done.
+	 *
+	 * @return the commands to list and to answer
+	 */
+	private List<SlashCommand> availableCommands() {
+		if (backend.provider() != null) {
+			return commands;
+		}
+		return commands.stream()
+				.filter(command -> !command.name().equals("model") && !command.name().equals("thinking"))
+				.toList();
+	}
+
+	private void showCommands() {
+		var text = new StringBuilder("Commands");
+		for (var command : availableCommands()) {
+			text.append("\n").append(command.display()).append("  -  ").append(command.summary());
+		}
+		text.append("\nA message that really begins with a slash is written //like this.");
+		record(new AgentEvent.Notice(text.toString(), false));
+		view.scrollToEnd();
+	}
+
+	/**
+	 * {@code /model}: the model named, or a picker of everything the CLI says it has.
+	 *
+	 * @param argument the model, or empty to choose from a list
+	 */
+	private void chooseModel(String argument) {
+		var provider = backend.provider();
+		if (provider == null) {
+			record(new AgentEvent.Notice("This window has no model of its own to set.", true));
+			return;
+		}
+		if (!argument.isBlank()) {
+			applyModel(argument.strip());
+			return;
+		}
+		withCatalog(provider, catalog -> {
+			var choices = catalog.models().stream()
+					.map(model -> new ChoicePicker.Choice(model.id(), model.label(), model.description()))
+					.toList();
+			if (choices.isEmpty()) {
+				record(new AgentEvent.Notice(provider.displayName() + " did not say which models it has"
+						+ (catalog.note() == null || catalog.note().isBlank() ? "" : " (" + catalog.note() + ")")
+						+ ". Name one yourself with /model <model>.", true));
+				return;
+			}
+			ChoicePicker.pick(root, provider.displayName() + " models", "Model for this conversation", choices,
+					context.session().getModel()).ifPresent(choice -> applyModel(choice.id()));
+		});
+	}
+
+	/**
+	 * {@code /thinking}: the level named, or a picker of the ones this model accepts.
+	 *
+	 * @param argument the level, or empty to choose from a list
+	 */
+	private void chooseThinking(String argument) {
+		var provider = backend.provider();
+		if (provider == null) {
+			record(new AgentEvent.Notice("This window has no thinking level of its own to set.", true));
+			return;
+		}
+		if (!argument.isBlank()) {
+			applyEffort(argument.strip());
+			return;
+		}
+		withCatalog(provider, catalog -> {
+			var levels = levels(catalog, provider);
+			if (levels.isEmpty()) {
+				record(new AgentEvent.Notice(provider.displayName() + " has no thinking levels to choose from.", true));
+				return;
+			}
+			var choices = levels.stream().map(level -> new ChoicePicker.Choice(level, level, null)).toList();
+			ChoicePicker.pick(root, provider.displayName() + " thinking", "How hard this model thinks", choices,
+					context.session().getEffort()).ifPresent(choice -> applyEffort(choice.id()));
+		});
+	}
+
+	/**
+	 * The levels the chosen model accepts, or the CLI's own vocabulary when it says nothing.
+	 *
+	 * @param catalog  what the CLI reported
+	 * @param provider the CLI
+	 * @return the levels, lowest first
+	 */
+	private List<String> levels(ModelCatalog catalog, AgentProvider provider) {
+		var chosen = context.session().getModel();
+		var levels = chosen == null ? null : catalog.model(chosen).map(ModelCatalog.Model::efforts).orElse(null);
+		return levels != null ? levels : provider.connector().efforts();
+	}
+
+	/**
+	 * Ask what a CLI offers, and act on the answer on the event thread.
+	 *
+	 * <p>Discovery starts the CLI, so the first call takes a moment and says so; later
+	 * ones are answered from the cache and open the picker at once.
+	 *
+	 * @param provider the CLI
+	 * @param then     given the catalogue, on the event thread
+	 */
+	private void withCatalog(AgentProvider provider, java.util.function.Consumer<ModelCatalog> then) {
+		var catalog = ModelCatalogs.shared().catalog(provider, "");
+		if (catalog.isDone()) {
+			then.accept(catalog.join());
+			return;
+		}
+		record(new AgentEvent.Notice("Asking " + provider.displayName() + " what it offers...", false));
+		view.scrollToEnd();
+		catalog.thenAccept(answer -> SwingUtilities.invokeLater(() -> {
+			if (!closed) {
+				then.accept(answer);
+			}
+		}));
+	}
+
+	/**
+	 * Run the conversation on another model from now on.
+	 *
+	 * <p>Applied by starting the session again, which is not as heavy as it sounds: the
+	 * CLI's conversation id is kept, so the next session resumes this conversation rather
+	 * than beginning another. The choice is stored with the session and not written into
+	 * the agent's profile, which other agents share.
+	 *
+	 * @param model the model, as the CLI takes it
+	 */
+	private void applyModel(String model) {
+		var stored = context.session();
+		stored.setModel(model);
+		context.host().sessionUpdated(context.agentId());
+		view.setLaunchFacts(context.workingDirectory(), model, stored.getEffort());
+		record(new AgentEvent.Notice("Model: " + model + (status.isLive()
+				? " - starting the session again to apply it; the conversation is resumed." : "."), false));
+		view.scrollToEnd();
+		save();
+		if (status.isLive()) {
+			restart();
+		}
+	}
+
+	/**
+	 * Think harder, or less hard, from now on. Applied like {@link #applyModel(String)}.
+	 *
+	 * @param effort the level, in the CLI's own vocabulary
+	 */
+	private void applyEffort(String effort) {
+		var stored = context.session();
+		stored.setEffort(effort);
+		context.host().sessionUpdated(context.agentId());
+		view.setLaunchFacts(context.workingDirectory(), stored.getModel(), effort);
+		record(new AgentEvent.Notice("Thinking: " + effort + (status.isLive()
+				? " - starting the session again to apply it; the conversation is resumed." : "."), false));
+		view.scrollToEnd();
+		save();
+		if (status.isLive()) {
+			restart();
+		}
+	}
+
+	/**
+	 * A launch with what the conversation chose in place of what the profile asked for.
+	 *
+	 * @param launch the launch as planned
+	 * @param model  the chosen model, or {@code null}
+	 * @param effort the chosen thinking level, or {@code null}
+	 * @return the launch to run
+	 */
+	private AgentLaunch withChosen(AgentLaunch launch, String model, String effort) {
+		var nothingChosen = (model == null || model.isBlank()) && (effort == null || effort.isBlank());
+		if (nothingChosen || backend.provider() == null) {
+			return launch;
+		}
+		var connector = backend.provider().connector();
+		return new AgentLaunch(LaunchOverrides.apply(launch.command(), connector, model, effort),
+				LaunchOverrides.apply(launch.launched(), connector, model, effort), launch.environment(),
+				launch.notice(), launch.name(),
+				model == null || model.isBlank() ? launch.model() : model,
+				effort == null || effort.isBlank() ? launch.effort() : effort);
+	}
+
 	private void newConversation() {
 		context.session().setConversationId(null);
 		context.host().sessionUpdated(context.agentId());
@@ -526,12 +744,37 @@ public final class ChatAgentWindow implements AgentWindow {
 	}
 
 	private void sendFromInput() {
+
 		var text = input.getText().strip();
 		if (text.isEmpty()) {
 			return;
 		}
+		var invocation = SlashCommands.parse(text).orElse(null);
+		if (invocation != null) {
+			input.setText("");
+			run(invocation);
+			return;
+		}
 		input.setText("");
-		send(text);
+		send(SlashCommands.unescape(text));
+	}
+
+	/**
+	 * Run what the user typed after a slash.
+	 *
+	 * <p>An unknown name is refused rather than sent on. The CLIs have slash commands of
+	 * their own in their terminal interfaces, but this window talks to them over a
+	 * protocol where a command is not a thing that can be said - it would reach the model
+	 * as the words "/foo", which is never what was meant.
+	 */
+	private void run(SlashCommands.Invocation invocation) {
+		var command = SlashCommands.find(availableCommands(), invocation.name()).orElse(null);
+		if (command == null) {
+			record(new AgentEvent.Notice("There is no /" + invocation.name() + " here. Type / to see what there is,"
+					+ " or start the line with // to send a message that really does begin with a slash.", true));
+			return;
+		}
+		command.run().accept(invocation.argument());
 	}
 
 	/** Send a prompt, starting the agent first when it is not running. */

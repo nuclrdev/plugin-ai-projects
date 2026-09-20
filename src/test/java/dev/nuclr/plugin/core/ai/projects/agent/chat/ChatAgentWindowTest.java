@@ -227,6 +227,81 @@ class ChatAgentWindowTest {
 		onEdt(window::close);
 	}
 
+	@Test
+	void aSlashCommandChoosesTheModelTheNextSessionRunsOn() throws Exception {
+
+		var window = window();
+
+		type(window, "/model opus-5");
+
+		assertEquals("opus-5", store.session("a1").getModel(), "the choice was not kept with the session");
+		var said = onEdt(window::outputForCopy);
+		assertTrue(said.contains("Model: opus-5"), said);
+		assertFalse(said.contains("> /model"), "the command was sent to the agent as a message: " + said);
+
+		// And it is what the CLI is actually started with.
+		onEdt(window::start);
+		waitFor(() -> store.session("a1").getCommandLine().contains("opus-5"), window);
+		var command = store.session("a1").getCommandLine();
+		assertEquals(1, command.stream().filter("--model"::equals).count(), "said twice: " + command);
+		assertEquals("opus-5", command.get(command.indexOf("--model") + 1), command.toString());
+
+		onEdt(window::stop);
+		waitFor(() -> window.status() == AgentStatus.STOPPED);
+		onEdt(window::close);
+	}
+
+	@Test
+	void anUnknownCommandIsRefusedRatherThanSentToTheModel() throws Exception {
+
+		var window = window();
+
+		type(window, "/wat");
+
+		var said = onEdt(window::outputForCopy);
+		assertTrue(said.contains("There is no /wat here"), said);
+		assertFalse(said.contains("> /wat"), said);
+		onEdt(window::close);
+	}
+
+	@Test
+	void aDoubledSlashSendsAMessageThatBeginsWithOne() throws Exception {
+
+		var window = window();
+
+		type(window, "//model is the command I meant");
+
+		waitFor(() -> window.outputForCopy().contains("> /model is the command I meant"), window);
+		onEdt(window::close);
+	}
+
+	/** Type into the composer and press Send, as the user does. */
+	private static void type(ChatAgentWindow window, String text) throws Exception {
+		onEdt(() -> {
+			composer(window.component()).setText(text);
+			return null;
+		});
+		onEdt(() -> {
+			button(window.component(), "Send").doClick();
+			return null;
+		});
+	}
+
+	private static javax.swing.JTextArea composer(Component component) {
+		if (component instanceof javax.swing.JTextArea area && area.isEditable()) {
+			return area;
+		}
+		if (component instanceof Container container) {
+			for (var child : container.getComponents()) {
+				var found = composer(child);
+				if (found != null) {
+					return found;
+				}
+			}
+		}
+		return null;
+	}
+
 	private static JButton button(Component component, String text) {
 		if (component instanceof JButton button && text.equals(button.getText())
 				&& button.isEnabled()) {

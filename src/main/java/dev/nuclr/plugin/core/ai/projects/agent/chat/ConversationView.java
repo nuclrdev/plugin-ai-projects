@@ -979,7 +979,8 @@ final class ConversationView extends JPanel {
 				header.append("<font color=\"").append(muted).append("\">")
 						.append(MiniMarkdown.escape(language)).append("</font>");
 			}
-			header.append("</td><td bgcolor=\"").append(shade).append("\" align=\"right\"><a href=\"")
+			header.append("</td><td bgcolor=\"").append(shade)
+					.append("\" align=\"right\"><a style=\"text-decoration:none\" href=\"")
 					.append(COPY_LINK).append(index).append("\">");
 			header.append(copied == index ? "copied" : Glyphs.span(Glyphs.COPY));
 			header.append("</a></td></tr></table>");

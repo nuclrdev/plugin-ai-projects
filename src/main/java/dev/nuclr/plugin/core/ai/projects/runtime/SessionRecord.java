@@ -62,6 +62,19 @@ public class SessionRecord {
 	 */
 	private String conversationId;
 
+	/**
+	 * A model chosen in the conversation itself, with {@code /model}, which wins over
+	 * the one the agent's profile asks for. {@code null} leaves the profile's alone.
+	 *
+	 * <p>Kept with the session rather than written back to the profile: a profile is
+	 * often shared between agents and checked in with the project, and trying another
+	 * model for one conversation is not a decision about all of them.
+	 */
+	private String model;
+
+	/** A thinking level chosen with {@code /thinking}, on the same terms as {@link #model}. */
+	private String effort;
+
 	/** Creates an empty record. */
 	public SessionRecord() {}
 

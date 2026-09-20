@@ -203,7 +203,7 @@ public final class Glyphs {
 	/** Focus a window. */
 	public static final String FOCUS = pick("🎯", "◎");
 	/** Copy. */
-	public static final String COPY = pick("📋", "❐");
+	public static final String COPY = pick("⧉", "❐");
 	/** Clear. */
 	public static final String CLEAR = pick("✨", "⌧");
 	/** Larger or smaller text. */

@@ -262,7 +262,7 @@ class GlyphIconTest {
 	void anUncolouredGlyphFollowsTheComponentsForeground() {
 
 		assertNull(Glyphs.icon(Glyphs.COPY).tint(), "copy is meant to follow the theme");
-		Assumptions.assumeTrue(somethingCanDraw(Glyphs.COPY), "nothing here draws the clipboard");
+		Assumptions.assumeTrue(somethingCanDraw(Glyphs.COPY), "nothing here draws the copy symbol");
 
 		var label = new JLabel();
 		label.setForeground(Color.RED);

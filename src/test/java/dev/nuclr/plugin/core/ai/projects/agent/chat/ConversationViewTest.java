@@ -112,6 +112,21 @@ class ConversationViewTest {
 	}
 
 	@Test
+	void theCodeBlockCopyIconIsNotUnderlinedLikeAWebLink() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		onEdt(() -> view.accept(new AgentEvent.MessageChunk("```java\nint x = 1;\n```\n"), true));
+
+		var document = (javax.swing.text.html.HTMLDocument) firstEditorPane(blocks(view)).getDocument();
+		var link = document.getIterator(javax.swing.text.html.HTML.Tag.A);
+		assertTrue(link.isValid(), "the block has no copy link");
+		assertEquals("none", String.valueOf(link.getAttributes()
+				.getAttribute(javax.swing.text.html.CSS.Attribute.TEXT_DECORATION)));
+	}
+
+	@Test
 	void eachCodeBlockCopiesItsOwnCodeAndNotTheOneBeforeIt() throws Exception {
 
 		var view = new ConversationView((requestId, option) -> {
