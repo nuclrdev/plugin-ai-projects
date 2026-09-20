@@ -8,7 +8,7 @@ import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 import dev.nuclr.plugin.core.ai.projects.agent.AgentLaunch;
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.ContextDelivery;
+import dev.nuclr.plugin.core.ai.projects.agent.ContextDelivery;
 import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
 
 /**
@@ -87,7 +87,7 @@ final class CodexBackend implements ChatBackend {
 				case "--add-dir" -> writable.add(value(planned, ++index, argument));
 				default -> throw new AgentLaunch.Refused("The profile starts Codex with \"" + argument
 						+ "\", which its app server - what a conversation window talks to - does not take. "
-						+ "Remove it from the profile's startup arguments, or use a terminal window.");
+						+ "Remove it from the profile's startup arguments.");
 			}
 		}
 		if (!writable.isEmpty()) {

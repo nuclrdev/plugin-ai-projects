@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -16,17 +17,20 @@ import javax.swing.JPanel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowHost;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
 import dev.nuclr.plugin.core.ai.projects.agent.MissingProviderWindow;
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
+import dev.nuclr.plugin.core.ai.projects.agent.chat.ChatAgentWindowProvider;
+import dev.nuclr.plugin.core.ai.projects.agent.terminal.TerminalAgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.model.HarnessSpec;
 import dev.nuclr.plugin.core.ai.projects.model.ProjectStorageMode;
+import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
 import dev.nuclr.plugin.core.ai.projects.runtime.RuntimeStamp;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectCreator;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
@@ -130,11 +134,22 @@ class AgentWindowRegistryTest {
 		var kinds = new AgentWindowRegistry().providers().stream()
 				.map(AgentWindowProvider::kind).toList();
 
-		assertTrue(kinds.contains("terminal.codex"));
-		assertTrue(kinds.contains("terminal.claude-code"));
-		assertTrue(kinds.contains("terminal.pi"));
-		assertTrue(kinds.contains("terminal.opencode"));
+		assertTrue(kinds.contains("chat.codex"));
+		assertTrue(kinds.contains("chat.claude-code"));
+		assertTrue(kinds.contains("chat.pi"));
+		assertTrue(kinds.contains("chat.opencode"));
 		assertTrue(kinds.contains("terminal.shell"));
+	}
+
+	@Test
+	void theShellIsTheOnlyTerminalOffered() {
+
+		// A terminal is for reaching the disk. An agent is a conversation, and a CLI
+		// that used to have a terminal kind of its own no longer has one to choose.
+		var terminals = new AgentWindowRegistry().providers().stream().map(AgentWindowProvider::kind)
+				.filter(kind -> kind.startsWith(TerminalAgentWindowProvider.KIND_PREFIX)).toList();
+
+		assertEquals(List.of(TerminalAgentWindowProvider.SHELL_KIND), terminals);
 	}
 
 	@Test
@@ -191,26 +206,79 @@ class AgentWindowRegistryTest {
 	}
 
 	@Test
-	void eachClIhasItsOwnKindAndDefaultExecutable() {
+	void aNewAgentDefaultsToAConversationRatherThanATerminal() {
+
+		// Which CLI is installed is the machine's business; that it is not shown in a
+		// terminal is not. The shell is the only default left that is one.
+		var kind = new AgentWindowRegistry().defaultKind();
+
+		assertTrue(kind.startsWith(ChatAgentWindowProvider.KIND_PREFIX) || "terminal.shell".equals(kind),
+				"a new agent should default to a conversation, or to the shell when no CLI is installed, but was "
+						+ kind);
+	}
+
+	@Test
+	void theFirstInstalledCliIsTheOneANewAgentTalksTo() {
+
+		// The one CLI on this machine, whatever its place in the menu, and a conversation
+		// with it rather than the terminal it would once have opened.
+		var registry = new AgentWindowRegistry(
+				executable -> "codex".equals(executable) ? Optional.of(root.resolve("codex")) : Optional.empty());
+
+		assertEquals("chat.codex", registry.defaultKind());
+	}
+
+	@Test
+	void withNoCliInstalledANewAgentGetsTheShell() {
+		assertEquals("terminal.shell", new AgentWindowRegistry(executable -> Optional.empty()).defaultKind());
+	}
+
+	@Test
+	void everyAgentCliHasAConversationWindowAndNotOnlyATerminal() {
+
+		// What makes the default above total. The day a CLI is added with no conversation
+		// backend, this fails rather than that agent having no window at all.
+		var kinds = new AgentWindowRegistry().providers().stream().map(AgentWindowProvider::kind).toList();
 
 		for (var cli : AgentCli.BUILT_IN) {
-			assertTrue(cli.kind().startsWith(AgentCli.KIND_PREFIX));
+			if (!cli.isShell()) {
+				assertTrue(kinds.contains(ChatAgentWindowProvider.KIND_PREFIX + cli.id()),
+						cli.displayName() + " has no window at all now that its terminal is gone");
+			}
+		}
+	}
+
+	@Test
+	void eachClIhasItsOwnIdAndDefaultExecutable() {
+
+		for (var cli : AgentCli.BUILT_IN) {
+			assertEquals(cli, AgentCli.byId(cli.id()).orElseThrow(), cli.displayName() + " cannot be looked up");
 			assertNotNull(cli.defaultHarness().getExecutable(),
 					cli.displayName() + " has no default executable");
 		}
 	}
 
 	@Test
-	void theShellEntryIsTheOneWithoutAnAgentCli() {
-		var shell = AgentCli.byKind("terminal.shell").orElseThrow();
-		assertTrue(shell.isShell());
-		assertFalse(AgentCli.byKind("terminal.codex").orElseThrow().isShell());
+	void theCatalogKnowsNothingOfWindowKinds() {
+
+		// The split: a CLI is a command with a name, and each kind of window spells the
+		// same id into a prefix of its own.
+		assertEquals("terminal.shell", TerminalAgentWindowProvider.kindFor(AgentCli.byId("shell").orElseThrow()));
+		assertEquals("chat.codex", ChatAgentWindowProvider.kindFor(AgentProvider.CODEX));
+		assertTrue(AgentCli.byId("terminal.codex").isEmpty(), "a window kind is not a CLI id");
 	}
 
 	@Test
-	void anUnknownKindIsNotMistakenForOneOfOurs() {
-		assertTrue(AgentCli.byKind("terminal.nonesuch").isEmpty());
-		assertTrue(AgentCli.byKind(null).isEmpty());
+	void theShellEntryIsTheOneWithoutAnAgentCli() {
+		var shell = AgentCli.byId("shell").orElseThrow();
+		assertTrue(shell.isShell());
+		assertFalse(AgentCli.byId("codex").orElseThrow().isShell());
+	}
+
+	@Test
+	void anUnknownCliIsNotMistakenForOneOfOurs() {
+		assertTrue(AgentCli.byId("nonesuch").isEmpty());
+		assertTrue(AgentCli.byId(null).isEmpty());
 	}
 
 	@Test
@@ -249,7 +317,7 @@ class AgentWindowRegistryTest {
 	void providersAreListedInMenuOrder() {
 		var kinds = new AgentWindowRegistry().providers().stream()
 				.map(AgentWindowProvider::kind).limit(5).toList();
-		assertEquals(List.of("terminal.codex", "terminal.claude-code", "terminal.pi",
-				"terminal.opencode", "terminal.shell"), kinds);
+		assertEquals(List.of("chat.claude-code", "chat.codex", "chat.pi",
+				"chat.opencode", "terminal.shell"), kinds);
 	}
 }

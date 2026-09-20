@@ -3,6 +3,8 @@ package dev.nuclr.plugin.core.ai.projects.agent.terminal;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import com.jediterm.core.util.TermSize;
@@ -21,12 +23,17 @@ import com.pty4j.WinSize;
  *
  * <p>The tap must stay cheap. It runs on JediTerm's reader thread, and anything
  * slow here shows up as a terminal that lags behind its process.
+ *
+ * <p>A process ending is not the same as its output having been read: the last of what
+ * it printed is still in the pty when it exits, and whoever reports the exit has to wait
+ * for {@link #awaitDrained(long)} first or it will report it over the top of the output.
  */
 final class AgentTtyConnector extends ProcessTtyConnector {
 
 	private final PtyProcess process;
 	private final String name;
 	private final Consumer<String> outputListener;
+	private final CountDownLatch drained = new CountDownLatch(1);
 
 	/**
 	 * Wrap a pty process.
@@ -47,7 +54,17 @@ final class AgentTtyConnector extends ProcessTtyConnector {
 
 	@Override
 	public int read(char[] buffer, int offset, int length) throws IOException {
-		var read = super.read(buffer, offset, length);
+		int read;
+		try {
+			read = super.read(buffer, offset, length);
+		} catch (IOException | RuntimeException e) {
+			// The reader is done, however it ended; nobody is waiting for more.
+			drained.countDown();
+			throw e;
+		}
+		if (read < 0) {
+			drained.countDown();
+		}
 		if (read > 0 && outputListener != null) {
 			try {
 				outputListener.accept(new String(buffer, offset, read));
@@ -74,6 +91,26 @@ final class AgentTtyConnector extends ProcessTtyConnector {
 	@Override
 	public String getName() {
 		return name;
+	}
+
+	/**
+	 * Wait until the pty has been read to its end.
+	 *
+	 * <p>Called off the event thread by whoever is about to write the session's last word,
+	 * so that what the agent printed is in the transcript before the line saying it exited.
+	 * Gives up after the timeout rather than holding the session open on a reader that has
+	 * stopped without reaching the end.
+	 *
+	 * @param millis how long to wait at most
+	 * @return whether the end was actually reached
+	 */
+	boolean awaitDrained(long millis) {
+		try {
+			return drained.await(millis, TimeUnit.MILLISECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return false;
+		}
 	}
 
 	/** The underlying process, so the window can report its pid and destroy it. */

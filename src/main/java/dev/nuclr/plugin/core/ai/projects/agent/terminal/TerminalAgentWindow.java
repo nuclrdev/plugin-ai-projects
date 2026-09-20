@@ -37,6 +37,7 @@ import com.jediterm.terminal.ui.JediTermWidget;
 import com.pty4j.PtyProcess;
 import com.pty4j.PtyProcessBuilder;
 
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentLaunch;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
@@ -70,6 +71,13 @@ public final class TerminalAgentWindow implements AgentWindow {
 
 	/** How much recent output is kept for prompt detection. */
 	private static final int RECENT_OUTPUT_LIMIT = 4_000;
+
+	/**
+	 * How long an exited process is given to have its last output read before the session
+	 * is ended anyway. Long enough for a pty that is about to reach its end, short enough
+	 * that a reader which has stopped without reaching one does not hold the window.
+	 */
+	private static final long EXIT_DRAIN_MILLIS = 2_000;
 
 	/** How much of the transcript is handed over for copying or reading elsewhere. */
 	private static final int TRANSCRIPT_TAIL_CHARS = 200_000;
@@ -564,6 +572,10 @@ public final class TerminalAgentWindow implements AgentWindow {
 				Thread.currentThread().interrupt();
 				return;
 			}
+			// The process is gone, but the last of what it printed may still be in the pty.
+			// A command that runs for a moment - anything the user reads afterwards rather
+			// than watches - is all tail, and reporting the exit first would bury it.
+			watched.awaitDrained(EXIT_DRAIN_MILLIS);
 			SwingUtilities.invokeLater(() -> onExit(watched, exitCode));
 		});
 	}

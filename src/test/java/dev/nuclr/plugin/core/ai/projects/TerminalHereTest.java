@@ -22,7 +22,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.nuclr.platform.plugin.NuclrMenuResource;
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
+import dev.nuclr.plugin.core.ai.projects.agent.terminal.TerminalAgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.model.ProjectStorageMode;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectCatalog;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectCreator;
@@ -85,7 +86,7 @@ class TerminalHereTest {
 
 	@Test
 	void aShellIsOneOfTheWindowKindsAlready() {
-		var shell = AgentCli.byKind("terminal.shell").orElseThrow();
+		var shell = AgentCli.byId("shell").orElseThrow();
 		assertTrue(shell.isShell());
 		assertNotNull(shell.defaultHarness().getExecutable());
 	}
@@ -126,7 +127,7 @@ class TerminalHereTest {
 		try (var store = reopen()) {
 			var agent = store.project().getAgents().getFirst();
 			assertNull(agent.getProfileId(), "a terminal runs the shell, not an agent CLI");
-			assertTrue(AgentCli.byKind(agent.getWindowKind()).orElseThrow().isShell());
+			assertEquals(TerminalAgentWindowProvider.SHELL_KIND, agent.getWindowKind());
 		}
 	}
 

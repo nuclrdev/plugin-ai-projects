@@ -19,7 +19,8 @@ import java.util.Locale;
  *   <li>backslashes before the closing quote are doubled; others are left alone.</li>
  * </ul>
  * A {@code .cmd} or {@code .bat} shim is read by {@code cmd.exe} first, which knows
- * none of this; {@link ContextDelivery} already keeps multi-line text away from those.
+ * none of this; {@link dev.nuclr.plugin.core.ai.projects.agent.ContextDelivery ContextDelivery}
+ * already keeps multi-line text away from those.
  */
 public final class WindowsCommandLine {
 

@@ -16,7 +16,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.ContextDelivery;
+import dev.nuclr.plugin.core.ai.projects.agent.ContextDelivery;
 import dev.nuclr.plugin.core.ai.projects.connector.GitCheckouts;
 import dev.nuclr.plugin.core.ai.projects.connector.GitSources;
 import dev.nuclr.plugin.core.ai.projects.connector.LaunchPlan;

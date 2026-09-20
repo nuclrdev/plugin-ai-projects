@@ -13,7 +13,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.ContextDelivery;
+import dev.nuclr.plugin.core.ai.projects.agent.ContextDelivery;
 import dev.nuclr.plugin.core.ai.projects.connector.GitSources;
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileRecord;

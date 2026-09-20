@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.ContextDelivery;
 import dev.nuclr.plugin.core.ai.projects.connector.GitSources;
 import dev.nuclr.plugin.core.ai.projects.connector.LaunchPlan;
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;

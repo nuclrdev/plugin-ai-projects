@@ -8,22 +8,26 @@ import java.nio.file.Path;
 import java.util.function.Function;
 
 import dev.nuclr.plugin.core.ai.projects.agent.chat.ChatAgentWindowProvider;
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.terminal.TerminalAgentWindowProvider;
 
 /**
  * The kinds of agent window available in this installation.
  *
- * <p>Ships with the terminal and conversation providers and takes registrations for anything
- * else, so adding a log viewer or a task board later is a registration rather
- * than a change to the desktop. Lookups are by the stable kind string recorded
- * in {@code project.json}, and a kind that resolves to nothing yields a
- * {@link MissingProviderWindow} rather than an error - a project must open even
- * when part of it cannot.
+ * <p>Ships with a conversation per agent CLI and one terminal - the plain shell, for
+ * reaching the disk - and takes registrations for anything else, so adding a log viewer
+ * or a task board later is a registration rather than a change to the desktop. Lookups
+ * are by the stable kind string recorded in {@code project.json}, and a kind that
+ * resolves to nothing yields a {@link MissingProviderWindow} rather than an error - a
+ * project must open even when part of it cannot.
+ *
+ * <p>Agent CLIs had a terminal kind of their own once. They are drawn as conversations
+ * now, and a project that still names {@code terminal.codex} is carried over when it is
+ * opened; see {@code ProjectMigration.toConversations}.
  */
 public final class AgentWindowRegistry {
 
 	private final Map<String, AgentWindowProvider> providers = new LinkedHashMap<>();
+	private final Function<String, Optional<Path>> executableResolver;
 
 	/** Create a registry holding the built-in providers. */
 	public AgentWindowRegistry() {
@@ -32,8 +36,9 @@ public final class AgentWindowRegistry {
 
 	/** Create a registry with an injectable executable resolver. */
 	public AgentWindowRegistry(Function<String, Optional<Path>> executableResolver) {
-		TerminalAgentWindowProvider.builtIn(executableResolver).forEach(this::register);
-		ChatAgentWindowProvider.builtIn(executableResolver).forEach(this::register);
+		this.executableResolver = executableResolver == null ? AgentCli::resolveOnPath : executableResolver;
+		ChatAgentWindowProvider.builtIn(this.executableResolver).forEach(this::register);
+		TerminalAgentWindowProvider.builtIn(this.executableResolver).forEach(this::register);
 	}
 
 	/**
@@ -67,20 +72,32 @@ public final class AgentWindowRegistry {
 	}
 
 	/**
-	 * The kind new agents get when nothing else is specified: the first installed
-	 * agent CLI, or the plain shell when none of them are installed.
+	 * The kind new agents get when nothing else is specified: a conversation with the
+	 * first installed agent CLI, or the plain shell when none of them are installed.
+	 *
+	 * <p>A conversation is what an agent gets because it is told what a terminal has to
+	 * infer from the look of the screen - when a turn has ended, what a permission prompt
+	 * is asking and what answers it takes - and because it needs nothing of the host's
+	 * terminal libraries. The shell is the one terminal left, and it is a way to reach the
+	 * disk rather than a way to talk to an agent.
+	 *
+	 * <p>Registration order is what "first" means, so the default is the conversation at
+	 * the top of the same menu the user is about to see rather than one chosen by a
+	 * separate order of its own.
 	 *
 	 * @return a window kind, never {@code null}
 	 */
 	public String defaultKind() {
 		for (var provider : providers.values()) {
-			if (provider instanceof TerminalAgentWindowProvider terminal
-					&& !terminal.cli().isShell()
-					&& terminal.isCliInstalled()) {
-				return terminal.kind();
+			if (!provider.kind().startsWith(ChatAgentWindowProvider.KIND_PREFIX) || !provider.isAvailable()) {
+				continue;
+			}
+			var executable = provider.defaultHarness().getExecutable();
+			if (executable != null && executableResolver.apply(executable).isPresent()) {
+				return provider.kind();
 			}
 		}
-		return AgentCli.KIND_PREFIX + "shell";
+		return TerminalAgentWindowProvider.SHELL_KIND;
 	}
 
 	/**

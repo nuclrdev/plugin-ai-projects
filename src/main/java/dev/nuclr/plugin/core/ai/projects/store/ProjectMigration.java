@@ -9,7 +9,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
+import dev.nuclr.plugin.core.ai.projects.agent.chat.ChatAgentWindowProvider;
+import dev.nuclr.plugin.core.ai.projects.agent.terminal.TerminalAgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.harness.ContextItem;
 import dev.nuclr.plugin.core.ai.projects.harness.ContextResolver;
 import dev.nuclr.plugin.core.ai.projects.harness.EffectiveHarness;
@@ -53,6 +55,41 @@ public final class ProjectMigration {
 			"pi", AgentProvider.PI);
 
 	private ProjectMigration() {
+	}
+
+	/**
+	 * Move agents off the terminal kinds their CLIs used to have.
+	 *
+	 * <p>An agent CLI is drawn as a conversation now, and only the plain shell is still a
+	 * terminal, so an agent recorded as {@code terminal.codex} names a window kind this
+	 * installation no longer registers - it would open as a missing provider. It becomes
+	 * {@code chat.codex}, which runs the same CLI in the same folder from the same profile.
+	 *
+	 * <p>Not tied to the schema version, and safe to run on every open: a project with
+	 * nothing to move reports no change and is not written.
+	 *
+	 * @param project the project as read, changed in place
+	 * @return whether anything changed, so the project must be written
+	 */
+	public static boolean toConversations(AiProject project) {
+
+		if (project == null || project.getAgents() == null) {
+			return false;
+		}
+		var moved = 0;
+		for (var agent : project.getAgents()) {
+			var cli = cliOf(agent.getWindowKind(), TerminalAgentWindowProvider.KIND_PREFIX)
+					.filter(each -> !each.isShell()).orElse(null);
+			if (cli != null) {
+				agent.setWindowKind(ChatAgentWindowProvider.KIND_PREFIX + cli.id());
+				moved++;
+			}
+		}
+		if (moved > 0) {
+			log.info("Moved {} agent(s) in project {} from a terminal to a conversation", moved,
+					project.displayName());
+		}
+		return moved > 0;
 	}
 
 	/**
@@ -213,19 +250,35 @@ public final class ProjectMigration {
 	 * window ran that CLI, and a shell or OpenCode window ran no provider at all,
 	 * whatever the project harness inherited. Only a window kind the plugin does not
 	 * know falls back to the harness's provider, by its current or its old name.
+	 *
+	 * <p>Both spellings of a CLI's kind are read - the terminal it had and the conversation
+	 * it has - so the answer does not depend on whether {@link #toConversations(AiProject)}
+	 * has run yet.
 	 */
 	private static Optional<AgentProvider> provider(EffectiveHarness harness, AgentDefinition agent) {
-		var kind = agent.getWindowKind() == null ? "" : agent.getWindowKind();
-		if (kind.startsWith(AgentCli.KIND_PREFIX)) {
-			var known = AgentCli.byKind(kind);
-			if (known.isPresent()) {
-				return AgentProvider.byId(known.get().id());
-			}
+		var kind = agent.getWindowKind();
+		var known = cliOf(kind, TerminalAgentWindowProvider.KIND_PREFIX)
+				.or(() -> cliOf(kind, ChatAgentWindowProvider.KIND_PREFIX));
+		if (known.isPresent()) {
+			return AgentProvider.byId(known.get().id());
 		}
 		var named = harness.provider() == null ? "" : harness.provider().strip();
 		var provider = AgentProvider.byId(named);
 		return provider.isPresent() ? provider
 				: Optional.ofNullable(OLD_PROVIDERS.get(named.toLowerCase(java.util.Locale.ROOT)));
+	}
+
+	/**
+	 * The CLI a window kind names, when the kind is one of that prefix's and the CLI is
+	 * one this plugin ships.
+	 *
+	 * @param kind   the window kind recorded for an agent, or {@code null}
+	 * @param prefix the window-kind prefix to read it as
+	 * @return the CLI, or empty
+	 */
+	private static Optional<AgentCli> cliOf(String kind, String prefix) {
+		return kind == null || !kind.startsWith(prefix) ? Optional.empty()
+				: AgentCli.byId(kind.substring(prefix.length()));
 	}
 
 	/**

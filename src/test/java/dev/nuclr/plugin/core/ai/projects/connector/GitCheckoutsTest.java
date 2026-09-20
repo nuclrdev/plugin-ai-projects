@@ -16,7 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
 
 /** Local copies of a real repository, served from a folder, through the git command line. */
 class GitCheckoutsTest {

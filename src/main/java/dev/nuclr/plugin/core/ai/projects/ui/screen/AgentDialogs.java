@@ -29,7 +29,7 @@ import javax.swing.JTextField;
 
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.agent.chat.ChatAgentWindowProvider;
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
+import dev.nuclr.plugin.core.ai.projects.agent.terminal.TerminalAgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces;
@@ -148,8 +148,8 @@ public final class AgentDialogs {
 					&& located.ref().place() == ProfileRef.Place.LIBRARY);
 			// A profile decides the whole launch, so it decides the window too: the kind
 			// becomes a statement about the profile rather than a choice, and is shown as
-			// one. A kind no profile can speak for - a window that is not a terminal - is
-			// left to the user, since the profile says nothing about it.
+			// one. A kind no profile can speak for - a shell, a window some other plugin
+			// registered - is left to the user, since the profile says nothing about it.
 			var decided = decidedBy(chosen instanceof ProfilePlaces.Located located ? located.profile() : null,
 					manualKind[0], providers).orElse(null);
 			syncing[0] = true;
@@ -157,14 +157,13 @@ public final class AgentDialogs {
 				kindChoice.setModel(new javax.swing.DefaultComboBoxModel<>(providers.toArray(new AgentWindowProvider[0])));
 				selectKind(kindChoice, providers, manualKind[0], registry.defaultKind());
 			} else {
-				// The profile decides the CLI; how it is shown - terminal or conversation - is still the user's.
+				// The profile decides the CLI, and a CLI is shown as a conversation.
 				var choices = kindsFor(decided, providers);
 				kindChoice.setModel(new javax.swing.DefaultComboBoxModel<>(choices.toArray(new AgentWindowProvider[0])));
 				if (!selectKind(kindChoice, choices, manualKind[0], null)) {
-					selectKind(kindChoice, choices, AgentCli.KIND_PREFIX + decided.id(), null);
+					selectKind(kindChoice, choices, ChatAgentWindowProvider.kindFor(decided), null);
 				}
-				kindHint.setText("Set by the profile - " + decided.displayName()
-						+ (choices.size() > 1 ? "; shown in a terminal or as a conversation." : "."));
+				kindHint.setText("Set by the profile - " + decided.displayName() + ".");
 			}
 			syncing[0] = false;
 			kindChoice.setEnabled(kindChoice.getItemCount() > 1);
@@ -427,8 +426,8 @@ public final class AgentDialogs {
 	 *
 	 * <p>A profile decides the whole launch, so the kind it implies is a statement
 	 * about the profile rather than a choice - unless nothing can carry the statement:
-	 * no profile, a provider this installation has no terminal kind for, or a kind that
-	 * runs no CLI at all - neither a terminal nor a conversation - and so is none of the profile's business.
+	 * no profile, a provider this installation has no conversation for, or a kind that
+	 * runs no CLI at all - a shell - and so is none of the profile's business.
 	 *
 	 * @param profile   the chosen profile, or {@code null} for none
 	 * @param kind      the kind the user last chose
@@ -437,27 +436,26 @@ public final class AgentDialogs {
 	 */
 	static java.util.Optional<AgentProvider> decidedBy(dev.nuclr.plugin.core.ai.projects.profile.Profile profile,
 			String kind, List<AgentWindowProvider> providers) {
-		if (profile == null || kind != null && !kind.startsWith(AgentCli.KIND_PREFIX)
+		if (profile == null || kind != null && !kind.startsWith(TerminalAgentWindowProvider.KIND_PREFIX)
 				&& !kind.startsWith(ChatAgentWindowProvider.KIND_PREFIX)) {
 			return java.util.Optional.empty();
 		}
 		return AgentProvider.byId(profile.getHarness().getProvider())
 				.filter(provider -> providers.stream()
-						.anyMatch(each -> each.kind().equals(AgentCli.KIND_PREFIX + provider.id())));
+						.anyMatch(each -> each.kind().equals(ChatAgentWindowProvider.kindFor(provider))));
 	}
 
 	/**
-	 * The window kinds that run a provider's CLI: its terminal, and its conversation window
-	 * where there is one.
+	 * The window kinds that run a provider's CLI: its conversation, which since agents
+	 * stopped being drawn in terminals is the only one.
 	 *
 	 * @param provider  the provider a profile decided
 	 * @param providers the window kinds available
 	 * @return the kinds, in registry order
 	 */
 	static List<AgentWindowProvider> kindsFor(AgentProvider provider, List<AgentWindowProvider> providers) {
-		var terminal = AgentCli.KIND_PREFIX + provider.id();
 		var chat = ChatAgentWindowProvider.kindFor(provider);
-		return providers.stream().filter(each -> each.kind().equals(terminal) || each.kind().equals(chat)).toList();
+		return providers.stream().filter(each -> each.kind().equals(chat)).toList();
 	}
 
 	/**

@@ -87,7 +87,11 @@ public final class ProjectStore implements AutoCloseable {
 					+ project.readSchemaVersion() + ")");
 		}
 		normalise(project, paths);
-		if (ProjectMigration.toProfiles(project, paths, new ProfileStore(paths.profilesDirectory()))) {
+		// Profiles first: that step reads the window kind an agent was launched with, and
+		// the next one rewrites it.
+		var carried = ProjectMigration.toProfiles(project, paths, new ProfileStore(paths.profilesDirectory()));
+		carried |= ProjectMigration.toConversations(project);
+		if (carried) {
 			// Written now, not with the next change: the profiles it made exist already, and a
 			// project still at its old version would be carried over - and profiles made - again.
 			Json.write(paths.projectFile(), project);

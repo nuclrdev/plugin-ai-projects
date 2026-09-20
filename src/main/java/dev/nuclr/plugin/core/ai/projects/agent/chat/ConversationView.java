@@ -59,12 +59,29 @@ final class ConversationView extends JPanel {
 	/** How far a subagent's tool calls are indented under the call that started it. */
 	private static final int NESTED_INDENT = 22;
 
+	/**
+	 * How many blocks are kept on screen. Every block is a live component tree, and a
+	 * conversation that runs for hours produces them without end; past a few hundred the
+	 * layout costs more than the oldest ones are worth. Nothing is lost by dropping them:
+	 * the transcript holds the whole conversation and is what a rebuilt window replays.
+	 */
+	private static final int MAX_BLOCKS = 600;
+
+	/** How many blocks go at once, so trimming happens seldom rather than on every message. */
+	private static final int TRIM_BATCH = 100;
+
+	/** What stands at the top of a conversation whose beginning has been dropped. */
+	private static final String TRIMMED = "Earlier messages are no longer shown here; "
+			+ "the whole conversation is in the transcript.";
+
 	private final Column column = new Column();
 	private final JScrollPane scroll;
 	private final BiConsumer<String, AgentEvent.PermissionOption> permissionAnswer;
 	private final Map<String, ToolBlock> tools = new HashMap<>();
 	private final Map<String, PermissionBlock> permissions = new HashMap<>();
 	private JComponent last;
+	/** Points added to every font, as the user has zoomed; see {@link #zoom(int)}. */
+	private int fontScale;
 
 	/**
 	 * @param permissionAnswer called with a request id and the option the user chose
@@ -186,6 +203,31 @@ final class ConversationView extends JPanel {
 		}
 	}
 
+	/**
+	 * Grow or shrink the text in every block.
+	 *
+	 * <p>Sizes are re-read from the look and feel on a theme change, so the zoom is kept
+	 * as points to add rather than as sizes: a conversation zoomed in stays zoomed in when
+	 * the theme changes under it.
+	 *
+	 * @param steps points to add, positive to enlarge and negative to shrink
+	 */
+	void zoom(int steps) {
+		var next = Math.clamp(fontScale + steps, -4, 12);
+		if (next != fontScale) {
+			fontScale = next;
+			updateTheme();
+		}
+	}
+
+	/** Return the text to the size the look and feel asks for. */
+	void resetZoom() {
+		if (fontScale != 0) {
+			fontScale = 0;
+			updateTheme();
+		}
+	}
+
 	/** Scroll to the newest block. */
 	void scrollToEnd() {
 		SwingUtilities.invokeLater(() -> {
@@ -208,6 +250,29 @@ final class ConversationView extends JPanel {
 		}
 		column.add(block);
 		last = block;
+		trim();
+	}
+
+	/**
+	 * Drop the oldest blocks once there are more than {@link #MAX_BLOCKS} of them.
+	 *
+	 * <p>Blocks and the struts between them alternate, so they go in pairs from the front.
+	 * A tool call or permission request that goes with them is forgotten as well, which is
+	 * what should happen: a result arriving for a call that has scrolled out of the window's
+	 * memory has nowhere to be shown, and is dropped rather than resurrecting the block.
+	 */
+	private void trim() {
+		if (column.getComponentCount() <= MAX_BLOCKS * 2) {
+			return;
+		}
+		for (var dropped = 0; dropped < TRIM_BATCH * 2 && column.getComponentCount() > 0; dropped++) {
+			column.remove(0);
+		}
+		tools.values().removeIf(block -> block.getParent() == null);
+		permissions.values().removeIf(block -> block.getParent() == null);
+		var marker = note(TRIMMED, false);
+		marker.setAlignmentX(LEFT_ALIGNMENT);
+		column.add(marker, 0);
 	}
 
 	private static String sessionLine(AgentEvent.SessionStarted started) {
@@ -221,7 +286,7 @@ final class ConversationView extends JPanel {
 		return line.toString();
 	}
 
-	private static JComponent footer(AgentEvent.TurnEnded turn) {
+	private JComponent footer(AgentEvent.TurnEnded turn) {
 		var parts = new StringBuilder();
 		if (turn.error()) {
 			parts.append(turn.message() == null ? "The turn failed" : turn.message());
@@ -239,7 +304,7 @@ final class ConversationView extends JPanel {
 		return label;
 	}
 
-	private static NoteLabel note(String text, boolean error) {
+	private NoteLabel note(String text, boolean error) {
 		return new NoteLabel(text, error);
 	}
 
@@ -288,9 +353,29 @@ final class ConversationView extends JPanel {
 				Math.round(from.getBlue() + (to.getBlue() - from.getBlue()) * amount));
 	}
 
-	private static Font monospace() {
+	/** The font blocks draw their text in, at the current zoom. */
+	private Font textFont() {
+		return scaled(UIManager.getFont("TextArea.font"));
+	}
+
+	/** The slightly smaller font the lines between blocks are drawn in, at the current zoom. */
+	private Font labelFont() {
+		var base = UIManager.getFont("Label.font");
+		return base == null ? null : base.deriveFont(size(base.getSize2D() - 1f));
+	}
+
+	private Font monospace() {
 		var base = UIManager.getFont("TextArea.font");
-		return new Font(Font.MONOSPACED, Font.PLAIN, base == null ? 12 : base.getSize());
+		return new Font(Font.MONOSPACED, Font.PLAIN, Math.round(size(base == null ? 12f : base.getSize2D())));
+	}
+
+	private Font scaled(Font base) {
+		return base == null ? null : base.deriveFont(size(base.getSize2D()));
+	}
+
+	/** A size with the zoom applied, never so small as to be unreadable. */
+	private float size(float base) {
+		return Math.max(7f, base + fontScale);
 	}
 
 	private static JTextArea textArea(String text, Font font) {
@@ -343,7 +428,7 @@ final class ConversationView extends JPanel {
 	}
 
 	/** A line said about the conversation: a session start, the end of a turn, a problem. */
-	private static final class NoteLabel extends JLabel implements Themed {
+	private final class NoteLabel extends JLabel implements Themed {
 
 		private static final long serialVersionUID = 1L;
 		private final boolean error;
@@ -358,9 +443,9 @@ final class ConversationView extends JPanel {
 		@Override
 		public void theme() {
 			setForeground(error ? errorColor() : muted());
-			var base = UIManager.getFont("Label.font");
+			var base = labelFont();
 			if (base != null) {
-				setFont(base.deriveFont(base.getSize2D() - 1f));
+				setFont(base);
 			}
 		}
 
@@ -371,14 +456,14 @@ final class ConversationView extends JPanel {
 	}
 
 	/** What the user sent, on a shaded panel with an accent bar. */
-	private static final class UserBlock extends JPanel implements Themed {
+	private final class UserBlock extends JPanel implements Themed {
 
 		private static final long serialVersionUID = 1L;
 		private final JTextArea text;
 
 		UserBlock(String message) {
 			super(new BorderLayout());
-			text = textArea(message, UIManager.getFont("TextArea.font"));
+			text = textArea(message, textFont());
 			add(text, BorderLayout.CENTER);
 			theme();
 		}
@@ -389,12 +474,12 @@ final class ConversationView extends JPanel {
 			setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 3, 0, 0, accent()),
 					BorderFactory.createEmptyBorder(6, 8, 6, 8)));
 			text.setForeground(foreground());
-			text.setFont(UIManager.getFont("TextArea.font"));
+			text.setFont(textFont());
 		}
 	}
 
 	/** The agent's reply, rendered from Markdown, re-rendered a moment after each chunk. */
-	private static final class MessageBlock extends JPanel implements Themed {
+	private final class MessageBlock extends JPanel implements Themed {
 
 		private static final long serialVersionUID = 1L;
 		private final StringBuilder markdown = new StringBuilder();
@@ -437,7 +522,7 @@ final class ConversationView extends JPanel {
 
 		@Override
 		public void theme() {
-			pane.setFont(UIManager.getFont("TextArea.font"));
+			pane.setFont(textFont());
 			pane.setForeground(foreground());
 			var styles = ((HTMLDocument) pane.getDocument()).getStyleSheet();
 			var code = String.format("#%06x", tint(0.10f).getRGB() & 0xFFFFFF);
@@ -458,7 +543,7 @@ final class ConversationView extends JPanel {
 	}
 
 	/** The agent's reasoning: folded to one line, opened by a click. */
-	private static final class ThoughtBlock extends JPanel implements Themed {
+	private final class ThoughtBlock extends JPanel implements Themed {
 
 		private static final long serialVersionUID = 1L;
 		private final StringBuilder thought = new StringBuilder();
@@ -470,7 +555,7 @@ final class ConversationView extends JPanel {
 			super(new BorderLayout());
 			setOpaque(false);
 			thought.append(text);
-			body = textArea(text, UIManager.getFont("TextArea.font"));
+			body = textArea(text, textFont());
 			body.setVisible(false);
 			body.setBorder(BorderFactory.createEmptyBorder(2, 16, 2, 0));
 			header.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -506,7 +591,7 @@ final class ConversationView extends JPanel {
 		public void theme() {
 			header.setForeground(muted());
 			body.setForeground(muted());
-			var font = UIManager.getFont("TextArea.font");
+			var font = textFont();
 			if (font != null) {
 				body.setFont(font.deriveFont(Font.ITALIC));
 				header.setFont(font.deriveFont(Font.ITALIC));
@@ -519,7 +604,7 @@ final class ConversationView extends JPanel {
 	 * One tool call: a header saying what it does and how it went - with the last line
 	 * it printed while it runs - and its input and output a click away.
 	 */
-	private static final class ToolBlock extends JPanel implements Themed {
+	private final class ToolBlock extends JPanel implements Themed {
 
 		private static final long serialVersionUID = 1L;
 		private AgentEvent.ToolCall call;

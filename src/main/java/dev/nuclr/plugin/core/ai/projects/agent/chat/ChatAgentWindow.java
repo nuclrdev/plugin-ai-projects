@@ -257,7 +257,8 @@ public final class ChatAgentWindow implements AgentWindow {
 												: "This window talks to " + backend.provider().displayName()
 														+ ", but this agent's profile is for " + plan.provider().displayName()
 														+ ". Choose a " + backend.provider().displayName()
-														+ " profile, or a terminal window.");
+														+ " profile, or set the agent's window kind to "
+														+ plan.provider().displayName() + ".");
 									}
 									return backend.command(plan.commandLine(), resumeId);
 								})
@@ -653,6 +654,28 @@ public final class ChatAgentWindow implements AgentWindow {
 	@Override
 	public void updateTheme() {
 		view.updateTheme();
+	}
+
+	@Override
+	public boolean canZoom() {
+		return true;
+	}
+
+	/**
+	 * Grow or shrink the conversation's text. Unlike a terminal, whose widget is built
+	 * with the font it was given, every block is re-themed at once, so the change shows
+	 * immediately whether a session is running or not.
+	 *
+	 * @param steps positive to enlarge, negative to shrink
+	 */
+	@Override
+	public void zoom(int steps) {
+		view.zoom(steps);
+	}
+
+	@Override
+	public void resetZoom() {
+		view.resetZoom();
 	}
 
 	@Override

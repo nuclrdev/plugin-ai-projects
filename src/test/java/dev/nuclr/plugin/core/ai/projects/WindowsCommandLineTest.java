@@ -16,8 +16,8 @@ import org.junit.jupiter.api.Test;
 
 import com.pty4j.PtyProcessBuilder;
 
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.ContextDelivery;
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
+import dev.nuclr.plugin.core.ai.projects.agent.ContextDelivery;
 import dev.nuclr.plugin.core.ai.projects.agent.terminal.WindowsCommandLine;
 import dev.nuclr.plugin.core.ai.projects.store.Json;
 import tools.jackson.databind.JsonNode;

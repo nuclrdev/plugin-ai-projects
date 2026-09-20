@@ -59,7 +59,7 @@ public enum AgentProvider {
 		this.executable = executable;
 	}
 
-	/** The value stored in a profile; matches the terminal window kind's suffix. */
+	/** The value stored in a profile; the same id an {@code AgentCli} and a window kind use. */
 	public String id() {
 		return id;
 	}

@@ -5,22 +5,30 @@ import java.util.Optional;
 import java.util.function.Function;
 import java.nio.file.Path;
 
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.model.HarnessSpec;
 
 /**
- * The window provider for a CLI agent run in a terminal.
+ * The window provider for a command run in a terminal.
  *
- * <p>One instance per entry in {@link AgentCli#BUILT_IN}, so Codex, Claude Code,
- * Pi, OpenCode and a plain shell are five window kinds sharing one
- * implementation rather than one kind with a mode switch. A sixth CLI is a line
- * in that list; a genuinely different kind of window - a log viewer, a task
- * board, a diff agent - is a different {@link AgentWindowProvider} and needs
- * nothing from this one.
+ * <p>Only the plain shell is registered: a terminal is for reaching the disk - running a
+ * build, looking at a file, fixing a checkout - and an agent is a conversation, drawn by
+ * this plugin from what the CLI reports rather than scraped off a screen it painted. See
+ * {@link dev.nuclr.plugin.core.ai.projects.agent.chat.ChatAgentWindowProvider}.
+ *
+ * <p>The class itself still runs any {@link AgentCli}, since nothing about it is particular
+ * to the shell; what changed is which of them {@link #builtIn(Function)} hands out.
  */
 public final class TerminalAgentWindowProvider implements AgentWindowProvider {
+
+	/** Window-kind prefix of every terminal, followed by the {@link AgentCli#id()} it runs. */
+	public static final String KIND_PREFIX = "terminal.";
+
+	/** The one terminal an installation offers: a plain shell in the agent's folder. */
+	public static final String SHELL_KIND = KIND_PREFIX + "shell";
 
 	private final AgentCli cli;
 	private final Function<String, Optional<Path>> executableResolver;
@@ -41,7 +49,7 @@ public final class TerminalAgentWindowProvider implements AgentWindowProvider {
 	}
 
 	/**
-	 * One provider per built-in CLI.
+	 * The terminal windows this installation offers: the plain shell, and nothing else.
 	 *
 	 * @return the providers, in menu order
 	 */
@@ -51,13 +59,23 @@ public final class TerminalAgentWindowProvider implements AgentWindowProvider {
 
 	/** Built-in providers with an injectable executable resolver. */
 	public static List<AgentWindowProvider> builtIn(Function<String, Optional<Path>> executableResolver) {
-		return AgentCli.BUILT_IN.stream()
+		return AgentCli.BUILT_IN.stream().filter(AgentCli::isShell)
 				.map(cli -> (AgentWindowProvider) new TerminalAgentWindowProvider(cli, executableResolver)).toList();
+	}
+
+	/**
+	 * The kind of the terminal that runs a CLI.
+	 *
+	 * @param cli the CLI
+	 * @return the window kind
+	 */
+	public static String kindFor(AgentCli cli) {
+		return KIND_PREFIX + cli.id();
 	}
 
 	@Override
 	public String kind() {
-		return cli.kind();
+		return kindFor(cli);
 	}
 
 	@Override

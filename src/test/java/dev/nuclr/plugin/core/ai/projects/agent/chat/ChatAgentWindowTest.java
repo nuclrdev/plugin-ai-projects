@@ -22,9 +22,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowHost;
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.model.ProjectStorageMode;

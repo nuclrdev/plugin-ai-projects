@@ -1,4 +1,4 @@
-package dev.nuclr.plugin.core.ai.projects.agent.terminal;
+package dev.nuclr.plugin.core.ai.projects.agent;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -10,23 +10,24 @@ import java.util.Optional;
 import dev.nuclr.plugin.core.ai.projects.model.HarnessSpec;
 
 /**
- * The command-line agents this plugin ships window kinds for, and how to find
- * them on this machine.
+ * The command-line agents this plugin knows, and how to find them on this machine.
+ *
+ * <p>A catalog, not a kind of window: an entry says what a CLI is called, what it is
+ * run as and which provider it is, and every window kind that runs one - a conversation
+ * ({@code chat.codex}), the shell's terminal - names its {@link #id()} in its own prefix.
+ * Nothing here decides how an agent is shown.
  *
  * <p>Each entry is only a default: the executable and provider it names seed a
  * project harness, which the user is then free to change. Nothing here is
  * consulted once an agent has a resolved harness.
  *
- * @param id          suffix of the window kind, e.g. {@code claude-code}
+ * @param id          how this CLI is named wherever one is named, e.g. {@code claude-code}
  * @param displayName name shown in menus
  * @param executable  the command, without any platform extension
  * @param provider    provider identifier recorded in the harness
  * @param description one line for menus and tooltips
  */
 public record AgentCli(String id, String displayName, String executable, String provider, String description) {
-
-	/** Window-kind prefix shared by every terminal-backed agent. */
-	public static final String KIND_PREFIX = "terminal.";
 
 	private static final boolean WINDOWS =
 			System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
@@ -43,11 +44,6 @@ public record AgentCli(String id, String displayName, String executable, String 
 					"OpenCode CLI."),
 			new AgentCli("shell", "Shell", null, null,
 					"A plain shell in the agent's working directory."));
-
-	/** The window kind this CLI backs. */
-	public String kind() {
-		return KIND_PREFIX + id;
-	}
 
 	/** Whether this entry is the plain shell rather than an agent CLI. */
 	public boolean isShell() {
@@ -80,16 +76,16 @@ public record AgentCli(String id, String displayName, String executable, String 
 	}
 
 	/**
-	 * Look an entry up by window kind.
+	 * Look a CLI up by id.
 	 *
-	 * @param kind the window kind
-	 * @return the entry, or empty when the kind is not one of ours
+	 * @param id the CLI's id, as a window kind or a profile's provider names it
+	 * @return the entry, or empty when the id is not one of ours
 	 */
-	public static Optional<AgentCli> byKind(String kind) {
-		if (kind == null) {
+	public static Optional<AgentCli> byId(String id) {
+		if (id == null) {
 			return Optional.empty();
 		}
-		return BUILT_IN.stream().filter(cli -> cli.kind().equals(kind)).findFirst();
+		return BUILT_IN.stream().filter(cli -> cli.id().equals(id)).findFirst();
 	}
 
 	/**

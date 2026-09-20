@@ -306,8 +306,9 @@ class AiProjectScreenPluginTest {
 		var agent = new AgentDefinition();
 		agent.setId("a0");
 		agent.setName("Agent");
-		// A window kind whose own command would not run: only the profile can start this agent.
-		agent.setWindowKind("terminal.codex");
+		// A terminal, whose own command is a plain shell, started from a profile instead:
+		// what runs has to be the profile's command and nothing the window would pick.
+		agent.setWindowKind("terminal.shell");
 		project.getAgents().add(agent);
 		final Path transcript;
 		try (var store = ProjectCreator.create(project, workspace.resolve("home"))) {
@@ -330,12 +331,15 @@ class AiProjectScreenPluginTest {
 		onEdt(() -> plugin.act(null, AiProjectEvents.SCREEN_START_ALL, List.of(), null, new HashMap<>(), null));
 
 		var printed = "ARG[" + String.join(",", "from-the-profile".chars().mapToObj(Integer::toString).toList()) + "]";
+		// Waited for to the end of the session, not just to the output: a transcript that
+		// has the command's last word only after the line saying it exited is the bug this
+		// covers, and stopping at the output would not see it.
 		var deadline = System.currentTimeMillis() + 30_000;
 		var text = "";
 		while (System.currentTimeMillis() < deadline) {
 			drainEdt();
 			text = Files.exists(transcript) ? Files.readString(transcript) : "";
-			if (text.contains(printed)) {
+			if (text.contains("exited with status")) {
 				break;
 			}
 			Thread.sleep(100);
@@ -344,6 +348,8 @@ class AiProjectScreenPluginTest {
 
 		assertTrue(text.contains(printed), "the profile's command did not run: " + text);
 		assertTrue(text.contains("Started from a profile for Pi"), text);
+		assertTrue(text.indexOf(printed) < text.indexOf("exited with status"),
+				"what the command printed must be in the transcript before the line ending the session: " + text);
 	}
 
 	@Test

@@ -19,10 +19,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowHost;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
+import dev.nuclr.plugin.core.ai.projects.agent.terminal.TerminalAgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
@@ -91,9 +93,24 @@ class TerminalAgentWindowTest {
 		return store.project();
 	}
 
+	/**
+	 * The window kinds this test builds from: the installation's own, plus a Codex
+	 * terminal.
+	 *
+	 * <p>Agents are conversations now and the shell is the only terminal registered, but
+	 * the terminal window itself still runs any {@link AgentCli} - and a CLI that is not
+	 * installed is how these tests reach the paths that decide not to spawn anything.
+	 */
+	private static AgentWindowRegistry registry() {
+		var registry = new AgentWindowRegistry(command -> java.util.Optional.empty());
+		registry.register(new TerminalAgentWindowProvider(AgentCli.byId("codex").orElseThrow(),
+				command -> java.util.Optional.empty()));
+		return registry;
+	}
+
 	private AgentWindow window() throws InterruptedException, InvocationTargetException {
 		var built = new AgentWindow[1];
-		SwingUtilities.invokeAndWait(() -> built[0] = new AgentWindowRegistry(command -> java.util.Optional.empty())
+		SwingUtilities.invokeAndWait(() -> built[0] = registry()
 				.createWindow(new AgentWindowContext(store, agent, host, RuntimeStamp.CURRENT)));
 		return built[0];
 	}
@@ -353,7 +370,7 @@ class TerminalAgentWindowTest {
 		var places = new dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces(
 				new dev.nuclr.plugin.core.ai.projects.profile.ProfileStore(store.paths().profilesDirectory()), library);
 		var built = new AgentWindow[1];
-		SwingUtilities.invokeAndWait(() -> built[0] = new AgentWindowRegistry(command -> java.util.Optional.empty())
+		SwingUtilities.invokeAndWait(() -> built[0] = registry()
 				.createWindow(new AgentWindowContext(store, agent, host, RuntimeStamp.CURRENT, places,
 						new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(null))));
 		return built[0];

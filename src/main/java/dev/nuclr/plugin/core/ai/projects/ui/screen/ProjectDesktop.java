@@ -39,28 +39,29 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 
 import dev.nuclr.platform.events.NuclrEventBus;
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowHost;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
+import dev.nuclr.plugin.core.ai.projects.agent.terminal.TerminalAgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.harness.AgentEnvironment;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
+import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
 import dev.nuclr.plugin.core.ai.projects.runtime.RuntimeStamp;
 import dev.nuclr.plugin.core.ai.projects.runtime.WindowState;
-import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
+import dev.nuclr.plugin.core.ai.projects.store.PathContainment;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectPaths;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
-import dev.nuclr.plugin.core.ai.projects.ui.profile.ProfilesDialog;
-import dev.nuclr.plugin.core.ai.projects.store.PathContainment;
 import dev.nuclr.plugin.core.ai.projects.ui.AiProjectEvents;
 import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.ui.RibbonButtons;
+import dev.nuclr.plugin.core.ai.projects.ui.panel.LocalFolderResource;
+import dev.nuclr.plugin.core.ai.projects.ui.profile.ProfilesDialog;
 import dev.nuclr.plugin.core.ai.projects.ui.screen.background.DesktopBackgroundEffect;
 import dev.nuclr.plugin.core.ai.projects.ui.screen.background.DesktopBackgroundEffects;
 import dev.nuclr.plugin.core.ai.projects.ui.screen.background.EffectDesktopPane;
-import dev.nuclr.plugin.core.ai.projects.ui.panel.LocalFolderResource;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -324,7 +325,7 @@ public final class ProjectDesktop extends JPanel
 		var definition = new AgentDefinition();
 		definition.setId(UUID.randomUUID().toString());
 		definition.setName(uniqueName(terminalName(target, root)));
-		definition.setWindowKind(AgentCli.KIND_PREFIX + "shell");
+		definition.setWindowKind(TerminalAgentWindowProvider.SHELL_KIND);
 		definition.setWorkingDirectory(workingDirectoryValue(target, root));
 
 		store.project().getAgents().add(definition);

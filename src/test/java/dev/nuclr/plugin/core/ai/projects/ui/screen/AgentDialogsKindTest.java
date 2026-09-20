@@ -51,9 +51,16 @@ class AgentDialogsKindTest {
 	void aConversationWindowStaysWhenTheProfileIsForItsCli() {
 		assertEquals(Optional.of(AgentProvider.CLAUDE_CODE),
 				AgentDialogs.decidedBy(profileFor("claude-code"), "chat.claude-code", PROVIDERS));
-		assertEquals(List.of("terminal.claude-code", "chat.claude-code"),
+	}
+
+	@Test
+	void theKindAProfileDecidesIsAConversationAndNotATerminal() {
+
+		// A profile names a CLI, and a CLI is talked to rather than watched: the dialog
+		// has one kind to offer for it, so there is nothing left for the user to pick.
+		assertEquals(List.of("chat.claude-code"),
 				AgentDialogs.kindsFor(AgentProvider.CLAUDE_CODE, PROVIDERS).stream().map(each -> each.kind()).toList());
-		assertEquals(List.of("terminal.codex", "chat.codex"),
+		assertEquals(List.of("chat.codex"),
 				AgentDialogs.kindsFor(AgentProvider.CODEX, PROVIDERS).stream().map(each -> each.kind()).toList());
 	}
 

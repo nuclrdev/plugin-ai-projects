@@ -1,4 +1,4 @@
-package dev.nuclr.plugin.core.ai.projects.agent.terminal;
+package dev.nuclr.plugin.core.ai.projects.agent;
 
 import java.nio.file.Path;
 import java.util.List;

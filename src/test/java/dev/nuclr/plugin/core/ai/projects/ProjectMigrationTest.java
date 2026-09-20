@@ -14,6 +14,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
 import dev.nuclr.plugin.core.ai.projects.model.AiProject;
 import dev.nuclr.plugin.core.ai.projects.model.ProjectStorageMode;
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;
@@ -23,6 +24,7 @@ import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileValidator;
 import dev.nuclr.plugin.core.ai.projects.profile.RecordKind;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectCreator;
+import dev.nuclr.plugin.core.ai.projects.store.ProjectMigration;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectPaths;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
 
@@ -141,5 +143,62 @@ class ProjectMigrationTest {
 		ProjectStore.open(paths).close();
 
 		assertEquals(2, new ProfileStore(paths.profilesDirectory()).list().profiles().size());
+	}
+
+	/** A project holding one agent of the given window kind. */
+	private static AiProject projectWith(String... kinds) {
+		var project = new AiProject();
+		project.setName("Demo");
+		var index = 0;
+		for (var kind : kinds) {
+			var agent = new AgentDefinition();
+			agent.setId("a" + index++);
+			agent.setName("Agent");
+			agent.setWindowKind(kind);
+			project.getAgents().add(agent);
+		}
+		return project;
+	}
+
+	@Test
+	void anAgentRecordedAsATerminalIsOpenedAsAConversation() throws IOException {
+		writeVersionTwoProject();
+
+		try (var store = ProjectStore.open(paths)) {
+			assertEquals("chat.claude-code", store.project().agent("a1").orElseThrow().getWindowKind());
+			assertEquals("chat.codex", store.project().agent("a5").orElseThrow().getWindowKind());
+		}
+		// Written, not merely mended in memory: the next open finds it already moved.
+		assertTrue(Files.readString(paths.projectFile()).contains("chat.claude-code"));
+	}
+
+	@Test
+	void theShellStaysATerminalBecauseThatIsWhatItIsFor() {
+
+		var project = projectWith("terminal.shell");
+
+		assertFalse(ProjectMigration.toConversations(project));
+		assertEquals("terminal.shell", project.getAgents().get(0).getWindowKind());
+	}
+
+	@Test
+	void aProjectAlreadyMovedIsNotWrittenAgain() {
+
+		var project = projectWith("terminal.codex", "chat.pi", "board.tasks", null);
+
+		assertTrue(ProjectMigration.toConversations(project));
+		assertFalse(ProjectMigration.toConversations(project), "nothing left to move");
+		assertEquals(List.of("chat.codex", "chat.pi", "board.tasks"), project.getAgents().stream()
+				.map(AgentDefinition::getWindowKind).filter(kind -> kind != null).toList());
+		assertNull(project.getAgents().get(3).getWindowKind(), "an agent with no kind gets none invented for it");
+	}
+
+	@Test
+	void aKindThatWasNeverOursIsLeftAlone() {
+
+		var project = projectWith("terminal.nonesuch");
+
+		assertFalse(ProjectMigration.toConversations(project));
+		assertEquals("terminal.nonesuch", project.getAgents().get(0).getWindowKind());
 	}
 }

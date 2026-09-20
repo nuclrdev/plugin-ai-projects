@@ -5,10 +5,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 
+import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowProvider;
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.model.HarnessSpec;
 import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
 
@@ -70,7 +70,7 @@ public final class ChatAgentWindowProvider implements AgentWindowProvider {
 
 	@Override
 	public HarnessSpec defaultHarness() {
-		return AgentCli.byKind(AgentCli.KIND_PREFIX + backend.id()).map(AgentCli::defaultHarness)
+		return AgentCli.byId(backend.id()).map(AgentCli::defaultHarness)
 				.orElseGet(HarnessSpec::new);
 	}
 

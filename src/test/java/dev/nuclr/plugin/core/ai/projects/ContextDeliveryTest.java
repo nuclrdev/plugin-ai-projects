@@ -10,7 +10,7 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
-import dev.nuclr.plugin.core.ai.projects.agent.terminal.ContextDelivery;
+import dev.nuclr.plugin.core.ai.projects.agent.ContextDelivery;
 
 /** Each CLI gets its briefing through the mechanism its own help documents. */
 class ContextDeliveryTest {
