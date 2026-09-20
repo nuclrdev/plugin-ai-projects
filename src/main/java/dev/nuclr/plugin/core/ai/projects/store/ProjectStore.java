@@ -287,6 +287,9 @@ public final class ProjectStore implements AutoCloseable {
 				}
 			}
 		}
+		// A ProjectStore owns both persistence queues. Callers use this as the barrier
+		// before inspecting the files, so queued transcript appends must be included too.
+		transcripts.flush();
 		if (hasDirty() && !closed.get()) {
 			scheduleSave();
 		}
