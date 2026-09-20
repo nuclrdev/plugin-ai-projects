@@ -45,6 +45,8 @@ public final class AgentFrame extends JInternalFrame {
 	private final JButton restart = new JButton("Restart");
 	private final JButton send = new JButton("Send...");
 
+	private final String implementation;
+
 	private String agentName;
 	private boolean attention;
 	private String attentionReason;
@@ -101,16 +103,20 @@ public final class AgentFrame extends JInternalFrame {
 	/**
 	 * Build the frame for an agent.
 	 *
-	 * @param agent   the agent definition
-	 * @param window  its live window contents
-	 * @param actions the desktop's implementation of the per-window commands
+	 * @param agent          the agent definition
+	 * @param window         its live window contents
+	 * @param implementation what the agent is run by, as its window kind names it - "Codex
+	 *                       (conversation)", "Claude Code" - or {@code null} when nothing
+	 *                       is installed that knows the kind
+	 * @param actions        the desktop's implementation of the per-window commands
 	 */
-	public AgentFrame(AgentDefinition agent, AgentWindow window, AgentFrameActions actions) {
+	public AgentFrame(AgentDefinition agent, AgentWindow window, String implementation, AgentFrameActions actions) {
 
 		super(agent.displayName(), true, true, true, true);
 		this.agentId = agent.getId();
 		this.agentName = agent.displayName();
 		this.window = window;
+		this.implementation = implementation == null || implementation.isBlank() ? null : implementation.strip();
 		this.actions = actions;
 
 		setDefaultCloseOperation(DISPOSE_ON_CLOSE);
@@ -311,7 +317,9 @@ public final class AgentFrame extends JInternalFrame {
 		// picture, and the one a minimised frame still shows - so the title itself
 		// is just the words.
 		setFrameIcon(Glyphs.icon(Glyphs.statusGlyph(status, attention)));
-		setTitle(agentName + "  -  " + status.label());
+		// The agent's own name first, then what runs it, then how it is doing: a desktop
+		// of frames is scanned by name, and several of them are often the same CLI.
+		setTitle(agentName + (implementation == null ? "" : "  -  " + implementation) + "  -  " + status.label());
 		setToolTipText(attention && attentionReason != null ? attentionReason : window.sessionSummary());
 		Glyphs.decorate(startStop, status.isLive() ? Glyphs.STOP : Glyphs.START,
 				status.isLive() ? "Stop" : "Start");

@@ -42,6 +42,7 @@ import dev.nuclr.platform.events.NuclrEventBus;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentCli;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowHost;
+import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowRegistry;
 import dev.nuclr.plugin.core.ai.projects.agent.terminal.TerminalAgentWindowProvider;
 import dev.nuclr.plugin.core.ai.projects.harness.AgentEnvironment;
@@ -469,7 +470,8 @@ public final class ProjectDesktop extends JPanel
 		var context = new AgentWindowContext(store, agent, this, RuntimeStamp.CURRENT, profilePlaces(),
 				new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(credentials));
 		var window = registry.createWindow(context);
-		var frame = new AgentFrame(agent, window, this);
+		var implementation = registry.find(agent.getWindowKind()).map(AgentWindowProvider::displayName).orElse(null);
+		var frame = new AgentFrame(agent, window, implementation, this);
 
 		frames.put(agent.getId(), frame);
 		desktopPane.add(frame);
