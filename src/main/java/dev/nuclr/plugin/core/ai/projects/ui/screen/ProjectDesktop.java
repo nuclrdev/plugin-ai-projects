@@ -1222,9 +1222,17 @@ public final class ProjectDesktop extends JPanel
 		return store;
 	}
 
-	/** A title for the Commander window. */
+	/**
+	 * A title for the Commander window: the project, the folder it is rooted in, and
+	 * whose window this is.
+	 *
+	 * <p>The project first, because that is what the taskbar has room for and what tells
+	 * one Commander window from another; the folder in full, because two projects are
+	 * often named alike and the path is the thing that says which checkout is open.
+	 */
 	public String title() {
-		return "AI Project - " + store.project().displayName();
+		return store.project().displayName() + " - " + store.paths().root().toAbsolutePath().normalize()
+				+ " - Nuclr Commander";
 	}
 
 	/** Rebuild the sidebar and status bar after the project definition changed. */

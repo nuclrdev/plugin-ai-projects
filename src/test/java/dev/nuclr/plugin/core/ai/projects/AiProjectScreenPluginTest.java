@@ -94,6 +94,27 @@ class AiProjectScreenPluginTest {
 		drainEdt();
 	}
 
+	@Test
+	void openingAProjectNamesTheCommanderWindowAfterIt() throws Exception {
+
+		var entry = register("alpha", 1);
+		context.bus().clear();
+
+		onEdt(() -> assertTrue(plugin.openResource(resourceFor(entry), new java.util.concurrent.atomic.AtomicBoolean())));
+
+		// Nothing else announces a screen's title: the host asks file panels, not screens.
+		var titles = context.bus().of("main.window.title");
+		assertFalse(titles.isEmpty(), "the desktop never told the host its title");
+		assertEquals(title("alpha"), titles.getLast().payload().get("title"));
+
+		onEdt(plugin::unload);
+	}
+
+	/** The window title a project open from the workspace gives Commander. */
+	private String title(String name) {
+		return name + " - " + workspace.resolve(name).toAbsolutePath().normalize() + " - Nuclr Commander";
+	}
+
 	private ProjectEntry register(String name, int agents) throws IOException {
 
 		var root = Files.createDirectories(workspace.resolve(name));
@@ -147,7 +168,7 @@ class AiProjectScreenPluginTest {
 		onEdt(() -> assertTrue(plugin.openResource(resourceFor(entry), new java.util.concurrent.atomic.AtomicBoolean())));
 
 		assertNotNull(plugin.getCurrentResource());
-		assertEquals("AI Project - alpha", plugin.getWindowTitle());
+		assertEquals(title("alpha"), plugin.getWindowTitle());
 
 		var reports = context.bus().of(AiProjectEvents.ACTIVITY);
 		assertFalse(reports.isEmpty());
@@ -417,7 +438,7 @@ class AiProjectScreenPluginTest {
 				.toList();
 		assertFalse(closing.isEmpty());
 		assertEquals(first.id(), closing.getFirst().payload().get(AiProjectEvents.ACTIVITY_PROJECT_ID));
-		assertEquals("AI Project - beta", plugin.getWindowTitle());
+		assertEquals(title("beta"), plugin.getWindowTitle());
 
 		onEdt(plugin::unload);
 	}
@@ -529,7 +550,7 @@ class AiProjectScreenPluginTest {
 
 		// And the host opens it the ordinary way.
 		onEdt(() -> assertTrue(plugin.openResource(resource, new java.util.concurrent.atomic.AtomicBoolean())));
-		assertEquals("AI Project - alpha", plugin.getWindowTitle());
+		assertEquals(title("alpha"), plugin.getWindowTitle());
 		onEdt(plugin::closeResource);
 	}
 

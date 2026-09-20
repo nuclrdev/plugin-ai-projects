@@ -166,7 +166,7 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin, Nuclr
 
 	@Override
 	public String getWindowTitle() {
-		return desktop == null ? "AI Project" : desktop.title();
+		return desktop == null ? "Nuclr Commander" : desktop.title();
 	}
 
 	@Override

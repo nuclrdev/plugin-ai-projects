@@ -80,6 +80,11 @@ class ProjectLocksTest {
 		});
 	}
 
+	/** The window title a project open from the workspace gives Commander. */
+	private String title(String name) {
+		return name + " - " + workspace.resolve(name).toAbsolutePath().normalize() + " - Nuclr Commander";
+	}
+
 	private ProjectEntry register(String name) throws IOException {
 		var root = Files.createDirectories(workspace.resolve(name));
 		var project = ProjectCreator.define(name, root, ProjectStorageMode.PROJECT_LOCAL);
@@ -106,9 +111,9 @@ class ProjectLocksTest {
 		onEdt(() -> assertTrue(open(second, entry)));
 		drainEdt();
 
-		assertEquals("AI Project - alpha", first.getWindowTitle());
+		assertEquals(title("alpha"), first.getWindowTitle());
 		assertNull(second.getCurrentResource());
-		assertEquals("AI Project", second.getWindowTitle());
+		assertEquals("Nuclr Commander", second.getWindowTitle());
 
 		// No message screen: the host is asked to close this one, and the notice goes over the panels.
 		assertFalse(context.bus().of(AiProjectEvents.FULLSCREEN_CLOSE).isEmpty());
@@ -149,7 +154,7 @@ class ProjectLocksTest {
 		assertTrue(locks.holder(entry.id()).isEmpty());
 		onEdt(() -> open(second, entry));
 		drainEdt();
-		assertEquals("AI Project - alpha", second.getWindowTitle());
+		assertEquals(title("alpha"), second.getWindowTitle());
 		assertTrue(notices.isEmpty());
 	}
 

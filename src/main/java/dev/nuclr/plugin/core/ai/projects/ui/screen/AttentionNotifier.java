@@ -48,12 +48,21 @@ public final class AttentionNotifier {
 	}
 
 	/**
-	 * The title to return to once nothing needs attention.
+	 * The window title this desktop wants, and the one to return to once nothing needs
+	 * attention.
+	 *
+	 * <p>Applied at once unless something is waiting, whose marker must not be dropped
+	 * for a rename. Nothing else announces a screen's title - the host asks a file panel
+	 * for one, never a full-screen plugin - so a desktop that only recorded its title
+	 * here would leave the window named after whatever the panels last said.
 	 *
 	 * @param title the project's own window title
 	 */
 	public void setBaseTitle(String title) {
 		this.baseTitle = title == null ? "" : title;
+		if (!marked) {
+			setTitle(baseTitle);
+		}
 	}
 
 	/**
