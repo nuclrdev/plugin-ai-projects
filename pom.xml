@@ -69,6 +69,14 @@
 			<version>3.73</version>
 			<scope>provided</scope>
 		</dependency>
+		<!-- Its lexers only, for colouring fenced code in a conversation; the editor
+		     widget itself belongs to the host's own editor screen. -->
+		<dependency>
+			<groupId>com.fifesoft</groupId>
+			<artifactId>rsyntaxtextarea</artifactId>
+			<version>3.6.3</version>
+			<scope>provided</scope>
+		</dependency>
 
 <!-- Test dependencies (JUnit 5 / Jupiter). Provided-scope deps above are
 		     also on the test classpath. -->

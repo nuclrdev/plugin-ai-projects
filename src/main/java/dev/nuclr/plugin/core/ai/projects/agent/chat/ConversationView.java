@@ -340,6 +340,11 @@ final class ConversationView extends JPanel {
 		return color != null ? color : new Color(0x42, 0xA5, 0xF5);
 	}
 
+	/** What blocks are drawn on, which decides whether code wants light or dark colours. */
+	private static Color background() {
+		return UIManager.getColor("TextArea.background");
+	}
+
 	/** A shade between the background and the foreground, for panels that sit on the page. */
 	private static Color tint(float amount) {
 		var from = UIManager.getColor("TextArea.background");
@@ -485,6 +490,7 @@ final class ConversationView extends JPanel {
 		private final StringBuilder markdown = new StringBuilder();
 		private final JEditorPane pane = new JEditorPane();
 		private final Timer render;
+		private CodeHighlighter highlighter = new CodeHighlighter(background());
 
 		MessageBlock(String text) {
 			super(new BorderLayout());
@@ -516,12 +522,16 @@ final class ConversationView extends JPanel {
 		}
 
 		private void render() {
-			pane.setText("<html><body>" + MiniMarkdown.toHtml(markdown.toString()) + "</body></html>");
+			pane.setText("<html><body>" + MiniMarkdown.toHtml(markdown.toString(), highlighter::toHtml)
+					+ "</body></html>");
 			revalidate();
 		}
 
 		@Override
 		public void theme() {
+			// Re-read before the render below: the palette follows the background the code
+			// is drawn on, which is the thing a theme change moves.
+			highlighter = new CodeHighlighter(background());
 			pane.setFont(textFont());
 			pane.setForeground(foreground());
 			var styles = ((HTMLDocument) pane.getDocument()).getStyleSheet();

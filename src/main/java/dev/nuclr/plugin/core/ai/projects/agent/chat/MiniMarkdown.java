@@ -2,6 +2,7 @@ package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -13,6 +14,10 @@ import java.util.regex.Pattern;
  * of. Everything is escaped first, so nothing an agent writes becomes markup it did
  * not ask for. A fence still open at the end - a reply mid-stream - renders as code
  * so far, which is what it will turn out to be.
+ *
+ * <p>A fence's info string is kept and handed to the code renderer, which is how
+ * {@link CodeHighlighter} knows what language it is colouring. The renderer owes this
+ * class escaped HTML; the default one escapes and colours nothing.
  */
 final class MiniMarkdown {
 
@@ -27,13 +32,27 @@ final class MiniMarkdown {
 	private MiniMarkdown() {
 	}
 
+	/** What a fence becomes when nobody is colouring code: its text, escaped. */
+	private static final BiFunction<String, String, String> PLAIN = (code, language) -> escape(code);
+
 	/**
-	 * Render Markdown as an HTML fragment, without {@code <html>} or {@code <body>}.
+	 * Render Markdown as an HTML fragment, with code left uncoloured.
 	 *
 	 * @param markdown the text
 	 * @return the fragment
 	 */
 	static String toHtml(String markdown) {
+		return toHtml(markdown, PLAIN);
+	}
+
+	/**
+	 * Render Markdown as an HTML fragment, without {@code <html>} or {@code <body>}.
+	 *
+	 * @param markdown the text
+	 * @param code     given each fenced block and its info string, returns escaped HTML
+	 * @return the fragment
+	 */
+	static String toHtml(String markdown, BiFunction<String, String, String> code) {
 		var lines = markdown.replace("\r\n", "\n").split("\n", -1);
 		var html = new StringBuilder();
 		var paragraph = new ArrayList<String>();
@@ -45,16 +64,18 @@ final class MiniMarkdown {
 			if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
 				flushParagraph(paragraph, html);
 				var fence = trimmed.substring(0, 3);
-				var code = new StringBuilder();
+				var language = trimmed.substring(3).strip();
+				var fenced = new StringBuilder();
 				index++;
 				while (index < lines.length && !lines[index].strip().startsWith(fence)) {
-					if (!code.isEmpty()) {
-						code.append('\n');
+					if (!fenced.isEmpty()) {
+						fenced.append('\n');
 					}
-					code.append(lines[index]);
+					fenced.append(lines[index]);
 					index++;
 				}
-				html.append("<pre>").append(escape(code.toString())).append("</pre>");
+				html.append("<pre>").append(code.apply(fenced.toString(), language.isEmpty() ? null : language))
+						.append("</pre>");
 				index++;
 				continue;
 			}
