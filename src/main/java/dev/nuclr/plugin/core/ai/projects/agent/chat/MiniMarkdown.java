@@ -16,8 +16,10 @@ import java.util.regex.Pattern;
  * so far, which is what it will turn out to be.
  *
  * <p>A fence's info string is kept and handed to the code renderer, which is how
- * {@link CodeHighlighter} knows what language it is colouring. The renderer owes this
- * class escaped HTML; the default one escapes and colours nothing.
+ * {@link CodeHighlighter} knows what language it is colouring. The renderer owns the
+ * whole block, {@code <pre>} and all, so it can put a header above it - a language, a
+ * copy link - that has to sit outside the code. It owes this class escaped HTML; the
+ * default one escapes and adds nothing.
  */
 final class MiniMarkdown {
 
@@ -32,8 +34,9 @@ final class MiniMarkdown {
 	private MiniMarkdown() {
 	}
 
-	/** What a fence becomes when nobody is colouring code: its text, escaped. */
-	private static final BiFunction<String, String, String> PLAIN = (code, language) -> escape(code);
+	/** What a fence becomes when nobody is colouring code: its text, escaped, in a block. */
+	private static final BiFunction<String, String, String> PLAIN =
+			(code, language) -> "<pre>" + escape(code) + "</pre>";
 
 	/**
 	 * Render Markdown as an HTML fragment, with code left uncoloured.
@@ -49,7 +52,7 @@ final class MiniMarkdown {
 	 * Render Markdown as an HTML fragment, without {@code <html>} or {@code <body>}.
 	 *
 	 * @param markdown the text
-	 * @param code     given each fenced block and its info string, returns escaped HTML
+	 * @param code     given each fenced block and its info string, returns its whole HTML
 	 * @return the fragment
 	 */
 	static String toHtml(String markdown, BiFunction<String, String, String> code) {
@@ -74,8 +77,7 @@ final class MiniMarkdown {
 					fenced.append(lines[index]);
 					index++;
 				}
-				html.append("<pre>").append(code.apply(fenced.toString(), language.isEmpty() ? null : language))
-						.append("</pre>");
+				html.append(code.apply(fenced.toString(), language.isEmpty() ? null : language));
 				index++;
 				continue;
 			}

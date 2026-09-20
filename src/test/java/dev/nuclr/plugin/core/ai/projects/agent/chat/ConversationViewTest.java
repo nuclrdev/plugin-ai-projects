@@ -1,6 +1,7 @@
 package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -49,6 +50,113 @@ class ConversationViewTest {
 
 	private static void onEdt(Runnable work) throws InterruptedException, InvocationTargetException {
 		SwingUtilities.invokeAndWait(work);
+	}
+
+	/** The HTML a reply was last rendered to, read back off its editor pane. */
+	private static String renderedHtml(ConversationView view) {
+		var pane = firstEditorPane(blocks(view));
+		assertNotNull(pane, "the reply has no editor pane");
+		try {
+			return pane.getDocument().getText(0, pane.getDocument().getLength());
+		} catch (javax.swing.text.BadLocationException e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
+	private static javax.swing.JEditorPane firstEditorPane(Container container) {
+		for (var child : container.getComponents()) {
+			if (child instanceof javax.swing.JEditorPane pane) {
+				return pane;
+			}
+			if (child instanceof Container nested) {
+				var found = firstEditorPane(nested);
+				if (found != null) {
+					return found;
+				}
+			}
+		}
+		return null;
+	}
+
+	/** A clipboard of this test's own, since a headless run has no system one. */
+	private static java.awt.datatransfer.Clipboard clipboardFor(ConversationView view) {
+		var clipboard = new java.awt.datatransfer.Clipboard("test");
+		clipboard.setContents(new java.awt.datatransfer.StringSelection("something else"), null);
+		view.clipboard(clipboard);
+		return clipboard;
+	}
+
+	/** Click the link a code block's copy icon stands for, as the pane would report it. */
+	private static void clickCopy(ConversationView view, int block) throws Exception {
+		var pane = firstEditorPane(blocks(view));
+		onEdt(() -> {
+			for (var listener : pane.getHyperlinkListeners()) {
+				listener.hyperlinkUpdate(new javax.swing.event.HyperlinkEvent(pane,
+						javax.swing.event.HyperlinkEvent.EventType.ACTIVATED, null, "nuclr-copy:" + block));
+			}
+		});
+	}
+
+	@Test
+	void aCodeBlockOffersToCopyItselfAndDoes() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		var clipboard = clipboardFor(view);
+		onEdt(() -> view.accept(new AgentEvent.MessageChunk("Try:\n\n```java\nint x = 1;\n```\n"), true));
+
+		clickCopy(view, 0);
+
+		assertEquals("int x = 1;", clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
+	}
+
+	@Test
+	void eachCodeBlockCopiesItsOwnCodeAndNotTheOneBeforeIt() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		var clipboard = clipboardFor(view);
+		onEdt(() -> view.accept(new AgentEvent.MessageChunk(
+				"One:\n\n```java\nfirst();\n```\n\nTwo:\n\n```bash\nsecond\n```\n"), true));
+
+		clickCopy(view, 1);
+
+		assertEquals("second", clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
+	}
+
+	@Test
+	void theCopiedBlockSaysSoAndTheLanguageIsShown() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		clipboardFor(view);
+		onEdt(() -> view.accept(new AgentEvent.MessageChunk("```java\nint x = 1;\n```\n"), true));
+
+		assertTrue(renderedHtml(view).contains("java"), "the block does not say what language it is");
+		assertFalse(renderedHtml(view).contains("copied"), renderedHtml(view));
+
+		clickCopy(view, 0);
+
+		assertTrue(renderedHtml(view).contains("copied"), "the copy was silent: " + renderedHtml(view));
+	}
+
+	@Test
+	void aCopyLinkForABlockThatIsNoLongerThereIsHarmless() throws Exception {
+
+		// The reply is rebuilt on every chunk, so a click can always arrive against a
+		// numbering that has just changed.
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		clipboardFor(view);
+		onEdt(() -> view.accept(new AgentEvent.MessageChunk("```java\nint x = 1;\n```\n"), true));
+
+		clickCopy(view, 7);
+
+		assertFalse(renderedHtml(view).contains("copied"), "a click on nothing claimed to copy something");
 	}
 
 	@Test

@@ -8,8 +8,11 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Rectangle;
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -60,6 +63,16 @@ final class ConversationView extends JPanel {
 	private static final int NESTED_INDENT = 22;
 
 	/**
+	 * The scheme of the link that copies a code block, followed by the block's place in
+	 * the reply. Not a URL, so the pane hands it over as a description and no browser is
+	 * ever asked to open it.
+	 */
+	private static final String COPY_LINK = "nuclr-copy:";
+
+	/** How long a copied block says so before going back to offering the copy. */
+	private static final int COPIED_SHOWN_MS = 1_400;
+
+	/**
 	 * How many blocks are kept on screen. Every block is a live component tree, and a
 	 * conversation that runs for hours produces them without end; past a few hundred the
 	 * layout costs more than the oldest ones are worth. Nothing is lost by dropping them:
@@ -82,6 +95,8 @@ final class ConversationView extends JPanel {
 	private JComponent last;
 	/** Points added to every font, as the user has zoomed; see {@link #zoom(int)}. */
 	private int fontScale;
+	/** Where copied code goes; {@code null} means the display's own, which is the only case that ships. */
+	private Clipboard clipboard;
 
 	/**
 	 * @param permissionAnswer called with a request id and the option the user chose
@@ -172,6 +187,18 @@ final class ConversationView extends JPanel {
 		if (follow) {
 			scrollToEnd();
 		}
+	}
+
+	/**
+	 * Hand the view a clipboard to copy into instead of the display's.
+	 *
+	 * <p>For tests. A headless one has no system clipboard at all, and a test that ran
+	 * against the real one would take the developer's with it.
+	 *
+	 * @param replacement the clipboard to use
+	 */
+	void clipboard(Clipboard replacement) {
+		this.clipboard = replacement;
 	}
 
 	/** Mark every unanswered permission request as no longer answerable. */
@@ -491,6 +518,10 @@ final class ConversationView extends JPanel {
 		private final JEditorPane pane = new JEditorPane();
 		private final Timer render;
 		private CodeHighlighter highlighter = new CodeHighlighter(background());
+		/** Each fenced block's code, in the order they appear, as the copy links index them. */
+		private final List<String> fenced = new ArrayList<>();
+		private final Timer copiedShown;
+		private int copied = -1;
 
 		MessageBlock(String text) {
 			super(new BorderLayout());
@@ -502,7 +533,15 @@ final class ConversationView extends JPanel {
 			pane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
 			pane.setEditorKit(new HTMLEditorKit());
 			pane.addHyperlinkListener(event -> {
-				if (event.getEventType() == HyperlinkEvent.EventType.ACTIVATED && event.getURL() != null) {
+				if (event.getEventType() != HyperlinkEvent.EventType.ACTIVATED) {
+					return;
+				}
+				var description = event.getDescription();
+				if (description != null && description.startsWith(COPY_LINK)) {
+					copy(description.substring(COPY_LINK.length()));
+					return;
+				}
+				if (event.getURL() != null) {
 					try {
 						Desktop.getDesktop().browse(event.getURL().toURI());
 					} catch (Exception e) {
@@ -513,6 +552,11 @@ final class ConversationView extends JPanel {
 			add(pane, BorderLayout.CENTER);
 			render = new Timer(RENDER_DELAY_MS, event -> render());
 			render.setRepeats(false);
+			copiedShown = new Timer(COPIED_SHOWN_MS, event -> {
+				copied = -1;
+				render();
+			});
+			copiedShown.setRepeats(false);
 			theme();
 		}
 
@@ -522,9 +566,65 @@ final class ConversationView extends JPanel {
 		}
 
 		private void render() {
-			pane.setText("<html><body>" + MiniMarkdown.toHtml(markdown.toString(), highlighter::toHtml)
+			// Rebuilt from the top every time, so the copy links are renumbered along with
+			// the blocks they point at and cannot end up naming code from an earlier draft.
+			fenced.clear();
+			pane.setText("<html><body>" + MiniMarkdown.toHtml(markdown.toString(), this::codeBlock)
 					+ "</body></html>");
 			revalidate();
+		}
+
+		/**
+		 * One fenced block: its language and a copy link on a line above the code.
+		 *
+		 * <p>A link rather than a button, because a reply is one editor pane and a real
+		 * button would have to be positioned over it and moved whenever the text reflows.
+		 * The pane already reports clicks on links, already draws a hand cursor over them,
+		 * and re-renders without anything to keep in step.
+		 */
+		private String codeBlock(String code, String language) {
+			var index = fenced.size();
+			fenced.add(code);
+			var muted = String.format("#%06x", muted().getRGB() & 0xFFFFFF);
+			// The same shade the code sits on, so the header reads as the top of the block
+			// rather than as a line of its own floating above it.
+			var shade = String.format("#%06x", tint(0.10f).getRGB() & 0xFFFFFF);
+			var header = new StringBuilder("<table width=\"100%\" border=\"0\" cellspacing=\"0\" cellpadding=\"2\">"
+					+ "<tr><td bgcolor=\"" + shade + "\">");
+			if (language != null) {
+				header.append("<font color=\"").append(muted).append("\">")
+						.append(MiniMarkdown.escape(language)).append("</font>");
+			}
+			header.append("</td><td bgcolor=\"").append(shade).append("\" align=\"right\"><a href=\"")
+					.append(COPY_LINK).append(index).append("\">");
+			header.append(copied == index ? "copied" : Glyphs.span(Glyphs.COPY));
+			header.append("</a></td></tr></table>");
+			return header + "<pre>" + highlighter.toHtml(code, language) + "</pre>";
+		}
+
+		/** Put a block on the clipboard, and say on the link itself that it went. */
+		private void copy(String which) {
+			int index;
+			try {
+				index = Integer.parseInt(which);
+			} catch (NumberFormatException e) {
+				return;
+			}
+			if (index < 0 || index >= fenced.size()) {
+				// The reply was re-rendered out from under the click; nothing to copy.
+				return;
+			}
+			try {
+				var target = clipboard != null ? clipboard : getToolkit().getSystemClipboard();
+				target.setContents(new StringSelection(fenced.get(index)), null);
+			} catch (IllegalStateException | java.awt.HeadlessException e) {
+				// Another application is holding the clipboard, or there is no display to
+				// have one. Either way saying "copied" would be a lie.
+				return;
+			}
+			copied = index;
+			render();
+			copiedShown.restart();
 		}
 
 		@Override
