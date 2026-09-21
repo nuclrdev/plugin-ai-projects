@@ -2,10 +2,12 @@ package dev.nuclr.plugin.core.ai.projects.ui.screen.background;
 
 import java.awt.Color;
 import java.awt.Graphics;
+import java.awt.Frame;
 import java.awt.Graphics2D;
 import java.awt.KeyboardFocusManager;
 import java.awt.Window;
 import java.awt.event.HierarchyEvent;
+import java.awt.event.WindowStateListener;
 import java.beans.PropertyChangeListener;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,8 +31,12 @@ public final class EffectDesktopPane extends JDesktopPane {
 	private String effectId;
 	private long startedAt = System.nanoTime();
 	private boolean interacting;
+	private boolean animateWhenInactive = true;
 	/** Re-evaluates the animation whenever the application's active window changes. */
 	private final PropertyChangeListener activeWindowListener = event -> updateAnimationState();
+	/** Re-evaluates the animation whenever the owning window is minimised or restored. */
+	private final WindowStateListener windowStateListener = event -> updateAnimationState();
+	private Window observedWindow;
 
 	/** Build a desktop pane with the requested effect, falling back safely when needed. */
 	public EffectDesktopPane(List<DesktopBackgroundEffect> availableEffects, String initialEffectId) {
@@ -99,6 +105,7 @@ public final class EffectDesktopPane extends JDesktopPane {
 	@Override
 	public void addNotify() {
 		super.addNotify();
+		observeWindow(javax.swing.SwingUtilities.getWindowAncestor(this));
 		var focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager();
 		focusManager.removePropertyChangeListener("activeWindow", activeWindowListener);
 		focusManager.addPropertyChangeListener("activeWindow", activeWindowListener);
@@ -108,6 +115,7 @@ public final class EffectDesktopPane extends JDesktopPane {
 	@Override
 	public void removeNotify() {
 		animationTimer.stop();
+		observeWindow(null);
 		KeyboardFocusManager.getCurrentKeyboardFocusManager()
 				.removePropertyChangeListener("activeWindow", activeWindowListener);
 		super.removeNotify();
@@ -136,20 +144,39 @@ public final class EffectDesktopPane extends JDesktopPane {
 	}
 
 	private void updateAnimationState() {
-		if (!DesktopBackgroundEffects.NONE.equals(effectId) && isShowing() && !interacting && isWorkspaceActive()) {
+		if (!DesktopBackgroundEffects.NONE.equals(effectId) && isShowing() && !interacting && !isMinimised()
+				&& (animateWhenInactive || isWorkspaceActive())) {
 			animationTimer.start();
 		} else {
 			animationTimer.stop();
 		}
 	}
 
+	/** Whether the background keeps moving while another application has focus. */
+	public boolean isAnimateWhenInactive() {
+		return animateWhenInactive;
+	}
+
+	/**
+	 * Keep the background moving while the workspace is unfocused, or hold it still.
+	 *
+	 * <p>An unfocused window is still on screen, so some want the backdrop alive there;
+	 * others would rather not pay a repaint every frame for a window they aren't using.
+	 *
+	 * @param animate whether to keep animating when the workspace is not active
+	 */
+	public void setAnimateWhenInactive(boolean animate) {
+		if (animateWhenInactive != animate) {
+			animateWhenInactive = animate;
+			updateAnimationState();
+		}
+	}
+
 	/**
 	 * Whether the window holding this desktop is the one the user is working in.
 	 *
-	 * <p>A desktop in a background or minimised window still reports itself showing,
-	 * so without this the effect kept burning CPU for nobody. A dialog opened from the
-	 * workspace counts as the workspace being active, so the backdrop doesn't freeze
-	 * behind every popup.
+	 * <p>A dialog opened from the workspace counts as the workspace being active, so
+	 * the backdrop doesn't freeze behind every popup.
 	 */
 	private boolean isWorkspaceActive() {
 		var owner = javax.swing.SwingUtilities.getWindowAncestor(this);
@@ -160,6 +187,30 @@ public final class EffectDesktopPane extends JDesktopPane {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Whether the window holding this desktop is minimised.
+	 *
+	 * <p>A desktop in a minimised window still reports itself showing, so without this
+	 * the effect kept burning CPU for nobody, whatever the unfocused setting says.
+	 */
+	private boolean isMinimised() {
+		return observedWindow instanceof Frame frame && (frame.getExtendedState() & Frame.ICONIFIED) != 0;
+	}
+
+	/** Move the minimise/restore listener to the given window, or detach it for null. */
+	private void observeWindow(Window window) {
+		if (observedWindow == window) {
+			return;
+		}
+		if (observedWindow != null) {
+			observedWindow.removeWindowStateListener(windowStateListener);
+		}
+		observedWindow = window;
+		if (window != null) {
+			window.addWindowStateListener(windowStateListener);
+		}
 	}
 
 	/** Whether the background is currently animating. */
@@ -218,6 +269,7 @@ public final class EffectDesktopPane extends JDesktopPane {
 	/** Stop animation when the owning project closes. */
 	public void disposeEffect() {
 		animationTimer.stop();
+		observeWindow(null);
 		KeyboardFocusManager.getCurrentKeyboardFocusManager()
 				.removePropertyChangeListener("activeWindow", activeWindowListener);
 		if (activeEffect != null) {

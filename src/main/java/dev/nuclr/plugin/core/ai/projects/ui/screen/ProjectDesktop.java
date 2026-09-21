@@ -113,6 +113,7 @@ public final class ProjectDesktop extends JPanel
 	private final ProfileStore library = ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome());
 	/** The project's own profiles, kept with it. */
 	private final ProfileStore projectProfiles;
+	private final BackgroundPreferences backgroundPreferences;
 	private final javax.swing.Timer liveRefresh;
 
 	private boolean closed;
@@ -173,6 +174,8 @@ public final class ProjectDesktop extends JPanel
 			store.desktop().setBackgroundEffect(desktopPane.effectId());
 			store.markDesktopDirty();
 		}
+		this.backgroundPreferences = new BackgroundPreferences(settings);
+		desktopPane.setAnimateWhenInactive(backgroundPreferences.animateWhenInactive());
 		this.notifier = new AttentionNotifier(eventBus, this, new ToastPreferences(settings));
 		this.sidebar = new ProjectSidebar(store, this, store.desktop().getExpandedSections());
 
@@ -275,6 +278,15 @@ public final class ProjectDesktop extends JPanel
 			group.add(item);
 			background.add(item);
 		}
+		background.addSeparator();
+		var whenInactive = new javax.swing.JCheckBoxMenuItem("Animate when window is inactive",
+				desktopPane.isAnimateWhenInactive());
+		whenInactive.setToolTipText("Keep the background moving while another application has focus");
+		whenInactive.addActionListener(event -> {
+			desktopPane.setAnimateWhenInactive(whenInactive.isSelected());
+			backgroundPreferences.setAnimateWhenInactive(whenInactive.isSelected());
+		});
+		background.add(whenInactive);
 		menu.add(background);
 		menu.add(notificationsMenu());
 	}
