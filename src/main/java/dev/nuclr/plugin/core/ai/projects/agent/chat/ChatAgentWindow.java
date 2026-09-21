@@ -79,8 +79,6 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final JPanel root = new JPanel(new BorderLayout());
 	private final ConversationView view = new ConversationView(this::answerPermission);
 	private final JLabel statusLabel = new JLabel();
-	private final JButton startButton = Glyphs.decorate(new JButton(), Glyphs.START, "Start");
-	private final JButton stopButton = Glyphs.decorate(new JButton(), Glyphs.STOP, "Stop");
 	private final JButton newButton = Glyphs.decorate(new JButton(), Glyphs.NEW, "New conversation");
 	private final JTextArea input = new JTextArea(3, 40);
 	private final JButton sendButton = Glyphs.decorate(new JButton(), Glyphs.SEND, "Send");
@@ -131,15 +129,12 @@ public final class ChatAgentWindow implements AgentWindow {
 
 	private void buildLayout() {
 
-		startButton.addActionListener(event -> start());
-		stopButton.addActionListener(event -> stop());
+		// Start and stop are the frame's; only what is particular to a conversation is here.
 		newButton.setToolTipText("Forget the conversation the agent would resume, and start the next session afresh");
 		newButton.addActionListener(event -> newConversation());
 		var toolbar = new JPanel(new BorderLayout(8, 0));
 		toolbar.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
 		var buttons = new JPanel(new FlowLayout(FlowLayout.TRAILING, 4, 0));
-		buttons.add(startButton);
-		buttons.add(stopButton);
 		buttons.add(newButton);
 		toolbar.add(statusLabel, BorderLayout.CENTER);
 		toolbar.add(buttons, BorderLayout.EAST);
@@ -838,7 +833,14 @@ public final class ChatAgentWindow implements AgentWindow {
 		} else {
 			summary = "Not started yet.";
 			updateControls();
+			// The frame's "Resume" is now a plain "Start".
+			context.host().statusChanged(context.agentId(), status);
 		}
+	}
+
+	@Override
+	public String startLabel() {
+		return context.session().getConversationId() != null ? "Resume" : "Start";
 	}
 
 	@Override
@@ -1150,9 +1152,6 @@ public final class ChatAgentWindow implements AgentWindow {
 	private void updateControls() {
 		var live = status.isLive();
 		var resumable = context.session().getConversationId() != null;
-		Glyphs.decorate(startButton, Glyphs.START, resumable ? "Resume" : "Start");
-		startButton.setEnabled(!live && !closed);
-		stopButton.setEnabled(live);
 		newButton.setEnabled(resumable && !closed);
 		interruptButton.setEnabled(live && turnActive);
 		sendButton.setEnabled(!closed && status != AgentStatus.STARTING);

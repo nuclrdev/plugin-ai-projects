@@ -43,7 +43,6 @@ public final class AgentFrame extends JInternalFrame {
 	private final AgentFrameActions actions;
 	private final JButton startStop = new JButton();
 	private final JButton restart = new JButton("Restart");
-	private final JButton send = new JButton("Send...");
 
 	private final String implementation;
 
@@ -183,13 +182,11 @@ public final class AgentFrame extends JInternalFrame {
 		Glyphs.decorate(restart, Glyphs.RESTART, "Restart");
 		restart.setToolTipText("Stop the agent and start it again");
 		restart.addActionListener(event -> actions.restart(agentId));
-		Glyphs.decorate(send, Glyphs.SEND, "Send...");
-		send.setToolTipText("Send an instruction to the running agent");
-		send.addActionListener(event -> actions.sendInstruction(agentId));
 
+		// Typing goes straight into the window, so "Send instruction..." - the same
+		// text by way of a dialog - lives only on the menu.
 		bar.add(startStop);
 		bar.add(restart);
-		bar.add(send);
 		bar.add(button(Glyphs.FOLDER, "Folder", "Open the agent's working directory",
 				() -> actions.openWorkingDirectory(agentId)));
 		// "More" opens the same menu as a right-click, so nothing is reachable only by
@@ -246,7 +243,7 @@ public final class AgentFrame extends JInternalFrame {
 		var menu = new JPopupMenu(agentName);
 		var live = window.status().isLive();
 
-		menu.add(item(live ? Glyphs.STOP : Glyphs.START, live ? "Stop" : "Start",
+		menu.add(item(live ? Glyphs.STOP : Glyphs.START, live ? "Stop" : window.startLabel(),
 				() -> actions.toggleRun(agentId)));
 		menu.add(item(Glyphs.RESTART, "Restart", () -> actions.restart(agentId)));
 		menu.add(item(Glyphs.SEND, "Send instruction...",
@@ -322,10 +319,9 @@ public final class AgentFrame extends JInternalFrame {
 		setTitle(agentName + (implementation == null ? "" : "  -  " + implementation) + "  -  " + status.label());
 		setToolTipText(attention && attentionReason != null ? attentionReason : window.sessionSummary());
 		Glyphs.decorate(startStop, status.isLive() ? Glyphs.STOP : Glyphs.START,
-				status.isLive() ? "Stop" : "Start");
+				status.isLive() ? "Stop" : window.startLabel());
 		startStop.setToolTipText(status.isLive() ? "Terminate the agent process" : "Start the agent");
 		restart.setEnabled(true);
-		send.setEnabled(window.canSendInstruction());
 	}
 
 	/**

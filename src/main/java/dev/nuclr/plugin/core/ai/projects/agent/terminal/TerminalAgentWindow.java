@@ -23,8 +23,6 @@ import java.util.Optional;
 import java.util.function.Function;
 
 import javax.swing.BorderFactory;
-import javax.swing.BoxLayout;
-import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JLayeredPane;
@@ -52,7 +50,7 @@ import lombok.extern.slf4j.Slf4j;
  * <p>The window has two faces. While a process is alive it is a terminal. When
  * there is none - because the agent has not been started, or because Commander
  * was restarted since it last ran - it shows what the last session was and what
- * it printed, with a button to start a new one. It never pretends the old
+ * it printed; the frame's Start begins a new one. It never pretends the old
  * process survived: none of these CLIs can be reattached, and a window that
  * looked live but was not would be worse than an obviously dead one.
  *
@@ -116,7 +114,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 	private final Function<String, Optional<java.nio.file.Path>> executableResolver;
 	private final JPanel root = new JPanel(new BorderLayout());
 	private final JLabel banner = new JLabel();
-	private final JButton startButton = Glyphs.decorate(new JButton(), Glyphs.START, "Start");
 	private final JPanel stoppedView = new JPanel(new BorderLayout());
 	private final StringBuilder recentOutput = new StringBuilder();
 	private final Timer statusTimer;
@@ -165,17 +162,8 @@ public final class TerminalAgentWindow implements AgentWindow {
 
 		banner.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
 
-		startButton.addActionListener(event -> start());
-		var actions = new JPanel();
-		actions.setLayout(new BoxLayout(actions, BoxLayout.LINE_AXIS));
-		actions.setBorder(BorderFactory.createEmptyBorder(0, 8, 6, 8));
-		actions.add(startButton);
-
-		var header = new JPanel(new BorderLayout());
-		header.add(banner, BorderLayout.CENTER);
-		header.add(actions, BorderLayout.SOUTH);
-
-		stoppedView.add(header, BorderLayout.NORTH);
+		// Start is the frame's toolbar command; the banner says why the agent is stopped.
+		stoppedView.add(banner, BorderLayout.NORTH);
 		replaceReplay(context.transcripts().tail(context.agentId(), VIEW_TAIL_CHARS));
 	}
 
@@ -383,7 +371,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 		stopRequested = false;
 		setStatus(AgentStatus.STARTING);
 		showStopped("Starting " + executable + " ...");
-		startButton.setEnabled(false);
 
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> spawn(
 				new AgentLaunch(command, List.of(resolved.get().toString()), environment, notice, cli.displayName(),
@@ -411,7 +398,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 		stopRequested = false;
 		setStatus(AgentStatus.STARTING);
 		showStopped("Starting from its profile ...");
-		startButton.setEnabled(false);
 
 		Thread.ofVirtual().name("nuclr-ai-agent-" + context.agentId()).start(() -> {
 			final AgentLaunch launch;
@@ -640,7 +626,6 @@ public final class TerminalAgentWindow implements AgentWindow {
 	private void showStopped(String message) {
 		flushTranscript();
 		banner.setText("<html><b>" + escape(message) + "</b></html>");
-		startButton.setEnabled(!status.isLive());
 		replaceReplay(context.transcripts().tail(context.agentId(), VIEW_TAIL_CHARS));
 		if (root.getComponentCount() != 1 || root.getComponent(0) != stoppedView) {
 			disposeTerminal();

@@ -48,6 +48,14 @@ public interface AgentWindow extends AutoCloseable {
 		return status().label();
 	}
 
+	/**
+	 * What the frame's start command says while the agent is stopped - "Resume"
+	 * when starting picks up an earlier conversation.
+	 */
+	default String startLabel() {
+		return "Start";
+	}
+
 	/** Whether {@link #sendInstruction(String)} will do anything. */
 	default boolean canSendInstruction() {
 		return false;
