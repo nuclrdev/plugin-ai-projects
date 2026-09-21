@@ -435,10 +435,16 @@ public final class ChatAgentWindow implements AgentWindow {
 						+ (request.title().isEmpty() ? "" : ": " + request.title()));
 			}
 			case AgentEvent.TurnEnded turn -> {
+				var wasWorking = turnActive;
 				turnActive = false;
 				setStatus(AgentStatus.WAITING_INPUT);
 				if (turn.error()) {
 					raiseAttention(turn.message() == null ? "The turn failed" : turn.message());
+				} else if (wasWorking) {
+					// Only a turn the user actually started is worth reporting as finished.
+					// A replayed transcript and a session that ends without having been
+					// asked anything both arrive here too, and neither finished a task.
+					context.host().taskCompleted(context.agentId(), completionSummary(turn));
 				}
 				save();
 			}
@@ -1168,6 +1174,27 @@ public final class ChatAgentWindow implements AgentWindow {
 			attentionRaised = false;
 		}
 		context.host().statusChanged(context.agentId(), next);
+	}
+
+	/**
+	 * One line about a finished turn, for a desktop notification.
+	 *
+	 * <p>A notification is read at a glance from another window, so it says how long
+	 * the turn took and what it cost and nothing else. What the agent actually said is
+	 * in the conversation, which is one click away.
+	 *
+	 * @param turn the turn that ended
+	 * @return the line, never {@code null}
+	 */
+	private String completionSummary(AgentEvent.TurnEnded turn) {
+		var parts = new StringBuilder("The turn is done.");
+		if (turn.durationMs() != null) {
+			parts.append(String.format(java.util.Locale.ROOT, "  %.1f s", turn.durationMs() / 1000.0));
+		}
+		if (turn.costUsd() != null && turn.costUsd() > 0) {
+			parts.append(String.format(java.util.Locale.ROOT, "  $%.4f total", turn.costUsd()));
+		}
+		return parts.toString();
 	}
 
 	private void raiseAttention(String reason) {

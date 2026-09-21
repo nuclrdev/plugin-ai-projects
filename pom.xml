@@ -57,6 +57,16 @@
 			<version>0.13.12</version>
 			<scope>provided</scope>
 		</dependency>
+		<!-- For one Windows call: naming the process so its notifications say
+		     "Nuclr Commander" rather than "javaw". The host already ships JNA for
+		     pty4j, and the code that uses it degrades to an unnamed notification
+		     wherever it is absent. -->
+		<dependency>
+			<groupId>net.java.dev.jna</groupId>
+			<artifactId>jna</artifactId>
+			<version>5.14.0</version>
+			<scope>provided</scope>
+		</dependency>
 		<dependency>
 			<groupId>org.jetbrains.jediterm</groupId>
 			<artifactId>jediterm-ui</artifactId>

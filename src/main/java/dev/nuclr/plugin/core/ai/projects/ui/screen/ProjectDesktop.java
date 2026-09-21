@@ -142,6 +142,23 @@ public final class ProjectDesktop extends JPanel
 	 */
 	public ProjectDesktop(ProjectStore store, AgentWindowRegistry registry, NuclrEventBus eventBus,
 			Runnable onCloseRequested, dev.nuclr.platform.NuclrCredentialStore credentials) {
+		this(store, registry, eventBus, onCloseRequested, credentials, null);
+	}
+
+	/**
+	 * Build the desktop with the host's settings, so the user's notification choices
+	 * are the same in every project and outlive the session.
+	 *
+	 * @param store            the open project
+	 * @param registry         the available window kinds
+	 * @param eventBus         the host event bus, for activity reports and navigation
+	 * @param onCloseRequested run when the user asks to close the project; may be {@code null}
+	 * @param credentials      the host's credential store, or {@code null} when there is none
+	 * @param settings         the host settings store, or {@code null} to keep choices in memory
+	 */
+	public ProjectDesktop(ProjectStore store, AgentWindowRegistry registry, NuclrEventBus eventBus,
+			Runnable onCloseRequested, dev.nuclr.platform.NuclrCredentialStore credentials,
+			dev.nuclr.platform.NuclrSettings settings) {
 
 		super(new BorderLayout());
 		this.credentials = credentials;
@@ -156,7 +173,7 @@ public final class ProjectDesktop extends JPanel
 			store.desktop().setBackgroundEffect(desktopPane.effectId());
 			store.markDesktopDirty();
 		}
-		this.notifier = new AttentionNotifier(eventBus, this);
+		this.notifier = new AttentionNotifier(eventBus, this, new ToastPreferences(settings));
 		this.sidebar = new ProjectSidebar(store, this, store.desktop().getExpandedSections());
 
 		notifier.setBaseTitle(title());
@@ -259,6 +276,32 @@ public final class ProjectDesktop extends JPanel
 			background.add(item);
 		}
 		menu.add(background);
+		menu.add(notificationsMenu());
+	}
+
+	/**
+	 * Which desktop notifications are wanted.
+	 *
+	 * <p>Under UI because that is where what the desktop does to get noticed already
+	 * lives, and because there is nowhere else: the host gives plugins a settings
+	 * store, not a settings page.
+	 */
+	private javax.swing.JMenu notificationsMenu() {
+
+		var preferences = notifier.preferences();
+		var menu = Glyphs.decorate(new javax.swing.JMenu(), Glyphs.ATTENTION, "Notifications");
+		menu.setToolTipText("Desktop notifications, shown wherever you are working");
+
+		var needsInput = new javax.swing.JCheckBoxMenuItem("When an agent needs input",
+				preferences.notifyOnInputNeeded());
+		needsInput.addActionListener(event -> preferences.setNotifyOnInputNeeded(needsInput.isSelected()));
+		menu.add(needsInput);
+
+		var completed = new javax.swing.JCheckBoxMenuItem("When an agent finishes a task",
+				preferences.notifyOnCompleted());
+		completed.addActionListener(event -> preferences.setNotifyOnCompleted(completed.isSelected()));
+		menu.add(completed);
+		return menu;
 	}
 
 	/**
@@ -1184,9 +1227,22 @@ public final class ProjectDesktop extends JPanel
 			if (frame != null) {
 				frame.raiseAttention(reason);
 				// The frame's own flag is only visible to someone looking at the desktop.
-				notifier.raise(frame.agentName());
+				notifier.raise(frame.agentName(), reason);
 			}
 			refreshLive();
+		});
+	}
+
+	@Override
+	public void taskCompleted(String agentId, String summary) {
+		SwingUtilities.invokeLater(() -> {
+			if (closed) {
+				return;
+			}
+			var frame = frames.get(agentId);
+			// Nothing on the desktop changes: the frame's title already says the agent is
+			// ready, and the sidebar is about to. The notification is the whole point.
+			notifier.completed(frame == null ? null : frame.agentName(), summary);
 		});
 	}
 

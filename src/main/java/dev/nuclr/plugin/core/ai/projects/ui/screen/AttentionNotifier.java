@@ -16,12 +16,14 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Flagging the internal frame is enough only while the user is looking at the
  * desktop. Agents run for minutes at a time, which is exactly how long someone
  * spends in another window, so a request for a decision has to reach past
- * Commander: the taskbar entry is flashed, and the window title is marked for as
- * long as anything is waiting.
+ * Commander: a notification is posted to the desktop environment, the taskbar
+ * entry is flashed, and the window title is marked for as long as anything is
+ * waiting.
  *
  * <p>Everything here degrades quietly. Taskbar attention is unsupported on some
- * desktops and throws on others, and a title the host has pinned must not be
- * fought over - in either case the frame and the sidebar still carry the flag.
+ * desktops and throws on others, notifications may have nowhere to go, and a
+ * title the host has pinned must not be fought over - in any of those cases the
+ * frame and the sidebar still carry the flag.
  */
 @Slf4j
 public final class AttentionNotifier {
@@ -31,6 +33,7 @@ public final class AttentionNotifier {
 
 	private final NuclrEventBus eventBus;
 	private final JComponent anchor;
+	private final ToastPreferences preferences;
 
 	private String baseTitle = "";
 	private boolean marked;
@@ -43,8 +46,25 @@ public final class AttentionNotifier {
 	 * @param anchor   any component in the desktop, used to find the window
 	 */
 	public AttentionNotifier(NuclrEventBus eventBus, JComponent anchor) {
+		this(eventBus, anchor, new ToastPreferences(null));
+	}
+
+	/**
+	 * Create a notifier that reads the user's notification preferences.
+	 *
+	 * @param eventBus    the host event bus, used to mark the window title
+	 * @param anchor      any component in the desktop, used to find the window
+	 * @param preferences which notifications are wanted; never {@code null}
+	 */
+	public AttentionNotifier(NuclrEventBus eventBus, JComponent anchor, ToastPreferences preferences) {
 		this.eventBus = eventBus;
 		this.anchor = anchor;
+		this.preferences = preferences == null ? new ToastPreferences(null) : preferences;
+	}
+
+	/** Which notifications the user wants, so the menu can show and change them. */
+	public ToastPreferences preferences() {
+		return preferences;
 	}
 
 	/**
@@ -69,13 +89,48 @@ public final class AttentionNotifier {
 	 * An agent has started asking for something.
 	 *
 	 * <p>Called when the condition begins rather than repeatedly while it lasts,
-	 * so the taskbar is flashed once per request instead of continuously.
+	 * so the taskbar is flashed and the notification posted once per request
+	 * instead of continuously.
 	 *
 	 * @param agentName the agent, for the title
 	 */
 	public void raise(String agentName) {
+		raise(agentName, null);
+	}
+
+	/**
+	 * An agent has started asking for something, and said what.
+	 *
+	 * @param agentName the agent, for the title and the notification
+	 * @param reason    one line saying what it wants, or {@code null}
+	 */
+	public void raise(String agentName, String reason) {
 		flashTaskbar();
 		mark(agentName);
+		if (preferences.notifyOnInputNeeded()) {
+			var who = agentName == null || agentName.isBlank() ? "An agent" : agentName;
+			SystemToast.post(who + " needs you",
+					reason == null || reason.isBlank() ? "Waiting for your answer." : reason);
+		}
+	}
+
+	/**
+	 * An agent finished what it was doing.
+	 *
+	 * <p>Separate from {@link #raise} and deliberately quieter: nothing is blocked,
+	 * so the title is not marked and the taskbar is not flashed. It is a report,
+	 * and the user decides whether they want to hear it.
+	 *
+	 * @param agentName the agent, for the notification
+	 * @param summary   one line about the result, or {@code null}
+	 */
+	public void completed(String agentName, String summary) {
+		if (!preferences.notifyOnCompleted()) {
+			return;
+		}
+		var who = agentName == null || agentName.isBlank() ? "An agent" : agentName;
+		SystemToast.post(who + " finished",
+				summary == null || summary.isBlank() ? "The task is done." : summary);
 	}
 
 	/**
