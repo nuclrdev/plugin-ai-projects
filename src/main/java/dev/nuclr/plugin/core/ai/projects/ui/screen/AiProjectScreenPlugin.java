@@ -385,16 +385,19 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin, Nuclr
 	 * see or stop. What survives is their transcripts and session records.
 	 */
 	private void closeDesktop() {
-		releaseLock();
 		var open = desktop;
 		desktop = null;
 		if (open == null) {
+			releaseLock();
 			return;
 		}
 		try {
 			open.close();
 		} catch (RuntimeException e) {
 			log.warn("Closing the AI project desktop failed: {}", e.getMessage(), e);
+		} finally {
+			// Only once the store is flushed and closed may another workspace open the project.
+			releaseLock();
 		}
 		root.removeAll();
 		root.revalidate();

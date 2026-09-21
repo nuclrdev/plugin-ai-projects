@@ -92,6 +92,9 @@ public final class ChatAgentWindow implements AgentWindow {
 
 	private AgentStatus status = AgentStatus.STOPPED;
 	private AgentSession session;
+	/** The process being started and not yet attached; what it says meanwhile waits in {@link #early}. */
+	private AgentSession launching;
+	private final List<Runnable> early = new ArrayList<>();
 	private boolean turnActive;
 	private boolean sessionNotStarted;
 	/** Prompts sent before the session said it started; a failed resume sends them again. */
@@ -294,10 +297,13 @@ public final class ChatAgentWindow implements AgentWindow {
 					event -> SwingUtilities.invokeLater(() -> onEvent(source[0], event)),
 					code -> SwingUtilities.invokeLater(() -> onExit(source[0], code)));
 			source[0] = started;
+			// Queued ahead of anything the process can say, so its first events are held, not dropped.
+			SwingUtilities.invokeLater(() -> launching(started));
 			try {
 				started.start();
 			} catch (IOException | RuntimeException e) {
 				log.warn("Could not start agent {}: {}", context.agentId(), e.getMessage(), e);
+				started.close();
 				SwingUtilities.invokeLater(() -> startFailed("Could not start " + launch.name() + ": " + e.getMessage()));
 				return;
 			}
@@ -326,8 +332,29 @@ public final class ChatAgentWindow implements AgentWindow {
 				: "Started without a profile: " + name + " uses its own settings", name, null, null);
 	}
 
+	private void launching(AgentSession started) {
+		launching = started;
+		early.clear();
+	}
+
+	/**
+	 * Hold what a process says before it is attached.
+	 *
+	 * @return whether it was held
+	 */
+	private boolean heldBack(AgentSession source, Runnable delivery) {
+		if (closed || source == null || source != launching) {
+			return false;
+		}
+		early.add(delivery);
+		return true;
+	}
+
 	private void attach(AgentSession started, AgentLaunch launch, Path workingDirectory) {
 
+		var held = launching == started ? List.copyOf(early) : List.<Runnable>of();
+		launching = null;
+		early.clear();
 		if (closed) {
 			started.close();
 			return;
@@ -365,6 +392,12 @@ public final class ChatAgentWindow implements AgentWindow {
 		setStatus(AgentStatus.WAITING_INPUT);
 		updateControls();
 
+		held.forEach(Runnable::run);
+		if (session != started) {
+			// It has already exited; what waits to be sent waits for the next start.
+			return;
+		}
+
 		var again = resend;
 		resend = null;
 		if (again != null) {
@@ -378,6 +411,8 @@ public final class ChatAgentWindow implements AgentWindow {
 	}
 
 	private void startFailed(String message) {
+		launching = null;
+		early.clear();
 		if (closed) {
 			return;
 		}
@@ -410,6 +445,9 @@ public final class ChatAgentWindow implements AgentWindow {
 
 	/** One event from the agent, on the event thread. */
 	private void onEvent(AgentSession source, AgentEvent event) {
+		if (heldBack(source, () -> onEvent(source, event))) {
+			return;
+		}
 		if (closed || session == null || session != source) {
 			return;
 		}
@@ -454,6 +492,9 @@ public final class ChatAgentWindow implements AgentWindow {
 
 	private void onExit(AgentSession source, int exitCode) {
 
+		if (heldBack(source, () -> onExit(source, exitCode))) {
+			return;
+		}
 		if (closed || session == null || session != source) {
 			return;
 		}

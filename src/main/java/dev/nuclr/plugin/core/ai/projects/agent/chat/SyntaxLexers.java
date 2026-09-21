@@ -1,5 +1,8 @@
 package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import javax.swing.text.Segment;
 
 import org.fife.ui.rsyntaxtextarea.TokenMaker;
@@ -35,32 +38,55 @@ final class SyntaxLexers {
 	/**
 	 * Colour the code, walking it a line at a time, since that is the unit a lexer reads.
 	 *
-	 * <p>The type the previous line ended on is carried into the next, which is what keeps
-	 * a block comment or a triple-quoted string coloured to its end rather than only to
-	 * the first newline.
-	 *
 	 * @param code    the code, as written
 	 * @param style   the syntax style to read it as
 	 * @param palette what colour each kind of token is drawn in
 	 * @return escaped HTML
 	 */
 	static String colour(String code, String style, CodeHighlighter.Palette palette) {
-		var maker = TokenMakerFactory.getDefaultInstance().getTokenMaker(style);
 		var html = new StringBuilder();
-		var lines = code.split("\n", -1);
-		var carried = TokenTypes.NULL;
-		for (var index = 0; index < lines.length; index++) {
+		var lines = tokens(List.of(code.split("\n", -1)), style, palette);
+		for (var index = 0; index < lines.size(); index++) {
 			if (index > 0) {
 				html.append('\n');
 			}
-			var characters = lines[index].toCharArray();
-			for (var token = maker.getTokenList(new Segment(characters, 0, characters.length), carried, 0);
-					token != null && token.getType() != TokenTypes.NULL; token = token.getNextToken()) {
-				append(html, token.getLexeme(), colourOf(token.getType(), palette));
+			for (var token : lines.get(index)) {
+				append(html, token.getText(), token.getColour());
 			}
-			carried = lastTypeOn(maker, characters, carried);
 		}
 		return html.toString();
+	}
+
+	/**
+	 * The tokens of consecutive lines, each with its colour.
+	 *
+	 * <p>The type the previous line ended on is carried into the next, which is what keeps
+	 * a block comment or a triple-quoted string coloured to its end rather than only to
+	 * the first newline.
+	 *
+	 * @param lines   the lines, in order, without their line ends
+	 * @param style   the syntax style to read them as
+	 * @param palette what colour each kind of token is drawn in
+	 * @return one list of tokens per line, which together spell the line exactly
+	 */
+	static List<List<CodeHighlighter.Token>> tokens(List<String> lines, String style, CodeHighlighter.Palette palette) {
+		var maker = TokenMakerFactory.getDefaultInstance().getTokenMaker(style);
+		var result = new ArrayList<List<CodeHighlighter.Token>>(lines.size());
+		var carried = TokenTypes.NULL;
+		for (var line : lines) {
+			var tokens = new ArrayList<CodeHighlighter.Token>();
+			var characters = line.toCharArray();
+			for (var token = maker.getTokenList(new Segment(characters, 0, characters.length), carried, 0);
+					token != null && token.getType() != TokenTypes.NULL; token = token.getNextToken()) {
+				var lexeme = token.getLexeme();
+				if (lexeme != null && !lexeme.isEmpty()) {
+					tokens.add(new CodeHighlighter.Token(lexeme, colourOf(token.getType(), palette)));
+				}
+			}
+			result.add(tokens);
+			carried = lastTypeOn(maker, characters, carried);
+		}
+		return result;
 	}
 
 	/**

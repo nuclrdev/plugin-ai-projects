@@ -35,12 +35,16 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.JTextPane;
 import javax.swing.Scrollable;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.UIManager;
 import javax.swing.event.HyperlinkEvent;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.SimpleAttributeSet;
+import javax.swing.text.StyleConstants;
 import javax.swing.text.html.HTMLDocument;
 import javax.swing.text.html.HTMLEditorKit;
 
@@ -472,6 +476,22 @@ final class ConversationView extends JPanel {
 		if (from == null || to == null) {
 			return Color.LIGHT_GRAY;
 		}
+		return new Color(
+				Math.round(from.getRed() + (to.getRed() - from.getRed()) * amount),
+				Math.round(from.getGreen() + (to.getGreen() - from.getGreen()) * amount),
+				Math.round(from.getBlue() + (to.getBlue() - from.getBlue()) * amount));
+	}
+
+	/** A green that reads as text on the page, for what an edit added. */
+	private static Color added() {
+		var background = UIManager.getColor("TextArea.background");
+		var dark = background != null
+				&& (background.getRed() * 299 + background.getGreen() * 587 + background.getBlue() * 114) / 1000 < 128;
+		return dark ? new Color(0x6A, 0xC0, 0x6A) : new Color(0x2E, 0x7D, 0x32);
+	}
+
+	/** A colour part way from one to another. */
+	private static Color blend(Color from, Color to, float amount) {
 		return new Color(
 				Math.round(from.getRed() + (to.getRed() - from.getRed()) * amount),
 				Math.round(from.getGreen() + (to.getGreen() - from.getGreen()) * amount),
@@ -1108,7 +1128,9 @@ final class ConversationView extends JPanel {
 		private static final long serialVersionUID = 1L;
 		private AgentEvent.ToolCall call;
 		private final JLabel header = new JLabel();
-		private final JTextArea body;
+		/** Styled rather than plain, so an edit reads as a diff and its code in the file's colours. */
+		private final JTextPane body = new JTextPane();
+		private CodeHighlighter highlighter = new CodeHighlighter(background());
 		private String output = "";
 		private String state = "running";
 		private boolean open;
@@ -1117,10 +1139,9 @@ final class ConversationView extends JPanel {
 			super(new BorderLayout());
 			this.call = call;
 			setOpaque(false);
-			body = textArea(call.detail(), monospace());
-			body.setLineWrap(true);
-			body.setWrapStyleWord(false);
+			body.setEditable(false);
 			body.setOpaque(true);
+			CopyContextMenu.install(body, () -> clipboard);
 			body.setVisible(false);
 			body.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
 			header.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -1128,7 +1149,7 @@ final class ConversationView extends JPanel {
 				@Override
 				public void mouseClicked(MouseEvent event) {
 					open = !open;
-					body.setVisible(open && !body.getText().isEmpty());
+					body.setVisible(open && body.getDocument().getLength() > 0);
 					updateHeader();
 					revalidate();
 				}
@@ -1161,20 +1182,56 @@ final class ConversationView extends JPanel {
 			if (result != null && !result.isBlank()) {
 				output = result.stripTrailing();
 			}
-			showBody();
 			// A failure is worth seeing without a click.
-			if (error) {
-				open = true;
-				body.setVisible(!body.getText().isEmpty());
-			}
+			open |= error;
+			// Redraws the body too, in the colours the new state wants.
 			theme();
 			revalidate();
 		}
 
 		private void showBody() {
-			var detail = call.detail() == null ? "" : call.detail();
-			body.setText(detail.isEmpty() ? output : output.isEmpty() ? detail : detail + "\n\n" + output);
-			body.setVisible(open && !body.getText().isEmpty());
+			var document = body.getStyledDocument();
+			try {
+				document.remove(0, document.getLength());
+				for (var run : ToolText.runs(call.name(), call.title(), call.detail(), output, highlighter)) {
+					document.insertString(document.getLength(), run.getText(), style(run));
+				}
+			} catch (BadLocationException e) {
+				// Offsets taken from the document itself; cannot happen.
+			}
+			body.setCaretPosition(0);
+			body.setVisible(open && document.getLength() > 0);
+		}
+
+		/** One run as drawn: the block's font, the token's colour, and the shade of an added or removed line. */
+		private SimpleAttributeSet style(ToolText.Run run) {
+			var style = new SimpleAttributeSet();
+			var font = monospace();
+			StyleConstants.setFontFamily(style, font.getFamily());
+			StyleConstants.setFontSize(style, font.getSize());
+			var error = "error".equals(state);
+			Color colour = switch (run.getLine()) {
+				case ADDED -> run.isMarker() ? added() : null;
+				case REMOVED -> run.isMarker() ? errorColor() : null;
+				case HEADER -> muted();
+				case PLAIN -> null;
+			};
+			if (colour == null && run.getColour() != null && !error) {
+				colour = Color.decode(run.getColour());
+			}
+			colour = colour != null ? colour : error ? errorColor() : foreground();
+			if (colour != null) {
+				StyleConstants.setForeground(style, colour);
+			}
+			StyleConstants.setBold(style, run.isMarker());
+			switch (run.getLine()) {
+				case ADDED -> StyleConstants.setBackground(style, blend(tint(0.06f), added(), 0.16f));
+				case REMOVED -> StyleConstants.setBackground(style, blend(tint(0.06f), errorColor(), 0.16f));
+				default -> {
+					// The block's own shade shows through.
+				}
+			}
+			return style;
 		}
 
 		private void updateHeader() {
@@ -1183,7 +1240,7 @@ final class ConversationView extends JPanel {
 				case "error" -> "✖";
 				default -> "◌";
 			};
-			var hasBody = !body.getText().isEmpty();
+			var hasBody = body.getDocument().getLength() > 0;
 			var last = "running".equals(state) && !open ? lastLine(output) : "";
 			header.setText("<html>" + glyph + "&nbsp;&nbsp;<b>" + MiniMarkdown.escape(call.name()) + "</b>"
 					+ (call.title().isEmpty() ? "" : "&nbsp;&nbsp;" + monospaceSpan(call.title()))
@@ -1200,9 +1257,12 @@ final class ConversationView extends JPanel {
 		@Override
 		public void theme() {
 			header.setForeground("error".equals(state) ? errorColor() : muted());
+			highlighter = new CodeHighlighter(background());
 			body.setBackground(tint(0.06f));
 			body.setForeground("error".equals(state) ? errorColor() : foreground());
 			body.setFont(monospace());
+			// The runs carry their colours and font, so a theme or zoom change redraws them.
+			showBody();
 			updateHeader();
 		}
 	}

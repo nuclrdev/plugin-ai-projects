@@ -146,11 +146,11 @@ public final class ModelCatalogs {
 		return mcpCache.computeIfAbsent(key(provider, executable), ignored -> {
 			var command = executable == null || executable.isBlank() ? provider.defaultExecutable() : executable.trim();
 			return CompletableFuture.supplyAsync(() -> {
-				var resolved = resolver.apply(command).orElse(null);
-				if (resolved == null) {
-					return java.util.List.<String>of();
-				}
 				try {
+					var resolved = resolver.apply(command).orElse(null);
+					if (resolved == null) {
+						return java.util.List.<String>of();
+					}
 					return mcpDiscovery.configuredServers(provider, resolved);
 				} catch (IOException | RuntimeException e) {
 					log.info("Could not list {} MCP servers: {}", provider.displayName(), e.getMessage());
@@ -167,7 +167,14 @@ public final class ModelCatalogs {
 
 	private ModelCatalog ask(AgentProvider provider, String command) {
 		var connector = provider.connector();
-		var resolved = resolver.apply(command).orElse(null);
+		final String resolved;
+		try {
+			resolved = resolver.apply(command).orElse(null);
+		} catch (RuntimeException e) {
+			// A hand-edited or imported path the file system cannot even parse.
+			return connector.builtIn("\"" + command + "\" is not a valid path (" + firstLine(e.getMessage())
+					+ "); type a model id.");
+		}
 		if (resolved == null) {
 			return connector.builtIn("\"" + command + "\" was not found on this machine; type a model id.");
 		}

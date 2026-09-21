@@ -83,7 +83,13 @@ abstract class JsonLineSession implements AgentSession {
 		}
 		Thread.ofVirtual().name("agent-stderr-" + started.pid()).start(() -> readErrors(started));
 		Thread.ofVirtual().name("agent-stdout-" + started.pid()).start(() -> readOutput(started));
-		opened();
+		try {
+			opened();
+		} catch (IOException | RuntimeException e) {
+			// A process that never finished its handshake is no use to anyone; do not leave it running.
+			close();
+			throw e;
+		}
 	}
 
 	/**

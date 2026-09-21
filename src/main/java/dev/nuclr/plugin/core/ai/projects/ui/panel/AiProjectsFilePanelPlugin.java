@@ -33,6 +33,7 @@ import dev.nuclr.plugin.core.ai.projects.store.ProjectPaths;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
 import dev.nuclr.plugin.core.ai.projects.ui.AiProjectEvents;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
+import dev.nuclr.plugin.core.ai.projects.ui.screen.ProjectLocks;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -74,6 +75,7 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 	private final String uuid = UUID.randomUUID().toString();
 	private final Map<String, ProjectActivity> activity = new ConcurrentHashMap<>();
 	private final AgentWindowRegistry windowRegistry = new AgentWindowRegistry();
+	private final ProjectLocks locks = ProjectLocks.shared();
 
 	private NuclrPluginContext context;
 	private ProjectCatalog catalog;
@@ -388,6 +390,9 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 
 		var items = new ArrayList<NuclrContextMenuItem>();
 		var onProject = AiProjectResource.isProject(focusedResource);
+		// An open project's desktop owns its files; renaming, forgetting or deleting it under
+		// that desktop would race its writes.
+		var closedProject = onProject && locks.holder(AiProjectResource.projectId(focusedResource)).isEmpty();
 
 		items.add(NuclrContextMenuItem.builder()
 				.label(Glyphs.label(Glyphs.AGENT, "Open project")).iconKey("open")
@@ -397,7 +402,7 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 				.actionType(AiProjectEvents.REVEAL_ROOT).enabled(onProject).build());
 		items.add(NuclrContextMenuItem.builder()
 				.label(Glyphs.label(Glyphs.RENAME, "Rename project...")).iconKey("rename")
-				.actionType(AiProjectEvents.RENAME_PROJECT).enabled(onProject).build());
+				.actionType(AiProjectEvents.RENAME_PROJECT).enabled(closedProject).build());
 		items.add(NuclrContextMenuItem.builder()
 				.label(Glyphs.label(Glyphs.EDIT, "Edit project definition")).iconKey("edit")
 				.actionType(AiProjectEvents.EDIT_DEFINITION).enabled(onProject).build());
@@ -411,10 +416,10 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 		items.add(NuclrContextMenuItem.separator());
 		items.add(NuclrContextMenuItem.builder()
 				.label(Glyphs.label(Glyphs.CLOSE, "Forget project")).iconKey("remove")
-				.actionType(AiProjectEvents.FORGET_PROJECT).enabled(onProject).build());
+				.actionType(AiProjectEvents.FORGET_PROJECT).enabled(closedProject).build());
 		items.add(NuclrContextMenuItem.builder()
 				.label(Glyphs.label(Glyphs.DELETE, "Delete project metadata...")).iconKey("delete")
-				.actionType(AiProjectEvents.DELETE_PROJECT).enabled(onProject).destructive(true).build());
+				.actionType(AiProjectEvents.DELETE_PROJECT).enabled(closedProject).destructive(true).build());
 		return items;
 	}
 
@@ -574,7 +579,9 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 		if (name == null || name.equals(definition.getName())) {
 			return;
 		}
-
+		if (!hold(projectId, "Rename project")) {
+			return;
+		}
 		try (var store = ProjectStore.open(catalog.paths(entry))) {
 			store.project().setName(name);
 			store.markProjectDirty();
@@ -583,6 +590,8 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 			log.warn("Could not rename the project {}: {}", projectId, e.getMessage(), e);
 			ProjectDialogs.error("Rename project", "Could not save the new name: " + e.getMessage());
 			return;
+		} finally {
+			locks.release(projectId, uuid);
 		}
 		catalog.register(new ProjectEntry(entry.id(), name, entry.root(), entry.storageMode()));
 		requestRefresh(data);
@@ -597,7 +606,14 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 				"Remove '" + resource.getName() + "' from the list?\n\nIts files are left untouched.")) {
 			return;
 		}
-		catalog.forget(projectId);
+		if (!hold(projectId, "Forget project")) {
+			return;
+		}
+		try {
+			catalog.forget(projectId);
+		} finally {
+			locks.release(projectId, uuid);
+		}
 		activity.remove(projectId);
 		requestRefresh(data);
 	}
@@ -618,16 +634,38 @@ public final class AiProjectsFilePanelPlugin implements FilePanelNuclrPlugin, Nu
 			return;
 		}
 
+		if (!hold(projectId, "Delete project metadata")) {
+			return;
+		}
 		try {
 			deleteRecursively(metadata);
+			catalog.forget(projectId);
 		} catch (IOException e) {
 			log.warn("Could not delete {}: {}", metadata, e.getMessage(), e);
 			ProjectDialogs.error("Delete project metadata", "Could not delete " + metadata + ": " + e.getMessage());
 			return;
+		} finally {
+			locks.release(projectId, uuid);
 		}
-		catalog.forget(projectId);
 		activity.remove(projectId);
 		requestRefresh(data);
+	}
+
+	/**
+	 * Take a project for the length of a change to its files, so no desktop opens it meanwhile.
+	 * Says where it is open when it is.
+	 *
+	 * @return whether this panel now holds it; the caller releases it
+	 */
+	private boolean hold(String projectId, String title) {
+		var holder = locks.tryAcquire(projectId, uuid, null).orElse(null);
+		if (holder == null) {
+			return true;
+		}
+		ProjectDialogs.error(title, "This project is open"
+				+ (holder.workspaceName() == null ? "" : " in workspace '" + holder.workspaceName() + "'")
+				+ ". Close it there first.");
+		return false;
 	}
 
 	/** Depth-first delete, bounded to the metadata directory the caller confirmed. */

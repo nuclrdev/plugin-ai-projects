@@ -1,8 +1,11 @@
 package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
 import java.awt.Color;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+
+import lombok.Value;
 
 /**
  * Colour for the code in a fenced block, from RSyntaxTextArea's lexers.
@@ -55,10 +58,25 @@ final class CodeHighlighter {
 			Map.entry("cc", "text/cpp"),
 			Map.entry("csharp", "text/cs"),
 			Map.entry("htm", "text/html"),
+			Map.entry("mjs", "text/javascript"),
+			Map.entry("cjs", "text/javascript"),
+			Map.entry("gradle", "text/groovy"),
+			Map.entry("jsonc", "text/json"),
+			Map.entry("svg", "text/xml"),
+			Map.entry("xsd", "text/xml"),
+			Map.entry("xsl", "text/xml"),
+			Map.entry("fxml", "text/xml"),
 			Map.entry("diff", "text/plain"),
 			Map.entry("patch", "text/plain"),
 			Map.entry("text", "text/plain"),
 			Map.entry("txt", "text/plain"));
+
+	/** One token of code and the colour it is drawn in, {@code null} for the colour of the text around it. */
+	@Value
+	static class Token {
+		String text;
+		String colour;
+	}
 
 	/** The colours one kind of token is drawn in, against one kind of background. */
 	record Palette(String keyword, String type, String string, String number, String comment,
@@ -115,6 +133,42 @@ final class CodeHighlighter {
 			// reply is worth more than the colour it is missing.
 			return MiniMarkdown.escape(code);
 		}
+	}
+
+	/**
+	 * The tokens of consecutive lines of code, coloured.
+	 *
+	 * @param lines    the lines, in order, without their line ends
+	 * @param language a fence info string or a file extension, or {@code null}
+	 * @return one list of tokens per line, or {@code null} when there is no lexer for the language
+	 */
+	List<List<Token>> tokens(List<String> lines, String language) {
+		var style = styleOf(language);
+		if (style == null) {
+			return null;
+		}
+		try {
+			return SyntaxLexers.tokens(lines, style, palette);
+		} catch (LinkageError | RuntimeException e) {
+			return null;
+		}
+	}
+
+	/**
+	 * The language a file is written in, as far as its name says: its extension.
+	 *
+	 * @param path a file path or name, possibly {@code null}
+	 * @return the extension, or {@code null} when it has none
+	 */
+	static String languageOfPath(String path) {
+		if (path == null || path.isBlank()) {
+			return null;
+		}
+		var name = path.strip();
+		var slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+		name = name.substring(slash + 1);
+		var dot = name.lastIndexOf('.');
+		return dot <= 0 || dot == name.length() - 1 ? null : name.substring(dot + 1);
 	}
 
 	/**
