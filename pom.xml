@@ -6,7 +6,7 @@
 
 	<groupId>dev.nuclr.plugin.core</groupId>
 	<artifactId>plugin-ai-projects</artifactId>
-	<version>1.0.7</version>
+	<version>1.0.8</version>
 	<name>Nuclr Plugin - AI Projects</name>
 
 	<properties>
