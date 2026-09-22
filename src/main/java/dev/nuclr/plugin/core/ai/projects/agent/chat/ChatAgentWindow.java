@@ -90,6 +90,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final List<SlashCommand> agentCommands = new ArrayList<>();
 	private final List<AgentEvent> history = new ArrayList<>();
 	private final List<AgentEvent> unsaved = new ArrayList<>();
+	private final PromptRecall recall = new PromptRecall(this::sentPrompts);
 	private final Timer saveTimer;
 
 	private AgentStatus status = AgentStatus.STOPPED;
@@ -158,8 +159,10 @@ public final class ChatAgentWindow implements AgentWindow {
 				sendFromInput();
 			}
 		});
+		recallOnArrow(KeyEvent.VK_UP, "nuclr-recall-older", true);
+		recallOnArrow(KeyEvent.VK_DOWN, "nuclr-recall-newer", false);
 		buildCommands();
-		// After the Enter binding above: the popup falls through to it when no list is up.
+		// After the Enter and arrow bindings above: the popup falls through to them when no list is up.
 		commandPopup = new CommandPopup(input, this::availableCommands, command -> command.run().accept(""));
 		input.addFocusListener(new java.awt.event.FocusAdapter() {
 			@Override
@@ -188,6 +191,48 @@ public final class ChatAgentWindow implements AgentWindow {
 		root.add(toolbar, BorderLayout.NORTH);
 		root.add(view, BorderLayout.CENTER);
 		root.add(composer, BorderLayout.SOUTH);
+	}
+
+	/**
+	 * Bind an arrow to walk the prompts already sent, falling back to moving the caret
+	 * when the field holds a message of the user's own.
+	 */
+	private void recallOnArrow(int key, String id, boolean older) {
+		var stroke = KeyStroke.getKeyStroke(key, 0);
+		var inputMap = input.getInputMap(JComponent.WHEN_FOCUSED);
+		var previousId = inputMap.get(stroke);
+		var caret = previousId == null ? null : input.getActionMap().get(previousId);
+		inputMap.put(stroke, id);
+		input.getActionMap().put(id, new AbstractAction() {
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public void actionPerformed(ActionEvent event) {
+				var current = input.getText();
+				var recalled = older ? recall.older(current) : recall.newer(current);
+				if (recalled == null) {
+					if (caret != null) {
+						caret.actionPerformed(event);
+					}
+					return;
+				}
+				if (!recalled.equals(current)) {
+					input.setText(recalled);
+					input.setCaretPosition(recalled.length());
+				}
+			}
+		});
+	}
+
+	/** What the user has sent in this conversation, oldest first - the stored part included. */
+	private List<String> sentPrompts() {
+		var sent = new ArrayList<String>();
+		for (var event : history) {
+			if (event instanceof AgentEvent.UserMessage(var text)) {
+				sent.add(text);
+			}
+		}
+		return sent;
 	}
 
 	/** Show the stored conversation, as it was when the last window closed. */
