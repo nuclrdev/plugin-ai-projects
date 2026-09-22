@@ -144,6 +144,11 @@ final class OrreryEffect implements DesktopBackgroundEffect {
 	}
 
 	@Override
+	public boolean renderOffEdt() {
+		return true;
+	}
+
+	@Override
 	public void reset() {
 		skyLayer.discard();
 		finishLayer.discard();

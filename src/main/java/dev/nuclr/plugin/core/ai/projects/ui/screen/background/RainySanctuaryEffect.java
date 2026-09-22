@@ -41,6 +41,7 @@ final class RainySanctuaryEffect implements DesktopBackgroundEffect {
 	@Override public String description() {
 		return "Midnight at a flooded shrine: luminous rain, rippling reflections, candle bloom and ember-lit incense.";
 	}
+	@Override public boolean renderOffEdt() { return true; }
 	@Override public int frameDelayMillis() { return 40; }
 	@Override public void reset() {
 		landscape = null;

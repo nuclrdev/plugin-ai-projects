@@ -76,12 +76,12 @@ class DesktopBackgroundEffectTest {
 	}
 
 	@Test
-	void helixRendersAwayFromTheEventDispatchThread() {
-		var helix = DesktopBackgroundEffects.builtIn().stream()
-				.filter(effect -> effect.id().equals("helix-sequencer"))
-				.findFirst().orElseThrow();
-		assertTrue(helix.renderOffEdt());
-		assertEquals(40, helix.frameDelayMillis());
+	void everyAnimatedBuiltInEffectRendersAwayFromTheEventDispatchThread() {
+		for (var effect : DesktopBackgroundEffects.builtIn()) {
+			if (!DesktopBackgroundEffects.NONE.equals(effect.id())) {
+				assertTrue(effect.renderOffEdt(), effect.id());
+			}
+		}
 	}
 
 	@Test

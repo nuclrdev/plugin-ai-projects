@@ -106,6 +106,11 @@ final class PlasmaEffect implements DesktopBackgroundEffect {
 	}
 
 	@Override
+	public boolean renderOffEdt() {
+		return true;
+	}
+
+	@Override
 	public int frameDelayMillis() {
 		return FRAME_DELAY_MILLIS;
 	}

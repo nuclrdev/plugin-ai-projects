@@ -82,6 +82,11 @@ final class AetherworksEffect implements DesktopBackgroundEffect {
 	}
 
 	@Override
+	public boolean renderOffEdt() {
+		return true;
+	}
+
+	@Override
 	public void reset() {
 		motes.clear();
 		lastElapsed = -1;

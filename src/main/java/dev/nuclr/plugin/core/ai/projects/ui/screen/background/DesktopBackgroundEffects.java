@@ -119,6 +119,11 @@ public final class DesktopBackgroundEffects {
 		}
 
 		@Override
+		public boolean renderOffEdt() {
+			return true;
+		}
+
+		@Override
 		public void reset() {
 			nodes.clear();
 			links.clear();
@@ -476,6 +481,11 @@ public final class DesktopBackgroundEffects {
 		}
 
 		@Override
+		public boolean renderOffEdt() {
+			return true;
+		}
+
+		@Override
 		public void reset() {
 			columns.clear();
 			layoutWidth = 0;
@@ -717,6 +727,11 @@ public final class DesktopBackgroundEffects {
 		@Override
 		public String description() {
 			return "A slow, colourful 80s arcade-style starfield.";
+		}
+
+		@Override
+		public boolean renderOffEdt() {
+			return true;
 		}
 
 		@Override
