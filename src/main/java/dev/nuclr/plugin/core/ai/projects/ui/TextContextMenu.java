@@ -33,7 +33,7 @@ import javax.swing.undo.UndoManager;
  *
  * <p>Items are enabled for what can actually be done at the moment the menu
  * opens: Cut and Paste only in an editable field, Copy and Cut only with a
- * selection, Paste only with text on the clipboard.
+ * selection, Paste only with something on the clipboard the field takes.
  */
 public final class TextContextMenu {
 
@@ -152,7 +152,7 @@ public final class TextContextMenu {
 				redo.setEnabled(editable && history.canRedo());
 				copy.setEnabled(selection && !secret);
 				cut.setEnabled(editable && selection && !secret);
-				paste.setEnabled(editable && clipboardHasText());
+				paste.setEnabled(editable && clipboardHasPasteable(field));
 				selectAll.setEnabled(field.isEnabled() && field.getDocument().getLength() > 0);
 			}
 
@@ -207,9 +207,19 @@ public final class TextContextMenu {
 		}
 	}
 
-	private static boolean clipboardHasText() {
+	/**
+	 * Whether the clipboard holds something the field would take: text, or whatever else
+	 * its own transfer handler accepts - a message box that attaches pictures takes a
+	 * screenshot, and its Paste should say so.
+	 */
+	private static boolean clipboardHasPasteable(JTextComponent field) {
 		try {
-			return Toolkit.getDefaultToolkit().getSystemClipboard().isDataFlavorAvailable(DataFlavor.stringFlavor);
+			var clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+			if (clipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)) {
+				return true;
+			}
+			var handler = field.getTransferHandler();
+			return handler != null && handler.canImport(field, clipboard.getAvailableDataFlavors());
 		} catch (IllegalStateException | java.awt.HeadlessException e) {
 			// Another application holds the clipboard; offer Paste and let it fail quietly.
 			return true;

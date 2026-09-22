@@ -55,10 +55,24 @@ final class PiSession extends JsonLineSession {
 	}
 
 	@Override
-	public void prompt(String text) throws IOException {
-		// A message sent while Pi is working waits for the run to finish, as it would in its own UI.
-		send(running ? Map.of("type", "prompt", "message", text, "streamingBehavior", "followUp")
-				: Map.of("type", "prompt", "message", text));
+	public void prompt(String text, List<AgentEvent.Attachment> images) throws IOException {
+		var command = new java.util.LinkedHashMap<String, Object>();
+		command.put("type", "prompt");
+		command.put("message", text);
+		if (!images.isEmpty()) {
+			// Pi takes pictures beside the message, each as its ImageContent.
+			var pictures = new ArrayList<Map<String, Object>>();
+			for (var image : images) {
+				pictures.add(Map.of("type", "image", "data", Attachments.base64(image),
+						"mimeType", Attachments.mediaType(image)));
+			}
+			command.put("images", pictures);
+		}
+		if (running) {
+			// A message sent while Pi is working waits for the run to finish, as it would in its own UI.
+			command.put("streamingBehavior", "followUp");
+		}
+		send(command);
 	}
 
 	@Override

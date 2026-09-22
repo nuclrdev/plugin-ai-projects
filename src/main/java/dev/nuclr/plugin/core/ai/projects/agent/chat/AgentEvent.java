@@ -1,5 +1,6 @@
 package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
@@ -47,9 +48,54 @@ public sealed interface AgentEvent {
 	/**
 	 * What the user sent.
 	 *
-	 * @param text the prompt
+	 * <p>A record written before messages could carry attachments has none, and one with
+	 * none is written without the field, so the transcript reads the same as it did.
+	 *
+	 * @param text        the prompt as typed, possibly empty when only attachments were sent
+	 * @param attachments the pictures and long pastes sent with it, in the order they were added
 	 */
-	record UserMessage(String text) implements AgentEvent {
+	record UserMessage(String text,
+			@JsonInclude(JsonInclude.Include.NON_EMPTY) java.util.List<Attachment> attachments) implements AgentEvent {
+
+		/** A missing text read as empty, a missing list as none, and the list not shared. */
+		public UserMessage {
+			text = text == null ? "" : text;
+			attachments = attachments == null ? java.util.List.of() : java.util.List.copyOf(attachments);
+		}
+
+		/**
+		 * A message of words alone.
+		 *
+		 * @param text the prompt
+		 */
+		public UserMessage(String text) {
+			this(text, java.util.List.of());
+		}
+	}
+
+	/**
+	 * Something sent with a message besides its words, kept as a file in the agent's
+	 * runtime folder so the transcript holds a path rather than the content.
+	 *
+	 * @param kind      what it is, which decides how it reaches the agent
+	 * @param path      the file, absolute
+	 * @param mediaType its media type, such as {@code image/png} or {@code text/plain}
+	 * @param name      what to call it on screen
+	 */
+	record Attachment(Kind kind, String path, String mediaType, String name) {
+
+		/** What an attachment is. */
+		public enum Kind {
+			/** A picture, handed to the model as an image. */
+			IMAGE,
+			/** A long paste, handed to the model as text in front of the message. */
+			TEXT
+		}
+
+		/** The file it is kept in. */
+		public java.nio.file.Path file() {
+			return java.nio.file.Path.of(path);
+		}
 	}
 
 	/**

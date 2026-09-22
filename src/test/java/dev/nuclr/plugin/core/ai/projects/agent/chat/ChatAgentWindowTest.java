@@ -56,6 +56,8 @@ class ChatAgentWindowTest {
 			var arguments = List.of(args);
 			var resumed = arguments.indexOf("--resume");
 			var sessionId = resumed < 0 ? "fake-1" : "resumed-" + arguments.get(resumed + 1);
+			var recorded = arguments.indexOf("--record");
+			var record = recorded < 0 ? null : java.nio.file.Path.of(arguments.get(recorded + 1));
 			var in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
 			String line;
 			// Plain string checks: the fake runs on a bare classpath, without Jackson.
@@ -65,6 +67,11 @@ class ChatAgentWindowTest {
 					say("{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\""
 							+ id + "\",\"response\":{}}}");
 				} else if (line.contains("\"type\":\"user\"")) {
+					if (record != null) {
+						// What the window sent, for a test to read back exactly.
+						java.nio.file.Files.writeString(record, line + "\n", StandardCharsets.UTF_8,
+								java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+					}
 					turn(in, sessionId, line.contains("draw"));
 				}
 			}
@@ -114,13 +121,19 @@ class ChatAgentWindowTest {
 		profile.setName("Fake Claude");
 		profile.getHarness().setProvider("claude-code");
 		profile.getHarness().setExecutable(ProcessHandle.current().info().command().orElseThrow());
-		profile.getHarness().setStartupArgs(List.of("-cp", classes, FakeClaude.class.getName()));
+		profile.getHarness().setStartupArgs(List.of("-cp", classes, FakeClaude.class.getName(), "--record",
+				received().toString()));
 		agent = new AgentDefinition();
 		agent.setId("a1");
 		agent.setName("Agent");
 		agent.setWindowKind("chat.claude-code");
 		agent.setProfileId("project:" + new ProfileStore(store.paths().profilesDirectory()).create(profile).getId());
 		store.project().getAgents().add(agent);
+	}
+
+	/** Where the fake writes every message it is sent. */
+	private Path received() {
+		return root.resolve("received.jsonl");
 	}
 
 	@AfterEach
@@ -320,6 +333,168 @@ class ChatAgentWindowTest {
 		var reopened = window();
 		assertTrue(onEdt(() -> names(reopened)).contains("compact"), "the list did not survive the transcript");
 		onEdt(reopened::close);
+	}
+
+	@Test
+	void aPastedPictureAndALongPasteReachTheAgentAndStayInTheConversation() throws Exception {
+
+		var window = window();
+		var input = onEdt(() -> composer(window.component()));
+		var strip = field(window, "attachmentStrip", AttachmentStrip.class);
+
+		// A screenshot, then a log too long for the box.
+		var picture = new java.awt.image.BufferedImage(40, 30, java.awt.image.BufferedImage.TYPE_INT_RGB);
+		onEdt(() -> paste(input, imageOnly(picture)));
+		waitFor(() -> strip.count() == 1, window);
+		var log = "ERROR at line\n".repeat(Attachments.LONG_PASTE_LINES);
+		onEdt(() -> paste(input, new java.awt.datatransfer.StringSelection(log)));
+		assertEquals(2, (int) onEdt(strip::count));
+		assertEquals("", onEdt(() -> input.getText()), "the long paste went into the box");
+
+		type(window, "what is wrong?");
+		waitFor(() -> window.outputForCopy().contains("[permission] Bash ls"), window);
+		onEdt(() -> button(window.component(), "Allow").doClick());
+		waitFor(() -> window.outputForCopy().endsWith("---"), window);
+
+		// The agent was given the picture as an image block, and the paste in front of the words.
+		var sent = java.nio.file.Files.readString(received());
+		assertTrue(sent.contains("\"type\":\"image\""), sent);
+		assertTrue(sent.contains("\"media_type\":\"image/png\""), sent);
+		assertTrue(sent.contains("<pasted_text name=\\\"Pasted text 1\\\">\\nERROR at line"), sent);
+		assertTrue(sent.contains("</pasted_text>\\n\\nwhat is wrong?"), sent);
+		// The conversation keeps the words and the attachments apart, as they were composed.
+		var said = onEdt(window::outputForCopy);
+		assertTrue(said.contains("> what is wrong?\n> [image] Pasted image 1\n> [pasted text] Pasted text 1"), said);
+		assertTrue(onEdt(strip::isEmpty), "the strip was not cleared by sending");
+
+		// Up brings the prompt back with what was attached to it; Down takes both away again.
+		onEdt(() -> press(input, "nuclr-recall-older"));
+		assertEquals("what is wrong?", onEdt(() -> input.getText()));
+		assertEquals(2, (int) onEdt(strip::count));
+		onEdt(() -> press(input, "nuclr-recall-newer"));
+		assertEquals("", onEdt(() -> input.getText()));
+		assertTrue(onEdt(strip::isEmpty));
+
+		onEdt(window::stop);
+		waitFor(() -> window.status() == AgentStatus.STOPPED);
+		onEdt(window::close);
+
+		// A rebuilt window shows the message with its attachments, from the transcript.
+		var reopened = window();
+		assertTrue(onEdt(reopened::outputForCopy).contains("> [image] Pasted image 1"),
+				onEdt(reopened::outputForCopy));
+		onEdt(reopened::close);
+	}
+
+	@Test
+	void aPictureAloneCanBeSentAndBackspaceTakesOffTheLastAttachment() throws Exception {
+
+		var window = window();
+		var input = onEdt(() -> composer(window.component()));
+		var strip = field(window, "attachmentStrip", AttachmentStrip.class);
+		var first = new java.awt.image.BufferedImage(20, 20, java.awt.image.BufferedImage.TYPE_INT_RGB);
+		var second = new java.awt.image.BufferedImage(21, 20, java.awt.image.BufferedImage.TYPE_INT_RGB);
+
+		onEdt(() -> paste(input, imageOnly(first)));
+		onEdt(() -> paste(input, imageOnly(second)));
+		waitFor(() -> strip.count() == 2, window);
+		// The same picture again is not attached twice.
+		onEdt(() -> paste(input, imageOnly(first)));
+		waitFor(() -> field(window, "preparing", Integer.class) == 0, window);
+		assertEquals(2, (int) onEdt(strip::count));
+
+		onEdt(() -> press(input, "nuclr-remove-attachment"));
+		assertEquals(1, (int) onEdt(strip::count));
+
+		onEdt(() -> button(window.component(), "Send").doClick());
+		waitFor(() -> window.outputForCopy().contains("[permission] Bash ls"), window);
+		var said = onEdt(window::outputForCopy);
+		assertTrue(said.contains("> [image] Pasted image 1"), said);
+		assertFalse(said.contains("Pasted image 2"), said);
+		onEdt(() -> button(window.component(), "Deny").doClick());
+		waitFor(() -> window.outputForCopy().endsWith("---"), window);
+		var sent = java.nio.file.Files.readString(received());
+		assertTrue(sent.contains("\"type\":\"image\""), sent);
+		assertFalse(sent.contains("\"type\":\"text\""), "an empty text block was sent beside the picture: " + sent);
+
+		onEdt(window::stop);
+		waitFor(() -> window.status() == AgentStatus.STOPPED);
+		onEdt(window::close);
+	}
+
+	@Test
+	void aDroppedFileThatIsNotAPictureIsNamedInTheMessage() throws Exception {
+
+		var window = window();
+		var input = onEdt(() -> composer(window.component()));
+		var source = root.resolve("project").resolve("src").resolve("Main.java");
+		java.nio.file.Files.createDirectories(source.getParent());
+		java.nio.file.Files.writeString(source, "class Main {}");
+
+		onEdt(() -> {
+			input.setText("explain");
+			input.setCaretPosition(7);
+			paste(input, new java.awt.datatransfer.Transferable() {
+				@Override
+				public java.awt.datatransfer.DataFlavor[] getTransferDataFlavors() {
+					return new java.awt.datatransfer.DataFlavor[] { java.awt.datatransfer.DataFlavor.javaFileListFlavor };
+				}
+
+				@Override
+				public boolean isDataFlavorSupported(java.awt.datatransfer.DataFlavor flavor) {
+					return java.awt.datatransfer.DataFlavor.javaFileListFlavor.equals(flavor);
+				}
+
+				@Override
+				public Object getTransferData(java.awt.datatransfer.DataFlavor flavor) {
+					return List.of(source.toFile());
+				}
+			});
+		});
+
+		assertEquals("explain " + Path.of("src", "Main.java") + " ", onEdt(() -> input.getText()));
+		assertTrue(onEdt(field(window, "attachmentStrip", AttachmentStrip.class)::isEmpty));
+		onEdt(window::close);
+	}
+
+	/** A clipboard holding a picture and nothing else, as a screenshot tool leaves it. */
+	private static java.awt.datatransfer.Transferable imageOnly(java.awt.Image picture) {
+		return new java.awt.datatransfer.Transferable() {
+			@Override
+			public java.awt.datatransfer.DataFlavor[] getTransferDataFlavors() {
+				return new java.awt.datatransfer.DataFlavor[] { java.awt.datatransfer.DataFlavor.imageFlavor };
+			}
+
+			@Override
+			public boolean isDataFlavorSupported(java.awt.datatransfer.DataFlavor flavor) {
+				return java.awt.datatransfer.DataFlavor.imageFlavor.equals(flavor);
+			}
+
+			@Override
+			public Object getTransferData(java.awt.datatransfer.DataFlavor flavor) {
+				return picture;
+			}
+		};
+	}
+
+	/** Paste into the composer through its own handler, as Ctrl+V does. */
+	private static void paste(javax.swing.JTextArea input, java.awt.datatransfer.Transferable content) {
+		input.getTransferHandler().importData(new javax.swing.TransferHandler.TransferSupport(input, content));
+	}
+
+	/** Run one of the composer's key actions, as its key would. */
+	private static void press(javax.swing.JTextArea input, String action) {
+		input.getActionMap().get(action).actionPerformed(new java.awt.event.ActionEvent(input, 0, action));
+	}
+
+	/**
+	 * One of the window's own fields. Read where it is called: a final one from anywhere,
+	 * a changing one from inside {@link #waitFor}, which runs its condition on the event thread.
+	 */
+	private static <T> T field(ChatAgentWindow window, String name, Class<T> type) throws Exception {
+		var field = ChatAgentWindow.class.getDeclaredField(name);
+		field.setAccessible(true);
+		return type.cast(field.get(window));
 	}
 
 	/** The names in the composer's completion list, as typing a bare slash would show them. */

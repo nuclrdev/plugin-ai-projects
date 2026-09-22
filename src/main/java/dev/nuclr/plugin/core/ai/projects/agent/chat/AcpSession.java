@@ -35,13 +35,19 @@ final class AcpSession extends JsonLineSession {
 	/** The protocol version spoken. */
 	static final int PROTOCOL_VERSION = 1;
 
+	/** A prompt waiting for the turn before it to end. */
+	private record Queued(String text, List<AgentEvent.Attachment> images) {
+	}
+
 	private final String resumeId;
 	private final AtomicLong ids = new AtomicLong();
 	private final Map<Long, Consumer<JsonNode>> responses = new ConcurrentHashMap<>();
 	private final Map<String, JsonNode> permissions = new ConcurrentHashMap<>();
 	private final Map<String, String> titles = new ConcurrentHashMap<>();
-	private final ArrayDeque<String> queued = new ArrayDeque<>();
+	private final ArrayDeque<Queued> queued = new ArrayDeque<>();
 	private volatile String sessionId;
+	/** Whether the agent said, in {@code initialize}, that a prompt may carry pictures. */
+	private volatile boolean takesImages;
 	private volatile boolean loading;
 	private boolean prompting;
 	private volatile Double cost;
@@ -71,7 +77,9 @@ final class AcpSession extends JsonLineSession {
 						emit(new AgentEvent.Notice("The agent refused to start: " + errorText(response), true));
 						return;
 					}
-					var canLoad = response.path("result").path("agentCapabilities").path("loadSession").asBoolean(false);
+					var capabilities = response.path("result").path("agentCapabilities");
+					var canLoad = capabilities.path("loadSession").asBoolean(false);
+					takesImages = capabilities.path("promptCapabilities").path("image").asBoolean(false);
 					try {
 						if (resumeId != null && canLoad) {
 							loading = true;
@@ -131,42 +139,74 @@ final class AcpSession extends JsonLineSession {
 	}
 
 	@Override
-	public void prompt(String text) throws IOException {
+	public void prompt(String text, List<AgentEvent.Attachment> images) throws IOException {
 		synchronized (queued) {
-			queued.add(text);
+			queued.add(new Queued(text, List.copyOf(images)));
 		}
 		sendNext();
 	}
 
+	/**
+	 * A prompt's content blocks: its pictures, then its words.
+	 *
+	 * <p>Pictures only where the agent said it takes them. One that did not is given the
+	 * pictures' paths in the text instead, which an agent with file tools can still open,
+	 * and the user is told why the pictures went that way.
+	 */
+	private List<Map<String, Object>> content(Queued prompt) throws IOException {
+		var blocks = new ArrayList<Map<String, Object>>();
+		var text = prompt.text();
+		if (!prompt.images().isEmpty()) {
+			if (takesImages) {
+				for (var image : prompt.images()) {
+					blocks.add(Map.of("type", "image", "data", Attachments.base64(image),
+							"mimeType", Attachments.mediaType(image)));
+				}
+			} else {
+				var paths = new ArrayList<String>();
+				for (var image : prompt.images()) {
+					paths.add("[Attached image: " + image.path() + "]");
+				}
+				text = (text.isBlank() ? "" : text + "\n\n") + String.join("\n", paths);
+				emit(new AgentEvent.Notice("This agent does not take pictures; it was given their paths instead.", false));
+			}
+		}
+		if (!text.isEmpty() || blocks.isEmpty()) {
+			blocks.add(Map.of("type", "text", "text", text));
+		}
+		return blocks;
+	}
+
 	/** One prompt at a time: the next waits for the one before it to end its turn. */
 	private void sendNext() {
-		String text;
+		Queued next;
 		synchronized (queued) {
 			if (sessionId == null || prompting || queued.isEmpty()) {
 				return;
 			}
-			text = queued.poll();
+			next = queued.poll();
 			prompting = true;
 			turnStarted = System.currentTimeMillis();
 		}
 		try {
-			request("session/prompt", Map.of("sessionId", sessionId,
-					"prompt", List.of(Map.of("type", "text", "text", text))), response -> {
-						synchronized (queued) {
-							prompting = false;
-						}
-						var stop = text(response.path("result"), "stopReason");
-						var error = response.has("error");
-						emit(new AgentEvent.TurnEnded(error || "refusal".equals(stop),
-								error ? errorText(response) : "end_turn".equals(stop) ? null : describeStop(stop),
-								cost, System.currentTimeMillis() - turnStarted));
-						sendNext();
-					});
+			request("session/prompt", Map.of("sessionId", sessionId, "prompt", content(next)), response -> {
+				synchronized (queued) {
+					prompting = false;
+				}
+				var stop = text(response.path("result"), "stopReason");
+				var error = response.has("error");
+				emit(new AgentEvent.TurnEnded(error || "refusal".equals(stop),
+						error ? errorText(response) : "end_turn".equals(stop) ? null : describeStop(stop),
+						cost, System.currentTimeMillis() - turnStarted));
+				sendNext();
+			});
 		} catch (IOException e) {
 			synchronized (queued) {
 				prompting = false;
 			}
 			emit(new AgentEvent.TurnEnded(true, "Could not send the message: " + e.getMessage(), null, null));
+			// A picture that could not be read fails its own prompt, not the ones queued behind it.
+			sendNext();
 		}
 	}
 

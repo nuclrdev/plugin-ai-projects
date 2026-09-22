@@ -2,6 +2,8 @@ package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.io.IOException;
@@ -21,6 +23,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -43,6 +46,7 @@ import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalogs;
 import dev.nuclr.plugin.core.ai.projects.store.Json;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectPaths;
 import dev.nuclr.plugin.core.ai.projects.ui.ChoicePicker;
+import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.ui.TextContextMenu;
 import lombok.extern.slf4j.Slf4j;
@@ -83,6 +87,12 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final JLabel statusLabel = new JLabel();
 	private final JButton newButton = Glyphs.decorate(new JButton(), Glyphs.NEW, "New conversation");
 	private final JTextArea input = new JTextArea(3, 40);
+	/** The pictures and long pastes the next message carries, above the box. */
+	private final AttachmentStrip attachmentStrip = new AttachmentStrip(this::insertAsText, this::hint);
+	/** A line under the box saying what just happened to a paste or a drop. */
+	private final JLabel hintLabel = new JLabel();
+	private final Timer hintTimer = new Timer(HINT_MS, event -> hintLabel.setVisible(false));
+	private final JButton attachButton = Glyphs.decorate(new JButton(), Glyphs.ATTACH, null);
 	private final JButton sendButton = Glyphs.decorate(new JButton(), Glyphs.SEND, "Send");
 	private final JButton interruptButton = Glyphs.decorate(new JButton(), Glyphs.STOP, "Interrupt");
 	private final List<SlashCommand> commands = new ArrayList<>();
@@ -101,17 +111,58 @@ public final class ChatAgentWindow implements AgentWindow {
 	private boolean turnActive;
 	private boolean sessionNotStarted;
 	/** Prompts sent before the session said it started; a failed resume sends them again. */
-	private String unconfirmed;
+	private Outgoing unconfirmed;
 	/** Prompts to send once started without showing them again: they are on screen already. */
-	private String resend;
+	private Outgoing resend;
 	private boolean resuming;
 	private boolean stopRequested;
 	private boolean restartPending;
 	private boolean attentionRaised;
 	private boolean closed;
-	private String pendingPrompt;
+	private Outgoing pendingPrompt;
 	private String summary = "";
 	private CommandPopup commandPopup;
+	/** What Up or Down last put in the strip, so the next press knows the strip is still the walk's. */
+	private List<AgentEvent.Attachment> recalledAttachments;
+	/** Pictures being made fit to send, off the event thread; the message waits for them. */
+	private int preparing;
+	/** How many pictures and pastes this window has named, so each gets a name of its own. */
+	private int pastedImages;
+	private int pastedTexts;
+
+	/** How long a hint under the box stays. */
+	private static final int HINT_MS = 6_000;
+
+	/** Paste as plain text: the clipboard's text into the box however long it is. */
+	private static final KeyStroke PASTE_PLAIN = KeyStroke.getKeyStroke(KeyEvent.VK_V,
+			Dialogs.menuShortcutMask() | KeyEvent.SHIFT_DOWN_MASK);
+
+	/**
+	 * A message on its way to the agent: what was typed, and what was attached to it.
+	 *
+	 * @param text        the words, possibly empty
+	 * @param attachments the pictures and long pastes, possibly none
+	 */
+	private record Outgoing(String text, List<AgentEvent.Attachment> attachments) {
+
+		Outgoing {
+			text = text == null ? "" : text;
+			attachments = List.copyOf(attachments);
+		}
+
+		/** A message of words alone. */
+		static Outgoing of(String text) {
+			return new Outgoing(text, List.of());
+		}
+
+		/** This message and a later one, sent as one, as typed prompts waiting for a start are. */
+		Outgoing then(Outgoing later) {
+			var joined = text.isBlank() ? later.text : later.text.isBlank() ? text : text + "\n\n" + later.text;
+			var all = new ArrayList<>(attachments);
+			all.addAll(later.attachments);
+			return new Outgoing(joined, all);
+		}
+	}
 
 	/**
 	 * Build the window for one agent. Nothing is started here.
@@ -147,8 +198,20 @@ public final class ChatAgentWindow implements AgentWindow {
 
 		input.setLineWrap(true);
 		input.setWrapStyleWord(true);
-		input.putClientProperty("JTextField.placeholderText", "Message the agent - Enter sends, Shift+Enter for a new line");
+		input.putClientProperty("JTextField.placeholderText",
+				"Message the agent - Enter sends, Shift+Enter for a new line; paste or drop pictures and files");
 		TextContextMenu.install(input);
+		addComposerMenuItems();
+		input.getInputMap().put(PASTE_PLAIN, "nuclr-paste-plain");
+		input.getActionMap().put("nuclr-paste-plain", new AbstractAction() {
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public void actionPerformed(ActionEvent event) {
+				pastePlainText();
+			}
+		});
+		removeAttachmentOnBackspace();
 		input.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "nuclr-send");
 		input.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, KeyEvent.SHIFT_DOWN_MASK), "insert-break");
 		input.getActionMap().put("nuclr-send", new AbstractAction() {
@@ -175,10 +238,46 @@ public final class ChatAgentWindow implements AgentWindow {
 		interruptButton.setToolTipText("Stop the current turn; the conversation goes on");
 		interruptButton.addActionListener(event -> interrupt());
 
+		attachButton.setToolTipText("Attach pictures or files - or paste them, or drop them on the box");
+		attachButton.addActionListener(event -> chooseFiles());
+		hintLabel.setVisible(false);
+		styleHint();
+		hintTimer.setRepeats(false);
+		attachmentStrip.onChange(this::updateControls);
+
 		var composer = new JPanel(new BorderLayout(6, 0));
 		composer.setBorder(BorderFactory.createEmptyBorder(6, 8, 8, 8));
 		var inputScroll = new JScrollPane(input);
-		composer.add(inputScroll, BorderLayout.CENTER);
+		var box = new JPanel(new BorderLayout(0, 4));
+		box.setOpaque(false);
+		box.add(attachmentStrip, BorderLayout.NORTH);
+		box.add(inputScroll, BorderLayout.CENTER);
+		box.add(hintLabel, BorderLayout.SOUTH);
+		composer.add(box, BorderLayout.CENTER);
+		var attachHolder = new JPanel(new BorderLayout());
+		attachHolder.setOpaque(false);
+		attachHolder.add(attachButton, BorderLayout.NORTH);
+		composer.add(attachHolder, BorderLayout.WEST);
+		// On the panels around the box as well as the box, so a drop just off it still lands.
+		var transfer = new ComposerTransfer(input, new ComposerTransfer.Sink() {
+			@Override
+			public void files(List<java.io.File> files) {
+				attachFiles(files);
+			}
+
+			@Override
+			public void image(java.awt.Image image) {
+				attachImage(image);
+			}
+
+			@Override
+			public boolean longText(String text) {
+				return attachLongText(text);
+			}
+		});
+		input.setTransferHandler(transfer);
+		attachmentStrip.setTransferHandler(transfer);
+		composer.setTransferHandler(transfer);
 		var actions = new JPanel();
 		actions.setLayout(new javax.swing.BoxLayout(actions, javax.swing.BoxLayout.PAGE_AXIS));
 		sendButton.setAlignmentX(JComponent.CENTER_ALIGNMENT);
@@ -209,7 +308,10 @@ public final class ChatAgentWindow implements AgentWindow {
 			@Override
 			public void actionPerformed(ActionEvent event) {
 				var current = input.getText();
-				var recalled = older ? recall.older(current) : recall.newer(current);
+				// Attachments the user added themselves make the composer theirs, as typed words do.
+				var attached = attachmentStrip.attachments();
+				var recalled = !attached.isEmpty() && !attached.equals(recalledAttachments) ? null
+						: older ? recall.older(current) : recall.newer(current);
 				if (recalled == null) {
 					if (caret != null) {
 						caret.actionPerformed(event);
@@ -220,6 +322,9 @@ public final class ChatAgentWindow implements AgentWindow {
 					input.setText(recalled);
 					input.setCaretPosition(recalled.length());
 				}
+				// A prompt comes back with what was sent with it, as far as its files are still there.
+				recalledAttachments = recalled.isEmpty() ? List.of() : attachmentsSentWith(recalled);
+				attachmentStrip.set(recalledAttachments);
 			}
 		});
 	}
@@ -228,11 +333,27 @@ public final class ChatAgentWindow implements AgentWindow {
 	private List<String> sentPrompts() {
 		var sent = new ArrayList<String>();
 		for (var event : history) {
-			if (event instanceof AgentEvent.UserMessage(var text)) {
+			if (event instanceof AgentEvent.UserMessage(var text, var ignored)) {
 				sent.add(text);
 			}
 		}
 		return sent;
+	}
+
+	/**
+	 * What was attached the last time a prompt was sent, less any file that has gone.
+	 *
+	 * @param prompt the prompt, as recall shows it
+	 * @return its attachments, possibly none
+	 */
+	private List<AgentEvent.Attachment> attachmentsSentWith(String prompt) {
+		for (var i = history.size() - 1; i >= 0; i--) {
+			if (history.get(i) instanceof AgentEvent.UserMessage(var text, var attachments)
+					&& text.strip().equals(prompt.strip())) {
+				return attachments.stream().filter(attachment -> Files.isRegularFile(attachment.file())).toList();
+			}
+		}
+		return List.of();
 	}
 
 	/** Show the stored conversation, as it was when the last window closed. */
@@ -1074,24 +1195,336 @@ public final class ChatAgentWindow implements AgentWindow {
 	@Override
 	public void sendInstruction(String instruction) {
 		if (instruction != null && !instruction.isBlank()) {
-			send(instruction.strip());
+			send(Outgoing.of(instruction.strip()));
 		}
 	}
 
 	private void sendFromInput() {
 
 		var text = input.getText().strip();
-		if (text.isEmpty()) {
+		var attached = attachmentStrip.attachments();
+		if (text.isEmpty() && attached.isEmpty()) {
 			return;
 		}
-		var invocation = SlashCommands.parse(text).orElse(null);
+		if (preparing > 0) {
+			// Sent now, the message would go without the picture the user can see being attached.
+			hint("A picture is still being attached - send again in a moment.");
+			return;
+		}
+		var invocation = text.isEmpty() ? null : SlashCommands.parse(text).orElse(null);
 		if (invocation != null) {
 			input.setText("");
+			if (!attached.isEmpty()) {
+				hint("The attachments are kept for your next message.");
+			}
 			run(invocation);
 			return;
 		}
 		input.setText("");
-		send(SlashCommands.unescape(text));
+		attachmentStrip.clear();
+		recalledAttachments = null;
+		send(new Outgoing(SlashCommands.unescape(text), attached));
+	}
+
+	// ------------------------------------------------------------ attachments
+
+	/**
+	 * Files pasted, dropped or chosen: the pictures are attached, and every other file -
+	 * a folder, a source file, a picture Java cannot read - has its path written into the
+	 * message where the caret is, as a terminal agent is given a file dropped on it. The
+	 * agent reads files with its own tools; what it needs is where they are.
+	 *
+	 * @param files the files
+	 */
+	private void attachFiles(List<java.io.File> files) {
+		input.requestFocusInWindow();
+		var paths = new ArrayList<String>();
+		var left = 0;
+		for (var file : files) {
+			var path = file.toPath();
+			if (Files.isRegularFile(path) && Attachments.isReadableImage(path)) {
+				if (!roomFor(1)) {
+					left++;
+					continue;
+				}
+				prepare(path.getFileName().toString(), runtime -> Attachments.imageFile(runtime, path)
+						.orElseThrow(() -> new IOException("not a picture this can read")),
+						() -> appendWords(Attachments.pathForMessage(path, context.workingDirectory())));
+			} else {
+				paths.add(Attachments.pathForMessage(path, context.workingDirectory()));
+			}
+		}
+		if (!paths.isEmpty()) {
+			insertWords(String.join(" ", paths));
+		}
+		if (left > 0) {
+			hint("A message carries at most " + Attachments.MOST_PER_MESSAGE + " attachments; "
+					+ (left == 1 ? "one picture was" : left + " pictures were") + " left out.");
+		}
+	}
+
+	/**
+	 * A picture from the clipboard: made fit to send, off the event thread, and attached.
+	 *
+	 * @param image the picture
+	 */
+	private void attachImage(java.awt.Image image) {
+		input.requestFocusInWindow();
+		if (!roomFor(1)) {
+			hint("A message carries at most " + Attachments.MOST_PER_MESSAGE + " attachments.");
+			return;
+		}
+		var name = "Pasted image " + ++pastedImages;
+		prepare(name, runtime -> Attachments.image(runtime, image, name), () -> {
+		});
+	}
+
+	/**
+	 * A paste too long for the box, attached instead, as other chat windows do. It still
+	 * reaches the agent as text, in front of the message.
+	 *
+	 * @param text the paste
+	 * @return whether it was attached; {@code false} puts it in the box
+	 */
+	private boolean attachLongText(String text) {
+		if (!Attachments.isLongPaste(text) || !roomFor(1)) {
+			return false;
+		}
+		input.requestFocusInWindow();
+		try {
+			var attachment = Attachments.text(context.runtimeDirectory(), text, "Pasted text " + (pastedTexts + 1));
+			if (attachmentStrip.add(attachment)) {
+				pastedTexts++;
+				hint("The long paste was attached; it is sent as text in front of your message. "
+						+ java.awt.event.InputEvent.getModifiersExText(PASTE_PLAIN.getModifiers()) + "+V"
+						+ " pastes it into the box instead.");
+			} else {
+				hint("That text is attached already.");
+			}
+			return true;
+		} catch (IOException e) {
+			// Better in the box than nowhere.
+			log.debug("Could not keep a paste for {}: {}", context.agentId(), e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * Make an attachment off the event thread and add it when it is ready. The message
+	 * cannot be sent meanwhile, so it never goes without what the user saw arrive.
+	 *
+	 * @param what   what is being attached, for the hint that says so
+	 * @param make   makes it, given the agent's runtime folder
+	 * @param failed runs, on the event thread, when it could not be made
+	 */
+	private void prepare(String what, AttachmentMaker make, Runnable failed) {
+		preparing++;
+		updatePreparing();
+		var runtime = context.runtimeDirectory();
+		Thread.ofVirtual().name("nuclr-ai-attach-" + context.agentId()).start(() -> {
+			AgentEvent.Attachment made = null;
+			String problem = null;
+			try {
+				made = make.make(runtime);
+			} catch (IOException | RuntimeException | OutOfMemoryError e) {
+				problem = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+			}
+			var attachment = made;
+			var reason = problem;
+			SwingUtilities.invokeLater(() -> {
+				preparing--;
+				updatePreparing();
+				if (closed) {
+					return;
+				}
+				if (attachment == null) {
+					hint("Could not attach " + what + ": " + reason);
+					failed.run();
+				} else if (!attachmentStrip.add(attachment)) {
+					hint(what + " is attached already.");
+				}
+			});
+		});
+	}
+
+	/** Makes one attachment, off the event thread. */
+	@FunctionalInterface
+	private interface AttachmentMaker {
+
+		/**
+		 * @param runtimeDirectory the agent's runtime folder, where attachments are kept
+		 * @return the attachment
+		 * @throws IOException when it cannot be made
+		 */
+		AgentEvent.Attachment make(Path runtimeDirectory) throws IOException;
+	}
+
+	/** Whether the next message has room for more attachments, counting those still being made. */
+	private boolean roomFor(int more) {
+		return attachmentStrip.count() + preparing + more <= Attachments.MOST_PER_MESSAGE;
+	}
+
+	/** Say, under the box, that pictures are being attached - for as long as they are. */
+	private void updatePreparing() {
+		if (preparing > 0) {
+			hintTimer.stop();
+			showHint(preparing == 1 ? "Attaching a picture..." : "Attaching " + preparing + " pictures...");
+		} else if (!hintTimer.isRunning()) {
+			hintLabel.setVisible(false);
+		}
+		updateControls();
+	}
+
+	/**
+	 * Say something under the box for a few seconds.
+	 *
+	 * @param text what to say
+	 */
+	private void hint(String text) {
+		showHint(text);
+		hintTimer.restart();
+	}
+
+	private void showHint(String text) {
+		hintLabel.setText(text);
+		hintLabel.setToolTipText(text);
+		hintLabel.setVisible(true);
+		hintLabel.revalidate();
+	}
+
+	/** The hint's colours and font, from the theme. */
+	private void styleHint() {
+		var color = javax.swing.UIManager.getColor("Label.disabledForeground");
+		hintLabel.setForeground(color != null ? color : java.awt.Color.GRAY);
+		var font = javax.swing.UIManager.getFont("Label.font");
+		if (font != null) {
+			hintLabel.setFont(font.deriveFont(font.getSize2D() - 1f));
+		}
+	}
+
+	/**
+	 * Put a pasted text back into the box as text, where the caret is.
+	 *
+	 * @param attachment the paste, already taken off the strip
+	 */
+	private void insertAsText(AgentEvent.Attachment attachment) {
+		try {
+			input.requestFocusInWindow();
+			input.replaceSelection(Files.readString(attachment.file(), StandardCharsets.UTF_8));
+		} catch (IOException | RuntimeException e) {
+			hint("Could not read " + Attachments.displayName(attachment) + ": " + e.getMessage());
+		}
+	}
+
+	/** Write words into the box at the caret, a space apart from what is either side. */
+	private void insertWords(String words) {
+		var start = input.getSelectionStart();
+		var text = input.getText();
+		var before = start > 0 && !Character.isWhitespace(text.charAt(start - 1)) ? " " : "";
+		var end = input.getSelectionEnd();
+		var after = end < text.length() && Character.isWhitespace(text.charAt(end)) ? "" : " ";
+		input.replaceSelection(before + words + after);
+	}
+
+	/** Write words at the end of the box, for something that arrived after the user may have moved on. */
+	private void appendWords(String words) {
+		var text = input.getText();
+		input.append((text.isEmpty() || Character.isWhitespace(text.charAt(text.length() - 1)) ? "" : " ") + words);
+	}
+
+	/** Ctrl+Shift+V: the clipboard's text into the box as it is, however long, never attached. */
+	private void pastePlainText() {
+		if (!input.isEditable() || !input.isEnabled()) {
+			return;
+		}
+		try {
+			var clipboard = input.getToolkit().getSystemClipboard();
+			if (clipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)
+					&& clipboard.getData(DataFlavor.stringFlavor) instanceof String text) {
+				input.replaceSelection(text.replace("\r\n", "\n").replace('\r', '\n'));
+			}
+		} catch (IllegalStateException | java.awt.HeadlessException | UnsupportedFlavorException | IOException e) {
+			// Another application holds the clipboard, or it changed under us.
+		}
+	}
+
+	/** Pick files to attach, starting where the agent works. */
+	private void chooseFiles() {
+		var chooser = new JFileChooser(context.workingDirectory().toFile());
+		chooser.setDialogTitle("Attach pictures or files");
+		chooser.setMultiSelectionEnabled(true);
+		chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
+		if (chooser.showOpenDialog(root) == JFileChooser.APPROVE_OPTION) {
+			attachFiles(List.of(chooser.getSelectedFiles()));
+		}
+	}
+
+	/** The box's own right-click menu, with pasting as plain text and attaching beside Paste. */
+	private void addComposerMenuItems() {
+		var menu = input.getComponentPopupMenu();
+		if (menu == null) {
+			return;
+		}
+		var index = 0;
+		for (var i = 0; i < menu.getComponentCount(); i++) {
+			if (menu.getComponent(i) instanceof javax.swing.JMenuItem item && "Paste".equals(item.getText())) {
+				index = i + 1;
+			}
+		}
+		var plain = new javax.swing.JMenuItem("Paste as plain text");
+		plain.setAccelerator(PASTE_PLAIN);
+		plain.addActionListener(event -> pastePlainText());
+		var attach = Glyphs.decorate(new javax.swing.JMenuItem(), Glyphs.ATTACH, "Attach pictures or files...");
+		attach.addActionListener(event -> chooseFiles());
+		menu.insert(plain, index);
+		menu.insert(attach, index + 1);
+		menu.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+			@Override
+			public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent event) {
+				var editable = input.isEditable() && input.isEnabled();
+				plain.setEnabled(editable && clipboardHasText());
+				attach.setEnabled(editable);
+			}
+
+			@Override
+			public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent event) {
+				// Nothing to undo.
+			}
+
+			@Override
+			public void popupMenuCanceled(javax.swing.event.PopupMenuEvent event) {
+				// Nothing to undo.
+			}
+		});
+	}
+
+	private boolean clipboardHasText() {
+		try {
+			return input.getToolkit().getSystemClipboard().isDataFlavorAvailable(DataFlavor.stringFlavor);
+		} catch (IllegalStateException | java.awt.HeadlessException e) {
+			return true;
+		}
+	}
+
+	/** Backspace in an empty box takes off the last attachment, as it takes off the last character otherwise. */
+	private void removeAttachmentOnBackspace() {
+		var stroke = KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0);
+		var inputMap = input.getInputMap(JComponent.WHEN_FOCUSED);
+		var previousId = inputMap.get(stroke);
+		var previous = previousId == null ? null : input.getActionMap().get(previousId);
+		inputMap.put(stroke, "nuclr-remove-attachment");
+		input.getActionMap().put("nuclr-remove-attachment", new AbstractAction() {
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public void actionPerformed(ActionEvent event) {
+				if (input.getDocument().getLength() == 0 && !attachmentStrip.isEmpty() && input.isEditable()) {
+					attachmentStrip.removeLast();
+				} else if (previous != null) {
+					previous.actionPerformed(event);
+				}
+			}
+		});
 	}
 
 	/**
@@ -1119,39 +1552,56 @@ public final class ChatAgentWindow implements AgentWindow {
 				+ " or start the line with // to send a message that really does begin with a slash.", true));
 	}
 
-	/** Send a prompt, starting the agent first when it is not running. */
+	/** Send words alone, starting the agent first when it is not running. */
 	private void send(String text) {
+		send(Outgoing.of(text));
+	}
+
+	/** Send a prompt, starting the agent first when it is not running. */
+	private void send(Outgoing message) {
 		if (closed) {
 			return;
 		}
 		var running = session;
 		if (running == null || !status.isLive()) {
-			pendingPrompt = pendingPrompt == null ? text : pendingPrompt + "\n\n" + text;
+			pendingPrompt = pendingPrompt == null ? message : pendingPrompt.then(message);
 			if (!status.isLive()) {
 				start();
 			}
 			return;
 		}
-		deliver(text, true);
+		deliver(message, true);
 	}
 
-	/** Hand a prompt to the running session; {@code show} is false for one already on screen. */
-	private void deliver(String text, boolean show) {
+	/**
+	 * Hand a prompt to the running session; {@code show} is false for one already on screen.
+	 *
+	 * <p>The agent is given the pasted texts in front of the words and the pictures beside
+	 * them; the conversation keeps the words and the attachments apart, as they were composed.
+	 */
+	private void deliver(Outgoing message, boolean show) {
 		var running = session;
 		if (running == null) {
 			return;
 		}
 		try {
-			running.prompt(text);
+			running.prompt(Attachments.wireText(message.text(), message.attachments()),
+					Attachments.images(message.attachments()));
 		} catch (IOException e) {
 			record(new AgentEvent.Notice("Could not send the message: " + e.getMessage(), true));
+			if (show && input.getDocument().getLength() == 0 && attachmentStrip.isEmpty()) {
+				// Not sent, so not lost: back in the box, less any attachment whose file has gone.
+				input.setText(message.text());
+				attachmentStrip.set(message.attachments().stream()
+						.filter(attachment -> Files.isRegularFile(attachment.file())).toList());
+			}
 			return;
 		}
 		if (sessionNotStarted) {
-			unconfirmed = unconfirmed == null ? text : unconfirmed + "\n\n" + text;
+			unconfirmed = unconfirmed == null ? message : unconfirmed.then(message);
 		}
 		if (show) {
-			record(new AgentEvent.UserMessage(text));
+			record(new AgentEvent.UserMessage(message.text(), message.attachments()));
 			view.scrollToEnd();
 		}
 		turnActive = true;
@@ -1282,6 +1732,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	@Override
 	public void updateTheme() {
 		view.updateTheme();
+		styleHint();
 	}
 
 	@Override
@@ -1351,6 +1802,7 @@ public final class ChatAgentWindow implements AgentWindow {
 		var wasLive = status.isLive();
 		closed = true;
 		saveTimer.stop();
+		hintTimer.stop();
 		restartPending = false;
 		var running = session;
 		session = null;

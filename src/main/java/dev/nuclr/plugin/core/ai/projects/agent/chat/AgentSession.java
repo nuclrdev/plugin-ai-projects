@@ -1,6 +1,7 @@
 package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * One running conversational agent, behind whatever protocol its CLI speaks.
@@ -24,7 +25,23 @@ interface AgentSession extends AutoCloseable {
 	 * @param text the prompt
 	 * @throws IOException when the process is no longer reading
 	 */
-	void prompt(String text) throws IOException;
+	default void prompt(String text) throws IOException {
+		prompt(text, List.of());
+	}
+
+	/**
+	 * Send the user's next message with pictures.
+	 *
+	 * <p>Each CLI takes a picture in its own shape - Claude Code and ACP as a base64
+	 * content block, Pi in an {@code images} list beside the message, Codex as a path it
+	 * reads itself - so the pictures arrive here as files and each session reads them
+	 * as its protocol needs.
+	 *
+	 * @param text   the prompt, possibly empty when there are pictures
+	 * @param images the pictures, {@link AgentEvent.Attachment.Kind#IMAGE} only; empty for none
+	 * @throws IOException when the process is no longer reading, or a picture cannot be read
+	 */
+	void prompt(String text, List<AgentEvent.Attachment> images) throws IOException;
 
 	/**
 	 * Stop the current turn, keeping the session.

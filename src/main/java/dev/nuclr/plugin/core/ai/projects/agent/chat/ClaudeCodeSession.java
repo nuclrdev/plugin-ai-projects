@@ -72,9 +72,17 @@ final class ClaudeCodeSession extends JsonLineSession {
 	}
 
 	@Override
-	public void prompt(String text) throws IOException {
-		send(Map.of("type", "user", "message", Map.of("role", "user",
-				"content", List.of(Map.of("type", "text", "text", text)))));
+	public void prompt(String text, List<AgentEvent.Attachment> images) throws IOException {
+		// Pictures ahead of the words, which is where the Messages API reads them best.
+		var content = new ArrayList<Map<String, Object>>();
+		for (var image : images) {
+			content.add(Map.of("type", "image", "source", Map.of("type", "base64",
+					"media_type", Attachments.mediaType(image), "data", Attachments.base64(image))));
+		}
+		if (!text.isEmpty() || content.isEmpty()) {
+			content.add(Map.of("type", "text", "text", text));
+		}
+		send(Map.of("type", "user", "message", Map.of("role", "user", "content", content)));
 	}
 
 	@Override

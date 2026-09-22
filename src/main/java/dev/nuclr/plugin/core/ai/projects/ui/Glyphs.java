@@ -216,6 +216,10 @@ public final class Glyphs {
 	public static final String TRANSCRIPT = pick("📜", "≣");
 	/** Something missing or wrong. */
 	public static final String MISSING = pick("⚠️", "⚠");
+	/** Attach a file or a picture. */
+	public static final String ATTACH = pick("📎", "+");
+	/** A picture. */
+	public static final String IMAGE = pick("🖼️", "▣");
 	// The icon form's colours. Where an emoji's own colour carries meaning -
 	// status, a destructive command, a folder - the icon keeps one; everything
 	// else follows the component's foreground, so a toolbar is not a box of

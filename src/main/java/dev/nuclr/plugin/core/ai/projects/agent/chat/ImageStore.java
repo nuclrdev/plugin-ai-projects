@@ -59,6 +59,20 @@ final class ImageStore {
 		} catch (IllegalArgumentException e) {
 			throw new IOException("The image is not valid base64", e);
 		}
+		return store(runtimeDirectory, bytes, mediaType);
+	}
+
+	/**
+	 * Write an image's bytes into the agent's runtime folder - one the user pasted, or
+	 * one the agent sent once it is decoded.
+	 *
+	 * @param runtimeDirectory the agent's runtime folder
+	 * @param bytes            the encoded image
+	 * @param mediaType        its media type, or {@code null} for PNG
+	 * @return where it was written
+	 * @throws IOException when it cannot be written
+	 */
+	static Path store(Path runtimeDirectory, byte[] bytes, String mediaType) throws IOException {
 		if (bytes.length == 0) {
 			throw new IOException("The image is empty");
 		}
@@ -98,7 +112,7 @@ final class ImageStore {
 	}
 
 	/** A name from the bytes themselves, so the same picture is stored once. */
-	private static String name(byte[] bytes) {
+	static String name(byte[] bytes) {
 		try {
 			var digest = MessageDigest.getInstance("SHA-256").digest(bytes);
 			return HexFormat.of().formatHex(digest, 0, 8);

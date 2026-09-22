@@ -52,6 +52,7 @@ import dev.nuclr.plugin.core.ai.projects.ui.CopyContextMenu;
 import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.ui.Reveal;
+import dev.nuclr.plugin.core.ai.projects.ui.screen.WrapLayout;
 
 /**
  * A conversation, drawn as Swing components rather than as a terminal screen.
@@ -175,8 +176,8 @@ final class ConversationView extends JPanel {
 					add(new ThoughtBlock(text));
 				}
 			}
-			case AgentEvent.UserMessage(var text) -> {
-				lastPrompt = new UserBlock(text);
+			case AgentEvent.UserMessage(var text, var attachments) -> {
+				lastPrompt = new UserBlock(text, attachments);
 				add(lastPrompt);
 			}
 			case AgentEvent.ToolCall call -> {
@@ -952,19 +953,40 @@ final class ConversationView extends JPanel {
 		}
 	}
 
-	/** What the user sent, on a shaded panel with an accent bar. */
+	/** How large a picture sent with a message is drawn in it; clicking it opens the whole picture. */
+	private static final int SENT_THUMBNAIL_WIDTH = 240;
+	private static final int SENT_THUMBNAIL_HEIGHT = 160;
+
+	/** The most of a pasted text shown when it is opened in the conversation; the file holds the rest. */
+	private static final int SHOWN_PASTE_CHARS = 100_000;
+
+	/** What the user sent, on a shaded panel with an accent bar, with whatever was attached to it. */
 	private final class UserBlock extends JPanel implements Themed {
 
 		private static final long serialVersionUID = 1L;
 		private final String message;
+		private final List<AgentEvent.Attachment> attachments;
 		private final JTextArea text;
 		private final JButton copyButton = Glyphs.decorate(new JButton(), Glyphs.COPY, null);
+		/** The captions of the attachments, re-coloured with the theme. */
+		private final List<JLabel> captions = new ArrayList<>();
+		/** Pasted texts opened in place, re-fonted with the zoom. */
+		private final List<JTextArea> opened = new ArrayList<>();
 
-		UserBlock(String message) {
+		UserBlock(String message, List<AgentEvent.Attachment> attachments) {
 			super(new BorderLayout(6, 0));
 			this.message = message;
+			this.attachments = List.copyOf(attachments);
 			text = textArea(message, textFont());
-			add(text, BorderLayout.CENTER);
+			var body = new JPanel(new BorderLayout(0, 6));
+			body.setOpaque(false);
+			if (!message.isBlank() || this.attachments.isEmpty()) {
+				body.add(text, BorderLayout.CENTER);
+			}
+			if (!this.attachments.isEmpty()) {
+				body.add(attached(), message.isBlank() ? BorderLayout.CENTER : BorderLayout.SOUTH);
+			}
+			add(body, BorderLayout.CENTER);
 			copyButton.setToolTipText("Copy to clipboard");
 			copyButton.putClientProperty("JButton.buttonType", "toolBarButton");
 			copyButton.setFocusable(false);
@@ -976,10 +998,143 @@ final class ConversationView extends JPanel {
 			theme();
 		}
 
-		private void copy() {
+		/** The row of attachments, and under it any pasted text that has been opened. */
+		private JComponent attached() {
+			var row = new JPanel(new WrapLayout(8, 4));
+			row.setOpaque(false);
+			var texts = new JPanel();
+			texts.setOpaque(false);
+			texts.setLayout(new BoxLayout(texts, BoxLayout.PAGE_AXIS));
+			for (var attachment : attachments) {
+				row.add(attachment.kind() == AgentEvent.Attachment.Kind.IMAGE ? picture(attachment)
+						: pasted(attachment, texts));
+			}
+			var holder = new JPanel(new BorderLayout(0, 4));
+			holder.setOpaque(false);
+			holder.add(row, BorderLayout.NORTH);
+			holder.add(texts, BorderLayout.CENTER);
+			return holder;
+		}
+
+		/** A picture that was sent, small, opening in the system's viewer when clicked. */
+		private JComponent picture(AgentEvent.Attachment attachment) {
+			var file = attachment.file();
+			var name = Attachments.displayName(attachment);
+			var thumbnail = Attachments.thumbnail(file, SENT_THUMBNAIL_WIDTH, SENT_THUMBNAIL_HEIGHT);
+			var label = new JLabel();
+			label.setBorder(BorderFactory.createLineBorder(tint(0.25f), 1));
+			if (thumbnail == null) {
+				// Gone from the runtime folder, or never readable: say so rather than draw nothing.
+				Glyphs.decorate(label, Glyphs.IMAGE, name + " (the file is gone)");
+				captions.add(label);
+				return label;
+			}
+			label.setIcon(thumbnail);
+			label.setToolTipText(name + "  " + thumbnail.getDescription() + " - click to open it");
+			label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			label.addMouseListener(new MouseAdapter() {
+				@Override
+				public void mouseClicked(MouseEvent event) {
+					if (SwingUtilities.isLeftMouseButton(event)) {
+						open(label, attachment);
+					}
+				}
+			});
+			var menu = new javax.swing.JPopupMenu();
+			menu.add(menuItem("Open", Glyphs.LINK, () -> open(label, attachment)));
+			menu.add(menuItem("Copy to clipboard", Glyphs.COPY, () -> copyPicture(file)));
+			label.setComponentPopupMenu(menu);
+			return label;
+		}
+
+		/** A pasted text that was sent: its name and length, shown in place when clicked. */
+		private JComponent pasted(AgentEvent.Attachment attachment, JPanel texts) {
+			var file = attachment.file();
+			var label = new JLabel();
+			Glyphs.decorate(label, Glyphs.TEXT,
+					Attachments.displayName(attachment) + "  ·  " + Attachments.textDetail(file));
+			label.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tint(0.25f), 1, true),
+					BorderFactory.createEmptyBorder(3, 6, 3, 6)));
+			label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			label.setToolTipText("Sent as text in front of the message - click to show it here, again to hide it");
+			captions.add(label);
+			JTextArea[] shown = { null };
+			label.addMouseListener(new MouseAdapter() {
+				@Override
+				public void mouseClicked(MouseEvent event) {
+					if (!SwingUtilities.isLeftMouseButton(event)) {
+						return;
+					}
+					if (shown[0] != null) {
+						texts.remove(shown[0]);
+						opened.remove(shown[0]);
+						shown[0] = null;
+					} else {
+						shown[0] = textArea(pastedText(file), monospace());
+						shown[0].setAlignmentX(LEFT_ALIGNMENT);
+						shown[0].setForeground(foreground());
+						opened.add(shown[0]);
+						texts.add(shown[0]);
+					}
+					column.revalidate();
+					column.repaint();
+				}
+			});
+			var menu = new javax.swing.JPopupMenu();
+			menu.add(menuItem("Open", Glyphs.LINK, () -> open(label, attachment)));
+			label.setComponentPopupMenu(menu);
+			return label;
+		}
+
+		/** A pasted text's content, as much of it as is worth drawing. */
+		private static String pastedText(Path file) {
+			try {
+				var content = Files.readString(file, java.nio.charset.StandardCharsets.UTF_8);
+				return content.length() > SHOWN_PASTE_CHARS
+						? content.substring(0, SHOWN_PASTE_CHARS) + "\n... (the rest is in " + file + ")"
+						: content.stripTrailing();
+			} catch (IOException | RuntimeException e) {
+				return "The pasted text could not be read: " + e.getMessage();
+			}
+		}
+
+		/** Open an attachment's file, saying on the attachment itself when that fails. */
+		private static void open(JLabel label, AgentEvent.Attachment attachment) {
+			var problem = Attachments.open(attachment.file());
+			if (problem != null) {
+				label.setToolTipText(Attachments.displayName(attachment) + ": " + problem);
+			}
+		}
+
+		private void copyPicture(Path file) {
 			try {
 				var target = clipboard != null ? clipboard : getToolkit().getSystemClipboard();
-				target.setContents(new StringSelection(message), null);
+				target.setContents(new ImageTransfer(javax.imageio.ImageIO.read(file.toFile()), file), null);
+			} catch (IOException | IllegalStateException | java.awt.HeadlessException e) {
+				// Unreadable, or the clipboard is held by another application.
+			}
+		}
+
+		private static javax.swing.JMenuItem menuItem(String label, String glyph, Runnable action) {
+			var entry = Glyphs.decorate(new javax.swing.JMenuItem(), glyph, label);
+			entry.addActionListener(event -> action.run());
+			return entry;
+		}
+
+		/** The message as it went to the agent: pasted texts in front of the words. */
+		private void copy() {
+			String copied;
+			try {
+				copied = Attachments.wireText(message, attachments);
+			} catch (IOException e) {
+				copied = message;
+			}
+			if (copied.isBlank()) {
+				copied = message();
+			}
+			try {
+				var target = clipboard != null ? clipboard : getToolkit().getSystemClipboard();
+				target.setContents(new StringSelection(copied), null);
 			} catch (IllegalStateException | java.awt.HeadlessException e) {
 				// The system clipboard may be unavailable or held by another application.
 			}
@@ -992,10 +1147,19 @@ final class ConversationView extends JPanel {
 					BorderFactory.createEmptyBorder(6, 8, 6, 8)));
 			text.setForeground(foreground());
 			text.setFont(textFont());
+			for (var caption : captions) {
+				caption.setForeground(muted());
+				caption.setFont(labelFont());
+			}
+			for (var area : opened) {
+				area.setForeground(foreground());
+				area.setFont(monospace());
+			}
 		}
 
+		/** The message on one line's worth: its words, or what it carried when it had none. */
 		String message() {
-			return message;
+			return Attachments.summary(message, attachments);
 		}
 	}
 
@@ -1611,7 +1775,14 @@ final class ConversationView extends JPanel {
 				text.append("\n\n");
 			}
 			switch (event) {
-				case AgentEvent.UserMessage(var message) -> text.append("> ").append(message.replace("\n", "\n> "));
+				case AgentEvent.UserMessage(var message, var attachments) -> {
+					var lines = new ArrayList<String>();
+					if (!message.isBlank() || attachments.isEmpty()) {
+						lines.add(message);
+					}
+					attachments.forEach(attachment -> lines.add(Attachments.plainLine(attachment)));
+					text.append("> ").append(String.join("\n", lines).replace("\n", "\n> "));
+				}
 				case AgentEvent.MessageChunk(var chunk) -> text.append(chunk);
 				case AgentEvent.ThoughtChunk(var chunk) -> text.append(continues ? "" : "(thinking) ").append(chunk);
 				case AgentEvent.ToolCall call -> text.append("[").append(call.name()).append("] ").append(call.title());

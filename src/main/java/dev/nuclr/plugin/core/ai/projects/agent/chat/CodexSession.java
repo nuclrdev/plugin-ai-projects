@@ -37,6 +37,10 @@ final class CodexSession extends JsonLineSession {
 
 	private static final String DECLINE = "decline";
 
+	/** A message sent before the thread existed, waiting for it. */
+	private record Queued(String text, List<AgentEvent.Attachment> images) {
+	}
+
 	/** A request the server is waiting on: its JSON-RPC id and what it asked for. */
 	private record Pending(JsonNode id, String method, JsonNode params) {
 	}
@@ -47,7 +51,7 @@ final class CodexSession extends JsonLineSession {
 	private final Map<String, Pending> pending = new ConcurrentHashMap<>();
 	private final Map<String, StringBuilder> outputs = new ConcurrentHashMap<>();
 	private final Map<String, String> fileChanges = new ConcurrentHashMap<>();
-	private final List<String> queued = new ArrayList<>();
+	private final List<Queued> queued = new ArrayList<>();
 	private volatile String threadId;
 	private volatile String turnId;
 	private boolean messageOpen;
@@ -115,15 +119,15 @@ final class CodexSession extends JsonLineSession {
 		var id = text(result.path("thread"), "id");
 		var access = describeAccess(result);
 		emit(new AgentEvent.SessionStarted(id, text(result, "model"), access));
-		List<String> waiting;
+		List<Queued> waiting;
 		synchronized (queued) {
 			threadId = id;
 			waiting = List.copyOf(queued);
 			queued.clear();
 		}
-		for (var text : waiting) {
+		for (var message : waiting) {
 			try {
-				startTurn(text);
+				startTurn(message.text(), message.images());
 			} catch (IOException e) {
 				emit(new AgentEvent.Notice("Could not send the message: " + e.getMessage(), true));
 			}
@@ -143,26 +147,39 @@ final class CodexSession extends JsonLineSession {
 	}
 
 	@Override
-	public void prompt(String text) throws IOException {
+	public void prompt(String text, List<AgentEvent.Attachment> images) throws IOException {
+		for (var image : images) {
+			// Read by Codex, not here, so a picture that has gone is caught here or not until the turn fails.
+			if (!java.nio.file.Files.isRegularFile(image.file())) {
+				throw new IOException(Attachments.displayName(image) + " is no longer at " + image.path());
+			}
+		}
 		synchronized (queued) {
 			if (threadId == null) {
-				queued.add(text);
+				queued.add(new Queued(text, List.copyOf(images)));
 				return;
 			}
 		}
-		startTurn(text);
+		startTurn(text, images);
 	}
 
-	private void startTurn(String text) throws IOException {
-		request("turn/start", Map.of("threadId", threadId,
-				"input", List.of(Map.of("type", "text", "text", text, "text_elements", List.of()))), response -> {
-					if (response.has("error")) {
-						emit(new AgentEvent.TurnEnded(true, response.path("error").path("message").asString("turn failed"),
-								null, null));
-					} else {
-						turnId = text(response.path("result").path("turn"), "id");
-					}
-				});
+	private void startTurn(String text, List<AgentEvent.Attachment> images) throws IOException {
+		// A picture goes as its path: Codex reads the file itself, so there is no base64 to build.
+		var input = new ArrayList<Map<String, Object>>();
+		for (var image : images) {
+			input.add(Map.of("type", "localImage", "path", image.file().toAbsolutePath().toString()));
+		}
+		if (!text.isEmpty() || input.isEmpty()) {
+			input.add(Map.of("type", "text", "text", text, "text_elements", List.of()));
+		}
+		request("turn/start", Map.of("threadId", threadId, "input", input), response -> {
+			if (response.has("error")) {
+				emit(new AgentEvent.TurnEnded(true, response.path("error").path("message").asString("turn failed"),
+						null, null));
+			} else {
+				turnId = text(response.path("result").path("turn"), "id");
+			}
+		});
 	}
 
 	@Override
