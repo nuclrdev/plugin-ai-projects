@@ -8,14 +8,18 @@ import java.awt.KeyboardFocusManager;
 import java.awt.Window;
 import java.awt.event.HierarchyEvent;
 import java.awt.event.WindowStateListener;
+import java.awt.image.BufferedImage;
 import java.beans.PropertyChangeListener;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.swing.JDesktopPane;
 import javax.swing.JComponent;
 import javax.swing.JLayeredPane;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 
 /** A JDesktopPane whose background animation is supplied by a replaceable effect. */
@@ -27,6 +31,15 @@ public final class EffectDesktopPane extends JDesktopPane {
 	private final Map<String, DesktopBackgroundEffect> effects = new LinkedHashMap<>();
 	private final Timer animationTimer;
 	private final BackgroundCanvas backgroundCanvas = new BackgroundCanvas();
+	/** Used only by effects that opt into off-EDT rendering. */
+	private ExecutorService renderWorker;
+	/** The EDT displays frontFrame; the worker may only touch a detached spareFrame. */
+	private BufferedImage frontFrame;
+	private BufferedImage spareFrame;
+	private boolean renderPending;
+	private boolean resetAsyncEffect;
+	private boolean disposed;
+	private long effectGeneration;
 	private DesktopBackgroundEffect activeEffect;
 	private String effectId;
 	private long startedAt = System.nanoTime();
@@ -96,7 +109,13 @@ public final class EffectDesktopPane extends JDesktopPane {
 		activeEffect = selected;
 		effectId = selected.id();
 		startedAt = System.nanoTime();
-		selected.reset();
+		effectGeneration++;
+		frontFrame = null;
+		spareFrame = null;
+		resetAsyncEffect = selected.renderOffEdt();
+		if (!resetAsyncEffect) {
+			selected.reset();
+		}
 		animationTimer.setDelay(Math.max(1, selected.frameDelayMillis()));
 		backgroundCanvas.repaint();
 		updateAnimationState();
@@ -128,7 +147,8 @@ public final class EffectDesktopPane extends JDesktopPane {
 	}
 
 	/**
-	 * One animation tick.
+	 * One animation tick. Opted-in effects render on a worker and repaint only
+	 * after a complete frame has been published.
 	 *
 	 * <p>Only the background layer is asked to repaint. It used to walk the frames as
 	 * well, to recomposite translucent ones over a backdrop that had moved underneath
@@ -140,7 +160,69 @@ public final class EffectDesktopPane extends JDesktopPane {
 	 * animated background and it is what the cached windows below are for.
 	 */
 	private void animate() {
-		backgroundCanvas.repaint();
+		if (disposed) return;
+		if (activeEffect.renderOffEdt()) {
+			requestAsyncFrame();
+		} else {
+			backgroundCanvas.repaint();
+		}
+	}
+
+	/** Submit at most one background render at a time; missed ticks are dropped. */
+	private void requestAsyncFrame() {
+		if (disposed || renderPending || activeEffect == null || !activeEffect.renderOffEdt()) return;
+		int width = backgroundCanvas.getWidth();
+		int height = backgroundCanvas.getHeight();
+		if (width <= 0 || height <= 0) return;
+		if (renderWorker == null) {
+			renderWorker = Executors.newSingleThreadExecutor(task -> {
+				var thread = new Thread(task, "ai-desktop-background");
+				thread.setDaemon(true);
+				return thread;
+			});
+		}
+		var effect = activeEffect;
+		var generation = effectGeneration;
+		var frame = spareFrame != null && spareFrame.getWidth() == width && spareFrame.getHeight() == height
+				? spareFrame : new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+		spareFrame = null;
+		var background = backgroundCanvas.getBackground();
+		var elapsedMillis = Math.max(0, (System.nanoTime() - startedAt) / 1_000_000);
+		var reset = resetAsyncEffect;
+		resetAsyncEffect = false;
+		renderPending = true;
+		renderWorker.execute(() -> {
+			boolean rendered = false;
+			try {
+				if (reset) effect.reset();
+				var graphics = frame.createGraphics();
+				try {
+					graphics.setColor(background);
+					graphics.fillRect(0, 0, width, height);
+					effect.paint(graphics, width, height, elapsedMillis);
+					rendered = true;
+				} finally {
+					graphics.dispose();
+				}
+			} finally {
+				boolean completed = rendered;
+				SwingUtilities.invokeLater(() -> finishAsyncFrame(effect, generation, frame, completed));
+			}
+		});
+	}
+
+	/** Publish only complete frames for the currently selected effect, on the EDT. */
+	private void finishAsyncFrame(DesktopBackgroundEffect effect, long generation,
+			BufferedImage frame, boolean rendered) {
+		renderPending = false;
+		if (disposed) return;
+		if (generation == effectGeneration && activeEffect == effect && rendered) {
+			spareFrame = frontFrame;
+			frontFrame = frame;
+			backgroundCanvas.repaint();
+		} else if (generation != effectGeneration && activeEffect.renderOffEdt()) {
+			requestAsyncFrame();
+		}
 	}
 
 	private void updateAnimationState() {
@@ -268,13 +350,25 @@ public final class EffectDesktopPane extends JDesktopPane {
 
 	/** Stop animation when the owning project closes. */
 	public void disposeEffect() {
+		if (disposed) return;
 		animationTimer.stop();
+		disposed = true;
+		effectGeneration++;
 		observeWindow(null);
 		KeyboardFocusManager.getCurrentKeyboardFocusManager()
 				.removePropertyChangeListener("activeWindow", activeWindowListener);
 		if (activeEffect != null) {
-			activeEffect.reset();
+			if (activeEffect.renderOffEdt() && renderWorker != null) {
+				renderWorker.execute(activeEffect::reset);
+			} else {
+				activeEffect.reset();
+			}
 		}
+		if (renderWorker != null) {
+			renderWorker.shutdown();
+		}
+		frontFrame = null;
+		spareFrame = null;
 	}
 
 	/** Paints only the background layer, avoiding full agent-frame repaints. */
@@ -291,6 +385,16 @@ public final class EffectDesktopPane extends JDesktopPane {
 		protected void paintComponent(Graphics graphics) {
 			super.paintComponent(graphics);
 			if (activeEffect == null) {
+				return;
+			}
+			if (activeEffect.renderOffEdt()) {
+				if (frontFrame != null) {
+					graphics.drawImage(frontFrame, 0, 0, getWidth(), getHeight(), null);
+				}
+				if (frontFrame == null || frontFrame.getWidth() != getWidth()
+						|| frontFrame.getHeight() != getHeight()) {
+					requestAsyncFrame();
+				}
 				return;
 			}
 			var g = (Graphics2D) graphics.create();

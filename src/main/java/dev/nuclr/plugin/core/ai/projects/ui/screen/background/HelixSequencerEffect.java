@@ -87,6 +87,11 @@ final class HelixSequencerEffect implements DesktopBackgroundEffect {
 	}
 
 	@Override
+	public boolean renderOffEdt() {
+		return true;
+	}
+
+	@Override
 	public void reset() {
 		backdropLayer.discard();
 		finishLayer.discard();

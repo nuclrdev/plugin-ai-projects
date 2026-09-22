@@ -1,11 +1,18 @@
 package dev.nuclr.plugin.core.ai.projects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import javax.swing.SwingUtilities;
 
 import org.junit.jupiter.api.Test;
 
@@ -66,5 +73,48 @@ class DesktopBackgroundEffectTest {
 		assertTrue(ids.contains("plasma"));
 		assertTrue(ids.contains("orrery"));
 		assertTrue(ids.contains("starfield"));
+	}
+
+	@Test
+	void helixRendersAwayFromTheEventDispatchThread() {
+		var helix = DesktopBackgroundEffects.builtIn().stream()
+				.filter(effect -> effect.id().equals("helix-sequencer"))
+				.findFirst().orElseThrow();
+		assertTrue(helix.renderOffEdt());
+		assertEquals(40, helix.frameDelayMillis());
+	}
+
+	@Test
+	void optedInEffectPaintsOnAWorker() throws Exception {
+		var painted = new CountDownLatch(1);
+		var paintedOnEdt = new AtomicBoolean(true);
+		DesktopBackgroundEffect effect = new DesktopBackgroundEffect() {
+			@Override public String id() { return "async-test"; }
+			@Override public String displayName() { return "Async test"; }
+			@Override public String description() { return "Async test"; }
+			@Override public boolean renderOffEdt() { return true; }
+			@Override public void paint(Graphics2D graphics, int width, int height, long elapsedMillis) {
+				paintedOnEdt.set(SwingUtilities.isEventDispatchThread());
+				painted.countDown();
+			}
+		};
+		var pane = new EffectDesktopPane(List.of(effect), effect.id());
+		try {
+			SwingUtilities.invokeAndWait(() -> {
+				pane.setSize(100, 100);
+				pane.doLayout();
+				var image = new BufferedImage(100, 100, BufferedImage.TYPE_INT_RGB);
+				var graphics = image.createGraphics();
+				try {
+					pane.paint(graphics);
+				} finally {
+					graphics.dispose();
+				}
+			});
+			assertTrue(painted.await(5, TimeUnit.SECONDS));
+			assertFalse(paintedOnEdt.get());
+		} finally {
+			SwingUtilities.invokeAndWait(pane::disposeEffect);
+		}
 	}
 }

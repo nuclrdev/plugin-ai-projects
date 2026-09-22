@@ -20,8 +20,13 @@ public interface DesktopBackgroundEffect {
 	/** Short description shown in the background picker tooltip. */
 	String description();
 
-	/** Paint one animation frame. Called on the Swing event dispatch thread. */
+	/** Paint one animation frame, on the EDT unless {@link #renderOffEdt()} opts out. */
 	void paint(Graphics2D graphics, int width, int height, long elapsedMillis);
+
+	/** Effects using only their supplied graphics surface may render off the EDT. */
+	default boolean renderOffEdt() {
+		return false;
+	}
 
 	/**
 	 * How long to wait between frames. Every frame also repaints the agent windows
