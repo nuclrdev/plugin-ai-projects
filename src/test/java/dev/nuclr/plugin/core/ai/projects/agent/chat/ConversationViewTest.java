@@ -384,4 +384,49 @@ class ConversationViewTest {
 
 		assertEquals("hello there", clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
 	}
+
+	/** Lay the view out at a size, as a window would. */
+	private static void layOut(java.awt.Container container) {
+		container.doLayout();
+		for (var child : container.getComponents()) {
+			if (child instanceof java.awt.Container nested) {
+				layOut(nested);
+			}
+		}
+	}
+
+	@Test
+	void theLastPromptIsPinnedOnceTheAgentsOutputPushesItOutOfSight() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		onEdt(() -> {
+			view.setSize(400, 200);
+			view.accept(new AgentEvent.UserMessage("Fix the build"), true);
+			layOut(view);
+			view.updatePin();
+		});
+		onEdt(() -> assertFalse(view.promptPinned(), "pinned while the prompt is in view"));
+
+		onEdt(() -> {
+			for (var index = 0; index < 40; index++) {
+				view.accept(new AgentEvent.Notice("Working on step " + index, false), true);
+			}
+			layOut(view);
+			var viewport = ((JScrollPane) view.getComponent(0)).getViewport();
+			viewport.setViewPosition(new java.awt.Point(0, viewport.getView().getHeight() - viewport.getHeight()));
+			view.updatePin();
+		});
+		onEdt(() -> assertTrue(view.promptPinned(), "not pinned once the prompt scrolled away"));
+
+		onEdt(() -> {
+			view.scrollToPrompt();
+			layOut(view);
+			view.updatePin();
+		});
+		// Twice: going back must not queue a scroll that takes the page to the end again.
+		onEdt(() -> assertFalse(view.promptPinned(), "still pinned after going back to the prompt"));
+		onEdt(() -> assertFalse(view.promptPinned(), "scrolled away from the prompt again"));
+	}
 }

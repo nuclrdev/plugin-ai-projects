@@ -109,6 +109,9 @@ final class ConversationView extends JPanel {
 	private final Map<String, ToolBlock> tools = new HashMap<>();
 	private final Map<String, PermissionBlock> permissions = new HashMap<>();
 	private JComponent last;
+	/** The newest thing the user sent, which {@link #pin} stands in for once it scrolls away. */
+	private UserBlock lastPrompt;
+	private final PinnedPrompt pin = new PinnedPrompt();
 	/** The folder the agent runs in, shown on the line that closes a turn; {@code null} until it is known. */
 	private String folder;
 	/** The model the profile asks for, used when the CLI has not said which it is using. */
@@ -141,6 +144,10 @@ final class ConversationView extends JPanel {
 				JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 		scroll.setBorder(BorderFactory.createEmptyBorder());
 		scroll.getVerticalScrollBar().setUnitIncrement(24);
+		// A column header rather than a panel over the page: it takes its own row above the
+		// viewport, so it never covers a block or the scroll bar.
+		scroll.setColumnHeaderView(pin);
+		scroll.getViewport().addChangeListener(event -> updatePin());
 		add(scroll, BorderLayout.CENTER);
 		updateTheme();
 	}
@@ -168,7 +175,10 @@ final class ConversationView extends JPanel {
 					add(new ThoughtBlock(text));
 				}
 			}
-			case AgentEvent.UserMessage(var text) -> add(new UserBlock(text));
+			case AgentEvent.UserMessage(var text) -> {
+				lastPrompt = new UserBlock(text);
+				add(lastPrompt);
+			}
 			case AgentEvent.ToolCall call -> {
 				var known = call.id() == null ? null : tools.get(call.id());
 				if (known != null) {
@@ -231,6 +241,7 @@ final class ConversationView extends JPanel {
 		if (follow) {
 			scrollToEnd();
 		}
+		SwingUtilities.invokeLater(this::updatePin);
 	}
 
 	/**
@@ -257,8 +268,10 @@ final class ConversationView extends JPanel {
 		tools.clear();
 		permissions.clear();
 		last = null;
+		lastPrompt = null;
 		column.revalidate();
 		column.repaint();
+		updatePin();
 	}
 
 	/** Re-read colours and fonts from the look and feel. */
@@ -267,6 +280,7 @@ final class ConversationView extends JPanel {
 		column.setBackground(background);
 		column.getParent().setBackground(background);
 		scroll.getViewport().setBackground(background);
+		pin.theme();
 		for (var component : column.getComponents()) {
 			if (component instanceof Themed themed) {
 				themed.theme();
@@ -307,9 +321,57 @@ final class ConversationView extends JPanel {
 		});
 	}
 
+	/**
+	 * Show the last prompt above the page while it is scrolled out of sight, and not otherwise.
+	 *
+	 * <p>The bar takes a row from the viewport as it appears. That row comes off the bottom,
+	 * so a page that was following the agent's output would stop following it; it is put back
+	 * at the end.
+	 */
+	void updatePin() {
+		var prompt = lastPrompt != null && lastPrompt.getParent() == column ? lastPrompt : null;
+		var hidden = prompt != null && prompt.getY() + prompt.getHeight() <= scroll.getViewport().getViewPosition().y;
+		if (prompt != null) {
+			pin.show(prompt.message());
+		}
+		if (pin.isVisible() == hidden) {
+			return;
+		}
+		var follow = atBottom();
+		pin.setVisible(hidden);
+		scroll.revalidate();
+		if (follow) {
+			scrollToEnd();
+		}
+	}
+
+	/** Whether the last prompt is pinned above the page, for tests. */
+	boolean promptPinned() {
+		return pin.isVisible();
+	}
+
+	/** Bring the last prompt back into view, as clicking the pinned one does. */
+	void scrollToPrompt() {
+		if (lastPrompt == null || lastPrompt.getParent() != column) {
+			return;
+		}
+		// The prompt at the top of the page, with the gap above it that the column leaves.
+		var viewport = scroll.getViewport();
+		var top = SwingUtilities.convertPoint(column, lastPrompt.getLocation(), viewport.getView()).y - 8;
+		var furthest = Math.max(0, viewport.getView().getHeight() - viewport.getExtentSize().height);
+		viewport.setViewPosition(new java.awt.Point(0, Math.clamp(top, 0, furthest)));
+	}
+
+	/**
+	 * Whether the page is scrolled to its end, read off the viewport rather than the scroll
+	 * bar: the bar is told of a move by a listener of its own, which may not have run yet
+	 * when {@link #updatePin()} asks.
+	 */
 	private boolean atBottom() {
-		var bar = scroll.getVerticalScrollBar();
-		return bar.getValue() + bar.getVisibleAmount() >= bar.getMaximum() - 24;
+		var viewport = scroll.getViewport();
+		var view = viewport.getView();
+		return view == null
+				|| viewport.getViewPosition().y + viewport.getExtentSize().height >= view.getHeight() - 24;
 	}
 
 	private void add(JComponent block) {
@@ -894,10 +956,12 @@ final class ConversationView extends JPanel {
 	private final class UserBlock extends JPanel implements Themed {
 
 		private static final long serialVersionUID = 1L;
+		private final String message;
 		private final JTextArea text;
 
 		UserBlock(String message) {
 			super(new BorderLayout());
+			this.message = message;
 			text = textArea(message, textFont());
 			add(text, BorderLayout.CENTER);
 			theme();
@@ -910,6 +974,60 @@ final class ConversationView extends JPanel {
 					BorderFactory.createEmptyBorder(6, 8, 6, 8)));
 			text.setForeground(foreground());
 			text.setFont(textFont());
+		}
+
+		String message() {
+			return message;
+		}
+	}
+
+	/**
+	 * The last prompt, on one line above the page, while the prompt itself has scrolled
+	 * out of sight - so what the agent is working on stays in view however far its output
+	 * runs. Drawn like the prompt, and clicking it goes back to it.
+	 */
+	private final class PinnedPrompt extends JPanel {
+
+		private static final long serialVersionUID = 1L;
+		/** More than a line holds at any width; the label cuts the rest with an ellipsis. */
+		private static final int SHOWN_CHARS = 400;
+		private final JLabel label = new JLabel();
+
+		PinnedPrompt() {
+			super(new BorderLayout());
+			label.setIcon(Glyphs.icon(Glyphs.UP));
+			label.setIconTextGap(6);
+			add(label, BorderLayout.CENTER);
+			setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			addMouseListener(new MouseAdapter() {
+				@Override
+				public void mouseClicked(MouseEvent event) {
+					scrollToPrompt();
+				}
+			});
+			setVisible(false);
+			theme();
+		}
+
+		void show(String message) {
+			// One line, so the page loses as little as it can: line breaks become spaces.
+			var line = message.strip().replaceAll("\\s+", " ");
+			label.setText(line.length() > SHOWN_CHARS ? line.substring(0, SHOWN_CHARS) : line);
+			var tip = message.strip();
+			setToolTipText("<html><b>Your last message</b> - click to go back to it<br>"
+					+ MiniMarkdown.escape(tip.length() > 600 ? tip.substring(0, 600) + "..." : tip)
+							.replace("\n", "<br>")
+					+ "</html>");
+		}
+
+		void theme() {
+			setBackground(tint(0.08f));
+			setBorder(BorderFactory.createCompoundBorder(
+					BorderFactory.createMatteBorder(0, 0, 1, 0, tint(0.18f)),
+					BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 3, 0, 0, accent()),
+							BorderFactory.createEmptyBorder(5, 8, 5, 8))));
+			label.setForeground(foreground());
+			label.setFont(textFont());
 		}
 	}
 
