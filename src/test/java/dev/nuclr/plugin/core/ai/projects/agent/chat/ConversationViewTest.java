@@ -429,4 +429,34 @@ class ConversationViewTest {
 		onEdt(() -> assertFalse(view.promptPinned(), "still pinned after going back to the prompt"));
 		onEdt(() -> assertFalse(view.promptPinned(), "scrolled away from the prompt again"));
 	}
+
+	@Test
+	void thePinnedPromptPulsesOnlyWhileShownAndTheAgentIsWorking() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		onEdt(() -> {
+			view.setSize(400, 200);
+			view.accept(new AgentEvent.UserMessage("Fix the build"), true);
+			view.setWorking(true);
+			layOut(view);
+			view.updatePin();
+		});
+		onEdt(() -> assertFalse(view.promptPulsing(), "pulsing with no bar to show"));
+
+		onEdt(() -> {
+			for (var index = 0; index < 40; index++) {
+				view.accept(new AgentEvent.Notice("Working on step " + index, false), true);
+			}
+			layOut(view);
+			var viewport = ((JScrollPane) view.getComponent(0)).getViewport();
+			viewport.setViewPosition(new java.awt.Point(0, viewport.getView().getHeight() - viewport.getHeight()));
+			view.updatePin();
+		});
+		onEdt(() -> assertTrue(view.promptPulsing(), "a pinned prompt the agent is working on is still"));
+
+		onEdt(() -> view.setWorking(false));
+		onEdt(() -> assertFalse(view.promptPulsing(), "still pulsing after the turn ended"));
+	}
 }

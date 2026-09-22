@@ -1347,6 +1347,7 @@ public final class ChatAgentWindow implements AgentWindow {
 			return;
 		}
 		status = next;
+		view.setWorking(next == AgentStatus.RUNNING);
 		if (!next.needsAttention()) {
 			attentionRaised = false;
 		}

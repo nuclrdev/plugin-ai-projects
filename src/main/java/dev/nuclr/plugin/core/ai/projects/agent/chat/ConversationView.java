@@ -982,21 +982,54 @@ final class ConversationView extends JPanel {
 	}
 
 	/**
+	 * Say whether the agent is working on the last prompt, which the pinned prompt shows by
+	 * pulsing.
+	 *
+	 * @param working whether a turn is under way
+	 */
+	void setWorking(boolean working) {
+		pin.setWorking(working);
+	}
+
+	/** Whether the pinned prompt is pulsing, for tests. */
+	boolean promptPulsing() {
+		return pin.pulse.isRunning();
+	}
+
+	/**
 	 * The last prompt, on one line above the page, while the prompt itself has scrolled
 	 * out of sight - so what the agent is working on stays in view however far its output
-	 * runs. Drawn like the prompt, and clicking it goes back to it.
+	 * runs. Clicking it goes back to the prompt.
+	 *
+	 * <p>It is meant to be seen: shaded with the accent colour rather than the page's grey,
+	 * with a thicker accent bar and a label saying what it is. While the agent works the
+	 * shading breathes, slowly - motion that says the agent is still on it, and stops the
+	 * moment it is not, so a bar that has gone still is a turn that has ended. The timer
+	 * behind it runs only while the bar is on screen and the agent is working.
 	 */
 	private final class PinnedPrompt extends JPanel {
 
 		private static final long serialVersionUID = 1L;
 		/** More than a line holds at any width; the label cuts the rest with an ellipsis. */
 		private static final int SHOWN_CHARS = 400;
+		private static final int PULSE_FRAME_MS = 50;
+		private static final double PULSE_PERIOD_MS = 1_800;
+		/** How much accent the shading holds at rest, and how much more at the top of a breath. */
+		private static final float ACCENT_REST = 0.16f;
+		private static final float ACCENT_SWING = 0.18f;
+		private static final int BAR_WIDTH = 4;
+
+		private final JLabel tag = new JLabel();
 		private final JLabel label = new JLabel();
+		private final Timer pulse = new Timer(PULSE_FRAME_MS, event -> breathe());
+		private boolean working;
+		private float glow;
 
 		PinnedPrompt() {
-			super(new BorderLayout());
-			label.setIcon(Glyphs.icon(Glyphs.UP));
-			label.setIconTextGap(6);
+			super(new BorderLayout(8, 0));
+			tag.setIcon(Glyphs.icon(Glyphs.UP));
+			tag.setIconTextGap(6);
+			add(tag, BorderLayout.WEST);
 			add(label, BorderLayout.CENTER);
 			setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 			addMouseListener(new MouseAdapter() {
@@ -1006,6 +1039,7 @@ final class ConversationView extends JPanel {
 				}
 			});
 			setVisible(false);
+			updateTag();
 			theme();
 		}
 
@@ -1020,14 +1054,88 @@ final class ConversationView extends JPanel {
 					+ "</html>");
 		}
 
+		void setWorking(boolean now) {
+			if (working == now) {
+				return;
+			}
+			working = now;
+			updateTag();
+			updatePulse();
+		}
+
+		@Override
+		public void setVisible(boolean visible) {
+			super.setVisible(visible);
+			updatePulse();
+		}
+
+		@Override
+		public void addNotify() {
+			super.addNotify();
+			updatePulse();
+		}
+
+		@Override
+		public void removeNotify() {
+			// A closed window must not leave a timer running for a bar nobody can see.
+			pulse.stop();
+			super.removeNotify();
+		}
+
+		private void updatePulse() {
+			if (working && isVisible()) {
+				pulse.start();
+			} else {
+				pulse.stop();
+				glow = 0;
+				repaint();
+			}
+		}
+
+		private void breathe() {
+			if (!isShowing()) {
+				return;
+			}
+			// A sine eased into 0..1: slow at either end, the way a breath is.
+			var phase = (System.currentTimeMillis() % (long) PULSE_PERIOD_MS) / PULSE_PERIOD_MS;
+			glow = (float) (0.5 - 0.5 * Math.cos(phase * 2 * Math.PI));
+			repaint();
+		}
+
+		private void updateTag() {
+			tag.setText(working ? "WORKING ON" : "YOUR LAST MESSAGE");
+			tag.setToolTipText(null);
+		}
+
 		void theme() {
-			setBackground(tint(0.08f));
-			setBorder(BorderFactory.createCompoundBorder(
-					BorderFactory.createMatteBorder(0, 0, 1, 0, tint(0.18f)),
-					BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 3, 0, 0, accent()),
-							BorderFactory.createEmptyBorder(5, 8, 5, 8))));
+			setOpaque(true);
+			setBorder(BorderFactory.createEmptyBorder(6, BAR_WIDTH + 8, 7, 8));
+			var accent = accent();
+			tag.setForeground(accent);
+			var base = labelFont();
+			tag.setFont(base == null ? null : base.deriveFont(Font.BOLD));
 			label.setForeground(foreground());
-			label.setFont(textFont());
+			var text = textFont();
+			label.setFont(text == null ? null : text.deriveFont(Font.BOLD));
+			repaint();
+		}
+
+		@Override
+		protected void paintComponent(java.awt.Graphics graphics) {
+			var accent = accent();
+			var width = getWidth();
+			var height = getHeight();
+			graphics.setColor(blend(tint(0.08f), accent, ACCENT_REST + ACCENT_SWING * glow));
+			graphics.fillRect(0, 0, width, height);
+			graphics.setColor(accent);
+			graphics.fillRect(0, 0, BAR_WIDTH, height);
+			// A hairline in the accent along the bottom, and a soft shadow under it, so the
+			// bar reads as lying over the page rather than as the first line of it.
+			graphics.setColor(blend(tint(0.08f), accent, 0.55f));
+			graphics.fillRect(0, height - 2, width, 1);
+			graphics.setColor(blend(background() == null ? java.awt.Color.DARK_GRAY : background(),
+					java.awt.Color.BLACK, 0.25f));
+			graphics.fillRect(0, height - 1, width, 1);
 		}
 	}
 
