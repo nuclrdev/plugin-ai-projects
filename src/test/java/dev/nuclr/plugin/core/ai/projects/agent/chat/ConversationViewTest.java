@@ -9,6 +9,7 @@ import java.awt.Container;
 import java.lang.reflect.InvocationTargetException;
 
 import javax.swing.JLabel;
+import javax.swing.JButton;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
@@ -383,6 +384,33 @@ class ConversationViewTest {
 		chooseMenuItem(firstTextArea(blocks(view)), "Copy All");
 
 		assertEquals("hello there", clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
+	}
+
+	@Test
+	void eachUserPromptHasACopyIconThatCopiesItsFullText() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		var clipboard = clipboardFor(view);
+		onEdt(() -> {
+			view.accept(new AgentEvent.UserMessage("first line\nsecond line"), true);
+			view.accept(new AgentEvent.UserMessage("another prompt"), true);
+		});
+
+		var first = (Container) blocks(view).getComponent(0);
+		var actions = (Container) first.getComponent(1);
+		var copy = (JButton) actions.getComponent(0);
+		assertNotNull(copy.getIcon());
+		assertEquals("Copy to clipboard", copy.getToolTipText());
+		onEdt(copy::doClick);
+		assertEquals("first line\nsecond line", clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
+
+		var second = (Container) blocks(view).getComponent(2);
+		var secondActions = (Container) second.getComponent(1);
+		var secondCopy = (JButton) secondActions.getComponent(0);
+		onEdt(secondCopy::doClick);
+		assertEquals("another prompt", clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
 	}
 
 	/** Lay the view out at a size, as a window would. */

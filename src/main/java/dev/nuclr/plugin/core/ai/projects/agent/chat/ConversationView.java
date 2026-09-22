@@ -958,13 +958,31 @@ final class ConversationView extends JPanel {
 		private static final long serialVersionUID = 1L;
 		private final String message;
 		private final JTextArea text;
+		private final JButton copyButton = Glyphs.decorate(new JButton(), Glyphs.COPY, null);
 
 		UserBlock(String message) {
-			super(new BorderLayout());
+			super(new BorderLayout(6, 0));
 			this.message = message;
 			text = textArea(message, textFont());
 			add(text, BorderLayout.CENTER);
+			copyButton.setToolTipText("Copy to clipboard");
+			copyButton.putClientProperty("JButton.buttonType", "toolBarButton");
+			copyButton.setFocusable(false);
+			copyButton.addActionListener(event -> copy());
+			var actions = new JPanel(new BorderLayout());
+			actions.setOpaque(false);
+			actions.add(copyButton, BorderLayout.NORTH);
+			add(actions, BorderLayout.EAST);
 			theme();
+		}
+
+		private void copy() {
+			try {
+				var target = clipboard != null ? clipboard : getToolkit().getSystemClipboard();
+				target.setContents(new StringSelection(message), null);
+			} catch (IllegalStateException | java.awt.HeadlessException e) {
+				// The system clipboard may be unavailable or held by another application.
+			}
 		}
 
 		@Override
