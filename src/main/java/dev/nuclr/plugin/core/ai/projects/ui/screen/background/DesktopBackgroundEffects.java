@@ -421,7 +421,11 @@ public final class DesktopBackgroundEffects {
 		private static final Color[] SCANLINE_COLORS = {
 				new Color(100, 255, 191, 9), new Color(72, 214, 255, 7), new Color(196, 255, 123, 6)
 		};
-		private static final Color[][] TRAIL_COLORS = createTrailColors();
+		private static final Color[] HUES = {
+				new Color(36, 230, 143), new Color(40, 220, 194), new Color(173, 239, 106) };
+		/** Where the head colour sits among the sprite colours, after the trail hues. */
+		private static final int HEAD = HUES.length;
+		private static final AlphaComposite[] TRAIL_COMPOSITES = createTrailComposites();
 		private static final Font[] FONTS = createFonts();
 
 		/**
@@ -441,6 +445,9 @@ public final class DesktopBackgroundEffects {
 
 		private final CachedLayer backdropLayer = new CachedLayer(true, 1);
 		private final CachedLayer vignetteLayer = new CachedLayer(false, 1);
+
+		/** The rain's text, drawn once per colour and size and blitted after: see {@link GlyphSprites}. */
+		private final GlyphSprites sprites = new GlyphSprites(GLYPHS, FONTS, spriteColors());
 
 		private final java.util.Random random = new java.util.Random(0xC0DE_1984L);
 		private final List<GlyphColumn> columns = new java.util.ArrayList<>();
@@ -479,6 +486,7 @@ public final class DesktopBackgroundEffects {
 			vignettePaint = null;
 			backdropLayer.discard();
 			vignetteLayer.discard();
+			sprites.discard();
 		}
 
 		@Override
@@ -487,7 +495,6 @@ public final class DesktopBackgroundEffects {
 			var g = (Graphics2D) graphics.create();
 			try {
 				g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-				g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 				backdropLayer.paint(g, width, height, this::paintBackdrop);
 				ensureColumns(width, height);
 				advance(elapsedMillis, height);
@@ -533,12 +540,12 @@ public final class DesktopBackgroundEffects {
 				var fontSize = Math.clamp(11 + (int) (depth * 9), 11, MAX_FONT_SIZE);
 				var glyphHeight = fontSize + 3;
 				var length = 11 + random.nextInt(19) + (depth > 0.82 ? 5 : 0);
-				var glyphs = new char[length];
+				var glyphs = new int[length];
 				fillGlyphs(glyphs);
 				var y = -random.nextDouble() * height * 0.75 + random.nextDouble() * height;
 				columns.add(new GlyphColumn(index * COLUMN_SPACING + random.nextDouble() * 5 - 2,
 						y, depth, fontSize, glyphHeight, length, 52 + random.nextDouble() * 105,
-						depth > 0.84 && random.nextDouble() > 0.38, random.nextInt(TRAIL_COLORS.length), glyphs));
+						depth > 0.84 && random.nextDouble() > 0.38, random.nextInt(HUES.length), glyphs));
 			}
 		}
 
@@ -565,8 +572,6 @@ public final class DesktopBackgroundEffects {
 
 		private void drawColumns(Graphics2D g, int height, long elapsedMillis) {
 			for (var column : columns) {
-				var palette = TRAIL_COLORS[column.palette];
-				g.setFont(FONTS[column.fontSize]);
 				var headY = (int) column.y;
 				var left = (int) column.x;
 				for (var row = column.length - 1; row >= 0; row--) {
@@ -574,16 +579,16 @@ public final class DesktopBackgroundEffects {
 					if (baseline < -column.glyphHeight || baseline >  height + column.glyphHeight) continue;
 					var intensity = (int) Math.clamp((1.0 - row / (double) column.length) * (TRAIL_LEVELS - 1), 0,
 							TRAIL_LEVELS - 1);
-					g.setColor(palette[intensity]);
-					g.drawChars(column.glyphs, row, 1, left, baseline);
+					g.setComposite(TRAIL_COMPOSITES[intensity]);
+					sprites.draw(g, column.palette, column.fontSize, column.glyphs[row], left, baseline);
 				}
+				g.setComposite(AlphaComposite.SrcOver);
 
 				if (headY >= -column.glyphHeight && headY <= height + column.glyphHeight) {
 					var glowAlpha = column.hero ? 42 : 24;
 					g.setColor(new Color(48, 255, 176, glowAlpha));
 					g.fillOval(left - 5, headY - column.fontSize, column.fontSize + 6, column.fontSize + 6);
-					g.setColor(HEAD_COLOR);
-					g.drawChars(column.glyphs, 0, 1, left, headY);
+					sprites.draw(g, HEAD, column.fontSize, column.glyphs[0], left, headY);
 					if (column.hero) {
 						g.setColor(new Color(176, 255, 220, 80));
 						g.drawLine(left - 2, headY + 2, left + column.fontSize, headY + 2);
@@ -620,12 +625,13 @@ public final class DesktopBackgroundEffects {
 			g.fillRect(0, 0, width, height);
 		}
 
-		private void fillGlyphs(char[] glyphs) {
+		private void fillGlyphs(int[] glyphs) {
 			for (var index = 0; index < glyphs.length; index++) glyphs[index] = nextGlyph();
 		}
 
-		private char nextGlyph() {
-			return GLYPHS.charAt(random.nextInt(GLYPHS.length()));
+		/** A glyph, as its index in {@link #GLYPHS}. */
+		private int nextGlyph() {
+			return random.nextInt(GLYPHS.length());
 		}
 
 		private static Font[] createFonts() {
@@ -636,20 +642,29 @@ public final class DesktopBackgroundEffects {
 			return fonts;
 		}
 
-		private static Color[][] createTrailColors() {
-			var hues = new Color[] { new Color(36, 230, 143), new Color(40, 220, 194), new Color(173, 239, 106) };
-			var palettes = new Color[hues.length][TRAIL_LEVELS];
-			for (var palette = 0; palette < hues.length; palette++) {
-				for (var level = 0; level < TRAIL_LEVELS; level++) {
-					var strength = 0.16 + level * 0.11;
-					palettes[palette][level] = new Color(
-							(int) (hues[palette].getRed() * strength),
-							(int) (hues[palette].getGreen() * strength),
-							(int) (hues[palette].getBlue() * strength),
-							Math.clamp(18 + level * 27, 0, 255));
-				}
+		private static Color[] spriteColors() {
+			var colors = java.util.Arrays.copyOf(HUES, HUES.length + 1);
+			colors[HEAD] = HEAD_COLOR;
+			return colors;
+		}
+
+		/**
+		 * How strongly each step of a trail is laid over the rain, fading toward its tail.
+		 *
+		 * <p>Each step used to be its own colour - the hue darkened and made translucent.
+		 * The sprites are drawn in the full hue, so a step is that hue at an opacity instead:
+		 * the darkening times the translucency. Over a backdrop this close to black the two
+		 * come out the same.
+		 */
+		private static AlphaComposite[] createTrailComposites() {
+			var composites = new AlphaComposite[TRAIL_LEVELS];
+			for (var level = 0; level < TRAIL_LEVELS; level++) {
+				var strength = 0.16 + level * 0.11;
+				var alpha = Math.clamp(18 + level * 27, 0, 255) / 255.0;
+				composites[level] = AlphaComposite.getInstance(AlphaComposite.SRC_OVER,
+						(float) Math.clamp(strength * alpha, 0, 1));
 			}
-			return palettes;
+			return composites;
 		}
 
 		private static final class GlyphColumn {
@@ -662,11 +677,12 @@ public final class DesktopBackgroundEffects {
 			private double speed;
 			private final boolean hero;
 			private final int palette;
-			private final char[] glyphs;
+			/** Indices into {@link #GLYPHS}. */
+			private final int[] glyphs;
 			private long lastGlyphTick = Long.MIN_VALUE;
 
 			private GlyphColumn(double x, double y, double depth, int fontSize, int glyphHeight,
-					int length, double speed, boolean hero, int palette, char[] glyphs) {
+					int length, double speed, boolean hero, int palette, int[] glyphs) {
 				this.x = x;
 				this.y = y;
 				this.depth = depth;
