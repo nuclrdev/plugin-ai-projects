@@ -44,6 +44,14 @@ public class AgentDefinition {
 	 */
 	private String profileId;
 
+	/**
+	 * The command that starts the agent's CLI, as it would be typed in a terminal - for
+	 * example {@code nvm use 21 && codex} - or {@code null} to find the CLI on
+	 * {@code PATH}. It is run through the user's shell, and the arguments the window
+	 * needs are appended to it.
+	 */
+	private String command;
+
 	/** The harness overrides of a version 1 or 2 agent, read only to be carried over to a profile. */
 	@Deprecated
 	@com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.WRITE_ONLY)

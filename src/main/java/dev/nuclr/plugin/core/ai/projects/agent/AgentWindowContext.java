@@ -69,6 +69,12 @@ public final class AgentWindowContext {
 		return ProfileRef.parse(agent.getProfileId()).orElse(null);
 	}
 
+	/** The agent's own command line for its CLI, or {@code null} to find the CLI on {@code PATH}. */
+	public String customCommand() {
+		var command = agent.getCommand();
+		return command == null || command.isBlank() ? null : command.strip();
+	}
+
 	/**
 	 * Read a profile, fresh so an edit made since the window opened is used. Takes the
 	 * reference rather than reading the agent's: the agent can be edited while a launch

@@ -55,7 +55,9 @@ public final class WindowsCommandLine {
 	 * space in quotes and escapes nothing inside - but it passes an argument that is
 	 * already quoted through untouched. So on Windows each argument that needs it is
 	 * quoted here, by the runtime's rules. A {@code .cmd} or {@code .bat} target is left
-	 * to Java, which refuses a quote it cannot pass to {@code cmd.exe} safely.
+	 * to Java, which refuses a quote it cannot pass to {@code cmd.exe} safely, and so is
+	 * {@code cmd.exe} itself: it reads its command line by its own rules, not the runtime's,
+	 * and an agent's custom command is written for it already quoted.
 	 *
 	 * @param arguments the program, then its arguments
 	 * @return the list to give the builder
@@ -65,7 +67,8 @@ public final class WindowsCommandLine {
 			return arguments;
 		}
 		var program = arguments.getFirst().toLowerCase(Locale.ROOT);
-		if (program.endsWith(".cmd") || program.endsWith(".bat")) {
+		if (program.endsWith(".cmd") || program.endsWith(".bat")
+				|| dev.nuclr.plugin.core.ai.projects.agent.CustomCommand.isCommandInterpreter(program)) {
 			return arguments;
 		}
 		var quoted = new java.util.ArrayList<String>(arguments.size());

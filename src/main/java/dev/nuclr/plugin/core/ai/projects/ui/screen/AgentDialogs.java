@@ -102,6 +102,16 @@ public final class AgentDialogs {
 		var kindHint = new JLabel(" ");
 		kindHint.setVisible(false);
 
+		// How the CLI is started, when finding it on PATH is not enough - a version manager
+		// such as nvm, which only a shell sets up. Meaningless for a plain shell window.
+		var commandField = new JTextField(existing == null || existing.getCommand() == null ? "" : existing.getCommand(), 26);
+		commandField.putClientProperty("JTextField.placeholderText", "Blank: find the CLI on PATH");
+		commandField.setToolTipText("<html>How you start the CLI in a terminal, e.g. <code>nvm use 21 &amp;&amp; codex</code>.<br>"
+				+ "Run through your shell; the window's arguments are added after it.</html>");
+		Runnable kindChanged = () -> commandField.setEnabled(kindChoice.getSelectedItem() instanceof AgentWindowProvider chosen
+				&& chosen.kind().startsWith(ChatAgentWindowProvider.KIND_PREFIX));
+		kindChoice.addActionListener(event -> kindChanged.run());
+
 		var profileChoice = new JComboBox<Object>();
 		profileChoice.addItem(NO_PROFILE);
 		profiles.forEach(profileChoice::addItem);
@@ -207,7 +217,9 @@ public final class AgentDialogs {
 		addRow(form, constraints, row++, "", reminderPanel);
 		addRow(form, constraints, row++, "Window kind", kindChoice);
 		addRow(form, constraints, row++, "", kindHint);
+		addRow(form, constraints, row++, "Command", commandField);
 		addRow(form, constraints, row, "Working directory", workingDirectoryRow);
+		kindChanged.run();
 
 		while (true) {
 			var choice = Dialogs.showConfirmDialog(parent, form,
@@ -226,6 +238,7 @@ public final class AgentDialogs {
 			draft.setName(nameField.getText().trim());
 			draft.setWindowKind(chosenKind == null ? registry.defaultKind() : chosenKind.kind());
 			draft.setWorkingDirectory(blankToNull(workingDirectory.getText()));
+			draft.setCommand(commandField.isEnabled() ? blankToNull(commandField.getText()) : null);
 			var chosenProfile = profileChoice.getSelectedItem();
 			draft.setProfileId(chosenProfile instanceof ProfilePlaces.Located located ? located.ref().toString()
 					: chosenProfile instanceof MissingProfile missing ? missing.ref().toString() : null);
@@ -410,6 +423,7 @@ public final class AgentDialogs {
 		copy.setWindowKind(existing.getWindowKind());
 		copy.setWorkingDirectory(existing.getWorkingDirectory());
 		copy.setProfileId(existing.getProfileId());
+		copy.setCommand(existing.getCommand());
 		copy.setCreatedAt(existing.getCreatedAt());
 		return copy;
 	}

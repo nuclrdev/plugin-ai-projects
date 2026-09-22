@@ -1,9 +1,14 @@
 package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
 import dev.nuclr.plugin.core.ai.projects.connector.AgentConnector;
+import dev.nuclr.plugin.core.ai.projects.provider.AccessMode;
 
 /**
  * Putting a model or a thinking level chosen in the conversation onto the command line
@@ -42,6 +47,74 @@ final class LaunchOverrides {
 			result = replace(result, connector.effortArguments(effort.strip()));
 		}
 		return result;
+	}
+
+	/**
+	 * The command line with an access mode chosen in the conversation in place of the
+	 * one it was planned with.
+	 *
+	 * <p>Whatever access the command already asked for is taken out first, so the CLI is
+	 * not left to settle two modes between itself. A flag that is the CLI's access dial -
+	 * one that more than one mode sets, such as Claude Code's {@code --permission-mode} -
+	 * goes whatever its value. A flag only one mode uses goes only when it says exactly
+	 * what that mode says: Pi's read-only mode is a {@code --tools} list, and the same flag
+	 * with another list is the profile's tool choice, which is not this command's to drop.
+	 *
+	 * @param command   the command as planned, executable first, before any protocol
+	 *                  translation
+	 * @param connector the CLI's connector
+	 * @param mode      the chosen mode
+	 * @return the command to run, or empty when the CLI cannot run in that mode
+	 */
+	static Optional<List<String>> applyAccess(List<String> command, AgentConnector connector, AccessMode mode) {
+		var arguments = connector.accessArguments(mode);
+		if (arguments.isEmpty() || command.isEmpty()) {
+			return arguments.map(ignored -> command);
+		}
+		var sequences = new ArrayList<List<String>>();
+		for (var each : AccessMode.values()) {
+			connector.accessArguments(each).ifPresent(words -> sequences.addAll(flagSequences(words)));
+		}
+		var variants = new HashMap<String, Set<List<String>>>();
+		for (var sequence : sequences) {
+			variants.computeIfAbsent(sequence.getFirst(), flag -> new HashSet<>()).add(sequence);
+		}
+
+		var result = new ArrayList<String>(command.size() + arguments.get().size());
+		result.add(command.getFirst());
+		next:
+		for (var index = 1; index < command.size(); index++) {
+			for (var sequence : sequences) {
+				var flag = sequence.getFirst();
+				if (!command.get(index).equals(flag) || index + sequence.size() > command.size()) {
+					continue;
+				}
+				var words = command.subList(index, index + sequence.size());
+				if (variants.get(flag).size() > 1 || words.equals(sequence)) {
+					index += sequence.size() - 1;
+					continue next;
+				}
+			}
+			result.add(command.get(index));
+		}
+		result.addAll(arguments.get());
+		return Optional.of(List.copyOf(result));
+	}
+
+	/** Cut a connector's access arguments into flags, each with the values that follow it. */
+	private static List<List<String>> flagSequences(List<String> words) {
+		var sequences = new ArrayList<List<String>>();
+		List<String> current = null;
+		for (var word : words) {
+			if (word.startsWith("-")) {
+				current = new ArrayList<>();
+				sequences.add(current);
+			}
+			if (current != null) {
+				current.add(word);
+			}
+		}
+		return sequences;
 	}
 
 	/**

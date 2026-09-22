@@ -594,6 +594,7 @@ public final class ProjectDesktop extends JPanel
 		copy.setWorkingDirectory(original.getWorkingDirectory());
 		// The same profile: it is shared by design, and editing it is meant to reach both.
 		copy.setProfileId(original.getProfileId());
+		copy.setCommand(original.getCommand());
 
 		store.project().getAgents().add(copy);
 		store.markProjectDirty();
@@ -855,6 +856,7 @@ public final class ProjectDesktop extends JPanel
 		existing.setWindowKind(edited.getWindowKind());
 		existing.setWorkingDirectory(edited.getWorkingDirectory());
 		existing.setProfileId(edited.getProfileId());
+		existing.setCommand(edited.getCommand());
 		store.markProjectDirty();
 
 		var frame = frames.get(agentId);

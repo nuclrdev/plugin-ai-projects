@@ -75,6 +75,13 @@ public class SessionRecord {
 	/** A thinking level chosen with {@code /thinking}, on the same terms as {@link #model}. */
 	private String effort;
 
+	/**
+	 * An access mode chosen with {@code /access}, by its id, on the same terms as
+	 * {@link #model}. {@code null} leaves access to the profile, or to the CLI's own
+	 * settings when there is no profile.
+	 */
+	private String access;
+
 	/** Creates an empty record. */
 	public SessionRecord() {}
 

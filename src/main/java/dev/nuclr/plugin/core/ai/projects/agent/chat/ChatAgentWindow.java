@@ -32,9 +32,11 @@ import javax.swing.Timer;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentLaunch;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindow;
 import dev.nuclr.plugin.core.ai.projects.agent.AgentWindowContext;
+import dev.nuclr.plugin.core.ai.projects.agent.CustomCommand;
 import dev.nuclr.plugin.core.ai.projects.connector.GitCheckouts;
 import dev.nuclr.plugin.core.ai.projects.connector.GitSources;
 import dev.nuclr.plugin.core.ai.projects.model.AgentStatus;
+import dev.nuclr.plugin.core.ai.projects.provider.AccessMode;
 import dev.nuclr.plugin.core.ai.projects.provider.AgentProvider;
 import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalog;
 import dev.nuclr.plugin.core.ai.projects.provider.ModelCatalogs;
@@ -256,6 +258,11 @@ public final class ChatAgentWindow implements AgentWindow {
 		var resumeId = context.session().getConversationId();
 		var chosenModel = context.session().getModel();
 		var chosenEffort = context.session().getEffort();
+		var chosenAccess = AccessMode.byId(context.session().getAccess()).orElse(null);
+		var customCommand = context.customCommand();
+		// A custom command is run by the shell, which finds the CLI itself; there is nothing to look up.
+		java.util.function.Function<String, Optional<Path>> resolver = customCommand == null ? executableResolver
+				: executable -> Optional.of(CustomCommand.resolvedStandIn());
 
 		stopRequested = false;
 		sessionNotStarted = true;
@@ -272,7 +279,7 @@ public final class ChatAgentWindow implements AgentWindow {
 			try {
 				planned = ref != null
 						? AgentLaunch.fromProfile(context, ref, workingDirectory, commanderVariables, environment,
-								briefingFile, runtimeDirectory, home, GIT_SOURCES, executableResolver, plan -> {
+								briefingFile, runtimeDirectory, home, GIT_SOURCES, resolver, plan -> {
 									if (plan.provider() != backend.provider()) {
 										throw new AgentLaunch.Refused(backend.provider() == null
 												? "A " + backend.displayName() + " window does not start from a profile. "
@@ -283,14 +290,14 @@ public final class ChatAgentWindow implements AgentWindow {
 														+ " profile, or set the agent's window kind to "
 														+ plan.provider().displayName() + ".");
 									}
-									return backend.command(plan.commandLine(), resumeId);
+									return backend.command(withAccess(plan.commandLine(), chosenAccess), resumeId);
 								})
-						: withoutProfile(environment, resumeId);
+						: withoutProfile(environment, resumeId, resolver, chosenAccess);
 			} catch (AgentLaunch.Refused e) {
 				SwingUtilities.invokeLater(() -> startFailed(e.getMessage()));
 				return;
 			}
-			var launch = withChosen(planned, chosenModel, chosenEffort);
+			var launch = throughCustomCommand(withChosen(planned, chosenModel, chosenEffort), customCommand);
 			// Events name the session they came from, so a late one from a replaced process is ignored.
 			var source = new AgentSession[1];
 			var started = backend.open(launch.launched(), launch.environment(), workingDirectory, resumeId,
@@ -312,24 +319,47 @@ public final class ChatAgentWindow implements AgentWindow {
 	}
 
 	/** The CLI on PATH, with its own settings. Off the event thread. */
-	private AgentLaunch withoutProfile(Map<String, String> environment, String resumeId) throws AgentLaunch.Refused {
-		var command = backend.command(backend.defaultCommand(), resumeId);
+	private AgentLaunch withoutProfile(Map<String, String> environment, String resumeId,
+			java.util.function.Function<String, Optional<Path>> resolver, AccessMode access) throws AgentLaunch.Refused {
+		var command = backend.command(withAccess(backend.defaultCommand(), access), resumeId);
 		var executable = command.getFirst();
 		final Optional<Path> resolved;
 		try {
-			resolved = executableResolver.apply(executable);
+			resolved = resolver.apply(executable);
 		} catch (RuntimeException e) {
 			throw new AgentLaunch.Refused("The command is not a valid path: " + e.getMessage());
 		}
 		if (resolved.isEmpty()) {
 			throw new AgentLaunch.Refused("Could not find '" + executable + "' on PATH. Install it"
-					+ (backend.provider() == null ? "." : ", or start the agent from a profile that names its full path."));
+					+ (backend.provider() == null ? "." : ", or edit the agent and set its Command to how you start it"
+							+ " in a terminal, e.g. \"nvm use 21 && " + executable + "\"."));
 		}
 		var launched = new ArrayList<>(command);
 		launched.set(0, resolved.get().toString());
 		var name = backend.provider() == null ? backend.displayName() : backend.provider().displayName();
 		return new AgentLaunch(command, launched, environment, backend.provider() == null ? ""
-				: "Started without a profile: " + name + " uses its own settings", name, null, null);
+				: "Started without a profile: " + name + " uses its own settings"
+						+ (access == null ? "" : ", with " + access.label() + " access chosen here"),
+				name, null, null);
+	}
+
+	/**
+	 * The CLI's command line with the access mode chosen by {@code /access}, before the
+	 * backend turns it into its protocol's command.
+	 *
+	 * @param planned the command, executable first
+	 * @param access  the chosen mode, or {@code null} to keep what was planned
+	 * @return the command
+	 * @throws AgentLaunch.Refused when the CLI has no such mode
+	 */
+	private List<String> withAccess(List<String> planned, AccessMode access) throws AgentLaunch.Refused {
+		var provider = backend.provider();
+		if (access == null || provider == null) {
+			return planned;
+		}
+		return LaunchOverrides.applyAccess(planned, provider.connector(), access)
+				.orElseThrow(() -> new AgentLaunch.Refused(provider.unsupportedReason(access)
+						+ " Choose another with /access."));
 	}
 
 	private void launching(AgentSession started) {
@@ -575,6 +605,8 @@ public final class ChatAgentWindow implements AgentWindow {
 		commands.add(new SlashCommand("model", "Choose the model this conversation runs on", "[model]",
 				this::chooseModel));
 		commands.add(new SlashCommand("thinking", "Choose how hard the model thinks", "[level]", this::chooseThinking));
+		commands.add(new SlashCommand("access", "Choose what the agent may do without asking", "[mode]",
+				this::chooseAccess));
 		commands.add(SlashCommand.of("new", "Forget this conversation and start the next one afresh",
 				this::newConversation));
 		commands.add(SlashCommand.of("clear", "Clear the screen, keeping the transcript", this::clearScreen));
@@ -654,7 +686,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	private List<SlashCommand> availableCommands() {
 		var mine = backend.provider() != null ? commands
 				: commands.stream()
-						.filter(command -> !command.name().equals("model") && !command.name().equals("thinking"))
+						.filter(command -> !List.of("model", "thinking", "access").contains(command.name()))
 						.toList();
 		if (agentCommands.isEmpty()) {
 			return mine;
@@ -729,6 +761,95 @@ public final class ChatAgentWindow implements AgentWindow {
 			ChoicePicker.pick(root, provider.displayName() + " thinking", "How hard this model thinks", choices,
 					context.session().getEffort()).ifPresent(choice -> applyEffort(choice.id()));
 		});
+	}
+
+	/**
+	 * {@code /access}: the mode named, or a picker of the ones this CLI has.
+	 *
+	 * <p>Besides the modes, the picker offers going back to whatever the agent would
+	 * otherwise start with - its profile's access, or the CLI's own settings.
+	 *
+	 * @param argument the mode, {@code default} to drop the choice, or empty to choose from a list
+	 */
+	private void chooseAccess(String argument) {
+		var provider = backend.provider();
+		if (provider == null) {
+			record(new AgentEvent.Notice("This window has no access mode of its own to set.", true));
+			return;
+		}
+		var modes = accessModes(provider);
+		if (!argument.isBlank()) {
+			var word = argument.strip();
+			if (ACCESS_DEFAULT.equalsIgnoreCase(word)) {
+				applyAccess(null);
+				return;
+			}
+			var mode = accessNamed(word).orElse(null);
+			if (mode == null || !modes.contains(mode)) {
+				record(new AgentEvent.Notice((mode == null ? "No access mode called \"" + word + "\"."
+						: provider.unsupportedReason(mode)) + " Choose from: "
+						+ String.join(", ", modes.stream().map(AccessMode::id).toList()) + ", or "
+						+ ACCESS_DEFAULT + ".", true));
+				return;
+			}
+			applyAccess(mode);
+			return;
+		}
+		var choices = new ArrayList<ChoicePicker.Choice>();
+		for (var mode : modes) {
+			choices.add(new ChoicePicker.Choice(mode.id(), mode.label(), mode.description()));
+		}
+		choices.add(new ChoicePicker.Choice(ACCESS_DEFAULT, "As configured", context.profileRef() != null
+				? "Whatever the agent's profile says." : "Whatever " + provider.displayName() + "'s own settings say."));
+		var current = context.session().getAccess();
+		ChoicePicker.pick(root, provider.displayName() + " access", "What the agent may do without asking", choices,
+				current == null ? ACCESS_DEFAULT : current).ifPresent(choice -> applyAccess(
+						ACCESS_DEFAULT.equals(choice.id()) ? null : AccessMode.byId(choice.id()).orElse(null)));
+	}
+
+	/** The word {@code /access} takes for "stop overriding". */
+	private static final String ACCESS_DEFAULT = "default";
+
+	/** The modes a CLI can be put in from here: its own, less Custom, which is flags nobody here writes. */
+	private static List<AccessMode> accessModes(AgentProvider provider) {
+		return java.util.Arrays.stream(AccessMode.values())
+				.filter(mode -> mode != AccessMode.CUSTOM && provider.supports(mode))
+				.toList();
+	}
+
+	/** A mode by its id, its label, or the short words people type: {@code full}, {@code readonly}. */
+	static Optional<AccessMode> accessNamed(String word) {
+		var key = word.strip().toLowerCase(java.util.Locale.ROOT).replace('_', '-').replace(' ', '-');
+		var alias = switch (key) {
+			case "full", "yolo", "bypass", "bypasspermissions" -> "full-access";
+			case "readonly", "read", "plan" -> "read-only";
+			default -> key;
+		};
+		return AccessMode.byId(alias).filter(mode -> mode != AccessMode.CUSTOM);
+	}
+
+	/**
+	 * Run with another access mode from now on, or with the configured one again.
+	 * Applied like {@link #applyModel(String)}: by starting the session again, resuming
+	 * this conversation.
+	 *
+	 * @param mode the mode, or {@code null} to drop the choice
+	 */
+	private void applyAccess(AccessMode mode) {
+		var stored = context.session();
+		var id = mode == null ? null : mode.id();
+		if (java.util.Objects.equals(id, stored.getAccess())) {
+			record(new AgentEvent.Notice("Access is already " + (mode == null ? "as configured" : mode.label()) + ".",
+					false));
+			view.scrollToEnd();
+			return;
+		}
+		stored.setAccess(id);
+		context.host().sessionUpdated(context.agentId());
+		var value = mode == null ? "as configured" : mode.label()
+				+ (mode == AccessMode.FULL_ACCESS ? " (nothing is asked and nothing is sandboxed)" : "");
+		// The mode is fixed when the CLI starts, so this one always restarts.
+		apply("Access", value, running -> false);
 	}
 
 	/**
@@ -851,6 +972,22 @@ public final class ChatAgentWindow implements AgentWindow {
 	 * @param effort the chosen thinking level, or {@code null}
 	 * @return the launch to run
 	 */
+	/**
+	 * Run the launch through the agent's own command, if it has one: the command replaces
+	 * the CLI's executable, and everything after the executable is appended to it.
+	 */
+	static AgentLaunch throughCustomCommand(AgentLaunch launch, String customCommand) {
+		if (customCommand == null) {
+			return launch;
+		}
+		var arguments = launch.launched().subList(1, launch.launched().size());
+		var shown = new ArrayList<String>();
+		shown.add(customCommand);
+		shown.addAll(launch.command().subList(1, launch.command().size()));
+		return new AgentLaunch(shown, CustomCommand.wrap(customCommand, arguments), launch.environment(),
+				launch.notice(), launch.name(), launch.model(), launch.effort());
+	}
+
 	private AgentLaunch withChosen(AgentLaunch launch, String model, String effort) {
 		var nothingChosen = (model == null || model.isBlank()) && (effort == null || effort.isBlank());
 		if (nothingChosen || backend.provider() == null) {

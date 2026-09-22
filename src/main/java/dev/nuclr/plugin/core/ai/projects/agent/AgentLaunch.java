@@ -117,7 +117,9 @@ public record AgentLaunch(List<String> command, List<String> launched, Map<Strin
 			throw new Refused("The profile's executable is not a valid path: " + e.getMessage());
 		}
 		if (resolved.isEmpty()) {
-			throw new Refused("Could not find '" + executable + "' on PATH. Install it, or point the profile at its full path.");
+			throw new Refused("Could not find '" + executable + "' on PATH. Install it, point the profile at its full path,"
+					+ " or edit the agent and set its Command to how you start it in a terminal, e.g. \"nvm use 21 && "
+					+ executable + "\".");
 		}
 
 		var environment = baseEnvironment;
