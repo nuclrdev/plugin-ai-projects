@@ -23,7 +23,8 @@ import lombok.extern.slf4j.Slf4j;
  * and is what Windows uses - {@code displayMessage} on a tray icon becomes a
  * toast on Windows 10 and 11. Where a tray is absent or refuses the icon, which
  * is the normal state of a modern GNOME session, the platform's own command is
- * used instead: {@code notify-send} on Linux, {@code osascript} on macOS.
+ * used instead: {@code notify-send} on Linux. macOS skips the tray entirely (see
+ * {@link #usesTray}) and always uses {@code osascript}.
  *
  * <p>Everything here is best-effort and silent on failure. A notification that
  * cannot be posted is not an error the user needs to see; the title marker, the
@@ -63,10 +64,27 @@ public final class SystemToast {
 	public static void post(String title, String message) {
 		var heading = title == null || title.isBlank() ? APP_NAME : title.strip();
 		var body = message == null ? "" : message.strip();
-		if (postToTray(heading, body) || postToPlatform(heading, body)) {
+		var viaTray = usesTray(System.getProperty("os.name", ""));
+		if ((viaTray && postToTray(heading, body)) || postToPlatform(heading, body)) {
 			return;
 		}
 		log.debug("No desktop notification route is available; not posting \"{}\"", heading);
+	}
+
+	/**
+	 * Whether notifications on this OS should go through the system tray at all.
+	 *
+	 * <p>Not on macOS: the tray there is the menu bar, and the JDK's
+	 * {@code displayMessage} posts through a notification API macOS no longer delivers
+	 * for a Java process. It returns normally all the same, so the tray route would
+	 * "succeed" without showing anything, the working {@code osascript} route would
+	 * never be tried, and a stray icon would be left in the menu bar.
+	 *
+	 * @param osName the value of {@code os.name}
+	 * @return {@code false} on macOS, {@code true} elsewhere
+	 */
+	static boolean usesTray(String osName) {
+		return !osName.toLowerCase(Locale.ROOT).contains("mac");
 	}
 
 	/** Post through the system tray. */
