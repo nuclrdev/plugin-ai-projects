@@ -42,6 +42,9 @@ import dev.nuclr.plugin.core.ai.projects.agent.chat.AgentEvent.Attachment.Kind;
  * <p>A long paste is sent as text in front of what was typed, marked off so the model
  * can tell the two apart - unless it is too long to be worth sending at all, in which
  * case the agent is told where the file is and reads what it needs with its own tools.
+ *
+ * <p>A file dropped or pasted that a Quick View plugin can show is attached where it is,
+ * not copied: the agent is given its path, in front of the message, and reads it itself.
  */
 final class Attachments {
 
@@ -118,6 +121,17 @@ final class Attachments {
 			Files.write(file, bytes);
 		}
 		return new Attachment(Kind.TEXT, absolute(file), "text/plain", name);
+	}
+
+	/**
+	 * Attach a file of the user's where it is, by reference.
+	 *
+	 * @param file the file
+	 * @return the attachment
+	 */
+	static Attachment file(Path file) {
+		var name = file.getFileName();
+		return new Attachment(Kind.FILE, absolute(file), null, name == null ? null : name.toString());
 	}
 
 	/**
@@ -325,19 +339,28 @@ final class Attachments {
 	// ------------------------------------------------------------------ sending them
 
 	/**
-	 * The words a message goes to the agent as: each long paste in front, marked off,
-	 * then what was typed.
+	 * The words a message goes to the agent as: the paths of attached files, then each
+	 * long paste, marked off, then what was typed.
 	 *
 	 * <p>In front because that is where a model reads a long document best, with the
 	 * question after it. A paste too long to send is replaced by a line naming its file.
 	 *
 	 * @param text        what was typed
-	 * @param attachments everything attached; only the texts are used here
+	 * @param attachments everything attached; the files and texts are used here
 	 * @return the text to send
 	 * @throws IOException when an attached text cannot be read
 	 */
 	static String wireText(String text, List<Attachment> attachments) throws IOException {
 		var wire = new StringBuilder();
+		var files = attachments.stream().filter(attachment -> attachment.kind() == Kind.FILE).toList();
+		if (!files.isEmpty()) {
+			wire.append(files.size() == 1 ? "Attached file - read it with your tools:"
+					: "Attached files - read them with your tools:");
+			for (var file : files) {
+				wire.append("\n- ").append(file.path());
+			}
+			wire.append("\n\n");
+		}
 		for (var attachment : attachments) {
 			if (attachment.kind() != Kind.TEXT) {
 				continue;
@@ -407,11 +430,12 @@ final class Attachments {
 		}
 		var images = 0;
 		var texts = 0;
+		var files = 0;
 		for (var attachment : attachments) {
-			if (attachment.kind() == Kind.IMAGE) {
-				images++;
-			} else {
-				texts++;
+			switch (attachment.kind()) {
+				case IMAGE -> images++;
+				case TEXT -> texts++;
+				case FILE -> files++;
 			}
 		}
 		var parts = new ArrayList<String>();
@@ -420,6 +444,9 @@ final class Attachments {
 		}
 		if (texts > 0) {
 			parts.add(texts == 1 ? "1 pasted text" : texts + " pasted texts");
+		}
+		if (files > 0) {
+			parts.add(files == 1 ? "1 file" : files + " files");
 		}
 		return parts.isEmpty() ? "" : "[" + String.join(", ", parts) + "]";
 	}
@@ -431,7 +458,11 @@ final class Attachments {
 	 * @return a line such as {@code [image] Pasted image 1}
 	 */
 	static String plainLine(Attachment attachment) {
-		return (attachment.kind() == Kind.IMAGE ? "[image] " : "[pasted text] ") + displayName(attachment);
+		return switch (attachment.kind()) {
+			case IMAGE -> "[image] ";
+			case TEXT -> "[pasted text] ";
+			case FILE -> "[file] ";
+		} + displayName(attachment);
 	}
 
 	/**
@@ -448,6 +479,24 @@ final class Attachments {
 			return attachment.file().getFileName().toString();
 		} catch (InvalidPathException e) {
 			return attachment.path();
+		}
+	}
+
+	/**
+	 * What an attached file is, in brief: its type, from its extension, and its size.
+	 *
+	 * @param file the file
+	 * @return such as {@code PDF · 1.2 MB}, or {@code missing} when it is gone
+	 */
+	static String fileDetail(Path file) {
+		try {
+			var size = Files.size(file);
+			var name = file.getFileName().toString();
+			var dot = name.lastIndexOf('.');
+			var type = dot > 0 && dot < name.length() - 1 ? name.substring(dot + 1).toUpperCase(Locale.ROOT) : "File";
+			return type + " · " + size(size);
+		} catch (IOException | RuntimeException e) {
+			return "missing";
 		}
 	}
 

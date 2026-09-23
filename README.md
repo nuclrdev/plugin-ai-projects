@@ -146,6 +146,30 @@ still gets a frame, which says what is missing; its definition is left untouched
 
 Register another with `AgentWindowRegistry.register(...)`.
 
+## Chat attachments
+
+A chat window's message can carry more than words. What is pasted, dropped or
+picked with the attach button becomes a chip above the box, and each kind
+reaches the agent differently:
+
+| Attachment | How it gets there | Chip |
+| --- | --- | --- |
+| Picture | Made fit to send - scaled to a 2000-pixel edge, PNG or JPEG under the model's size limit - and sent as an image | The picture, small |
+| Long paste | Kept as a file and sent as text in front of the message, marked off from what was typed | A page thumbnail of the paste, lines and size |
+| File | Left where it is; the agent is given its path, in front of the message, and reads it with its own tools | A thumbnail of what it holds - first page, cover, model - with its type and size |
+
+A dropped file is attached only when one of Commander's Quick View plugins can
+show it; anything else, and any folder, has its path written into the box as a
+terminal agent is given it. Right-click a file's chip to put its path in the box
+instead, or a paste's to put the text back. A message carries at most 20
+attachments; sent ones are shown in the conversation, where a click opens them.
+
+Thumbnails and the "can a viewer show this?" question come from Commander over
+the event bus - `quickview.thumbnail.request` and `quickview.supports.request`,
+answered by its `QuickViewThumbnailService` with the Quick View plugins' SDK 6.0.0
+thumbnail methods. With a Commander that does not answer, chips keep their glyph
+and a dropped file is named by its path after three seconds.
+
 ## Just a terminal
 
 A plain shell is one of the window kinds, so a terminal in the project folder is

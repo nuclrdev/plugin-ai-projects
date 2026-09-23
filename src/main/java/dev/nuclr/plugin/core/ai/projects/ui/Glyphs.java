@@ -140,6 +140,8 @@ public final class Glyphs {
 	public static final String PROFILE = pick("🧩", "❖");
 	/** Content written in place. */
 	public static final String TEXT = pick("📝", "✍");
+	/** A file attached by reference. */
+	public static final String FILE = pick("📄", "▤");
 	/** A link to a file or folder. */
 	public static final String LINK = pick("🔗", "↗");
 	/** A git repository. */

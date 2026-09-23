@@ -74,8 +74,9 @@ public sealed interface AgentEvent {
 	}
 
 	/**
-	 * Something sent with a message besides its words, kept as a file in the agent's
-	 * runtime folder so the transcript holds a path rather than the content.
+	 * Something sent with a message besides its words, kept as a file - in the agent's
+	 * runtime folder for a picture or a paste, where it already is for a file - so the
+	 * transcript holds a path rather than the content.
 	 *
 	 * @param kind      what it is, which decides how it reaches the agent
 	 * @param path      the file, absolute
@@ -89,7 +90,13 @@ public sealed interface AgentEvent {
 			/** A picture, handed to the model as an image. */
 			IMAGE,
 			/** A long paste, handed to the model as text in front of the message. */
-			TEXT
+			TEXT,
+			/**
+			 * A file of the user's, left where it is: the model is given its path and reads it
+			 * with its own tools. Attached only when a Quick View plugin can show it, so its
+			 * chip has a picture of what it holds.
+			 */
+			FILE
 		}
 
 		/** The file it is kept in. */

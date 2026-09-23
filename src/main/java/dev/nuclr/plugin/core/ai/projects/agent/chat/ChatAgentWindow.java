@@ -6,6 +6,7 @@ import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -16,6 +17,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import javax.swing.AbstractAction;
@@ -88,7 +91,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final JButton newButton = Glyphs.decorate(new JButton(), Glyphs.NEW, "New conversation");
 	private final JTextArea input = new JTextArea(3, 40);
 	/** The pictures and long pastes the next message carries, above the box. */
-	private final AttachmentStrip attachmentStrip = new AttachmentStrip(this::insertAsText, this::hint);
+	private final AttachmentStrip attachmentStrip = new AttachmentStrip(this::thumbnail, this::insertAsText, this::hint);
 	/** A line under the box saying what just happened to a paste or a drop. */
 	private final JLabel hintLabel = new JLabel();
 	private final Timer hintTimer = new Timer(HINT_MS, event -> hintLabel.setVisible(false));
@@ -133,6 +136,12 @@ public final class ChatAgentWindow implements AgentWindow {
 	/** How long a hint under the box stays. */
 	private static final int HINT_MS = 6_000;
 
+	/**
+	 * How long a dropped file waits to hear whether a Quick View plugin can show it before
+	 * it is named by its path instead - for a host that never answers.
+	 */
+	private static final int RESOLVE_TIMEOUT_MS = 3_000;
+
 	/** Paste as plain text: the clipboard's text into the box however long it is. */
 	private static final KeyStroke PASTE_PLAIN = KeyStroke.getKeyStroke(KeyEvent.VK_V,
 			Dialogs.menuShortcutMask() | KeyEvent.SHIFT_DOWN_MASK);
@@ -173,6 +182,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	 */
 	ChatAgentWindow(AgentWindowContext context, ChatBackend backend, Function<String, Optional<Path>> executableResolver) {
 		this.context = context;
+		view.setThumbnails(this::thumbnail);
 		this.backend = backend;
 		this.executableResolver = executableResolver;
 		buildLayout();
@@ -1207,8 +1217,8 @@ public final class ChatAgentWindow implements AgentWindow {
 			return;
 		}
 		if (preparing > 0) {
-			// Sent now, the message would go without the picture the user can see being attached.
-			hint("A picture is still being attached - send again in a moment.");
+			// Sent now, the message would go without what the user can see being attached.
+			hint("An attachment is still being prepared - send again in a moment.");
 			return;
 		}
 		var invocation = text.isEmpty() ? null : SlashCommands.parse(text).orElse(null);
@@ -1229,10 +1239,12 @@ public final class ChatAgentWindow implements AgentWindow {
 	// ------------------------------------------------------------ attachments
 
 	/**
-	 * Files pasted, dropped or chosen: the pictures are attached, and every other file -
-	 * a folder, a source file, a picture Java cannot read - has its path written into the
-	 * message where the caret is, as a terminal agent is given a file dropped on it. The
-	 * agent reads files with its own tools; what it needs is where they are.
+	 * Files pasted, dropped or chosen. Pictures are attached, made fit to send. Any other
+	 * file a Quick View plugin can show is attached where it is, with a thumbnail of what
+	 * it holds, once the host says so; the agent is given its path. Everything else - a
+	 * folder, a file no viewer knows - has its path written into the message where the
+	 * caret is, as a terminal agent is given a file dropped on it. Either way the agent
+	 * reads files with its own tools; what it needs is where they are.
 	 *
 	 * @param files the files
 	 */
@@ -1250,7 +1262,7 @@ public final class ChatAgentWindow implements AgentWindow {
 				prepare(path.getFileName().toString(), runtime -> Attachments.imageFile(runtime, path)
 						.orElseThrow(() -> new IOException("not a picture this can read")),
 						() -> appendWords(Attachments.pathForMessage(path, context.workingDirectory())));
-			} else {
+			} else if (!Files.isRegularFile(path) || !roomFor(1) || !askToAttach(path)) {
 				paths.add(Attachments.pathForMessage(path, context.workingDirectory()));
 			}
 		}
@@ -1261,6 +1273,91 @@ public final class ChatAgentWindow implements AgentWindow {
 			hint("A message carries at most " + Attachments.MOST_PER_MESSAGE + " attachments; "
 					+ (left == 1 ? "one picture was" : left + " pictures were") + " left out.");
 		}
+	}
+
+	/**
+	 * Ask the host whether a Quick View plugin can show a file, and attach it if one can.
+	 *
+	 * @param file the file
+	 * @return {@code false} when the host said no at once, and the caller names the file;
+	 *         {@code true} when it is attached, or will be attached or named once the host answers
+	 */
+	private boolean askToAttach(Path file) {
+		var question = new FileQuestion(file);
+		context.host().quickViewSupports(file, question::answer);
+		return question.asked();
+	}
+
+	/**
+	 * One dropped file waiting to hear whether it can be attached. Settled once: by the
+	 * host's answer, or by the timeout for a host that never gives one. Event thread only.
+	 */
+	private final class FileQuestion {
+
+		private final Path file;
+		private final Timer timeout;
+		/** Still inside the call to the host, which may answer before it returns. */
+		private boolean asking = true;
+		/** An answer given during that call. */
+		private Boolean early;
+		private boolean settled;
+
+		FileQuestion(Path file) {
+			this.file = file;
+			this.timeout = new Timer(RESOLVE_TIMEOUT_MS, event -> answer(false));
+			this.timeout.setRepeats(false);
+		}
+
+		void answer(Boolean supported) {
+			if (asking) {
+				early = supported;
+				return;
+			}
+			if (settled) {
+				return;
+			}
+			settled = true;
+			timeout.stop();
+			preparing--;
+			updatePreparing();
+			if (closed) {
+				return;
+			}
+			if (!Boolean.TRUE.equals(supported) || !attachFile(file)) {
+				appendWords(Attachments.pathForMessage(file, context.workingDirectory()));
+			}
+		}
+
+		/** Called once the host has been asked; see {@link #askToAttach}. */
+		boolean asked() {
+			asking = false;
+			if (early != null) {
+				settled = true;
+				return Boolean.TRUE.equals(early) && attachFile(file);
+			}
+			// Counted as being prepared: it takes a place in the message, and holds the send.
+			preparing++;
+			updatePreparing();
+			timeout.start();
+			return true;
+		}
+	}
+
+	/**
+	 * Attach a file where it is.
+	 *
+	 * @return whether it is attached - now, or already
+	 */
+	private boolean attachFile(Path file) {
+		if (!roomFor(1)) {
+			hint("A message carries at most " + Attachments.MOST_PER_MESSAGE + " attachments; "
+					+ file.getFileName() + " is named by its path instead.");
+			return false;
+		}
+		if (!attachmentStrip.add(Attachments.file(file))) {
+			hint(file.getFileName() + " is attached already.");
+		}
+		return true;
 	}
 
 	/**
@@ -1364,11 +1461,11 @@ public final class ChatAgentWindow implements AgentWindow {
 		return attachmentStrip.count() + preparing + more <= Attachments.MOST_PER_MESSAGE;
 	}
 
-	/** Say, under the box, that pictures are being attached - for as long as they are. */
+	/** Say, under the box, that attachments are being prepared - for as long as they are. */
 	private void updatePreparing() {
 		if (preparing > 0) {
 			hintTimer.stop();
-			showHint(preparing == 1 ? "Attaching a picture..." : "Attaching " + preparing + " pictures...");
+			showHint(preparing == 1 ? "Attaching..." : "Attaching " + preparing + " files...");
 		} else if (!hintTimer.isRunning()) {
 			hintLabel.setVisible(false);
 		}
@@ -1402,12 +1499,24 @@ public final class ChatAgentWindow implements AgentWindow {
 		}
 	}
 
+	/** An attachment's thumbnail, drawn by the host with the Quick View plugins. */
+	private void thumbnail(Path file, int maxWidth, int maxHeight, AtomicBoolean cancelled,
+			Consumer<BufferedImage> answer) {
+		context.host().thumbnail(file, maxWidth, maxHeight, cancelled, answer);
+	}
+
 	/**
-	 * Put a pasted text back into the box as text, where the caret is.
+	 * Put a pasted text back into the box as text, or an attached file's path, where the
+	 * caret is.
 	 *
-	 * @param attachment the paste, already taken off the strip
+	 * @param attachment the paste or file, already taken off the strip
 	 */
 	private void insertAsText(AgentEvent.Attachment attachment) {
+		if (attachment.kind() == AgentEvent.Attachment.Kind.FILE) {
+			input.requestFocusInWindow();
+			insertWords(Attachments.pathForMessage(attachment.file(), context.workingDirectory()));
+			return;
+		}
 		try {
 			input.requestFocusInWindow();
 			input.replaceSelection(Files.readString(attachment.file(), StandardCharsets.UTF_8));

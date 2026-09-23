@@ -6,6 +6,7 @@ import java.awt.FlowLayout;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.awt.image.BufferedImage;
 import java.beans.PropertyVetoException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 import javax.swing.AbstractAction;
 import javax.swing.ActionMap;
@@ -58,6 +61,7 @@ import dev.nuclr.plugin.core.ai.projects.ui.AiProjectEvents;
 import dev.nuclr.plugin.core.ai.projects.ui.Dialogs;
 import dev.nuclr.plugin.core.ai.projects.ui.Glyphs;
 import dev.nuclr.plugin.core.ai.projects.ui.RibbonButtons;
+import dev.nuclr.plugin.core.ai.projects.ui.panel.LocalFileResource;
 import dev.nuclr.plugin.core.ai.projects.ui.panel.LocalFolderResource;
 import dev.nuclr.plugin.core.ai.projects.ui.profile.ProfilesDialog;
 import dev.nuclr.plugin.core.ai.projects.ui.screen.background.DesktopBackgroundEffect;
@@ -1285,6 +1289,47 @@ public final class ProjectDesktop extends JPanel
 	@Override
 	public void sessionUpdated(String agentId) {
 		store.markSessionDirty(agentId);
+	}
+
+	/**
+	 * Asks Commander, which knows every Quick View plugin and their priorities, to draw the
+	 * file the way its preview would. Emitting returns at once; the answer comes back on a
+	 * host thread and is handed on on the EDT.
+	 */
+	@Override
+	public void thumbnail(Path file, int maxWidth, int maxHeight, AtomicBoolean cancelled,
+			Consumer<BufferedImage> answer) {
+		var resource = LocalFileResource.of(file);
+		if (resource == null || eventBus == null) {
+			return;
+		}
+		Consumer<BufferedImage> receiver = image -> SwingUtilities.invokeLater(() -> {
+			if (!cancelled.get()) {
+				answer.accept(image);
+			}
+		});
+		var payload = new HashMap<String, Object>();
+		payload.put(AiProjectEvents.THUMBNAIL_RESOURCE_KEY, resource);
+		payload.put(AiProjectEvents.THUMBNAIL_MAX_WIDTH_KEY, maxWidth);
+		payload.put(AiProjectEvents.THUMBNAIL_MAX_HEIGHT_KEY, maxHeight);
+		payload.put(AiProjectEvents.THUMBNAIL_CANCELLED_KEY, cancelled);
+		payload.put(AiProjectEvents.THUMBNAIL_RECEIVER_KEY, receiver);
+		eventBus.emit(this, AiProjectEvents.QUICKVIEW_THUMBNAIL, payload);
+	}
+
+	/** Asks Commander whether any of its Quick View plugins can show the file. */
+	@Override
+	public void quickViewSupports(Path file, Consumer<Boolean> answer) {
+		var resource = LocalFileResource.of(file);
+		if (resource == null || eventBus == null) {
+			answer.accept(false);
+			return;
+		}
+		Consumer<Boolean> receiver = supported -> SwingUtilities.invokeLater(
+				() -> answer.accept(Boolean.TRUE.equals(supported)));
+		eventBus.emit(this, AiProjectEvents.QUICKVIEW_SUPPORTS, Map.of(
+				AiProjectEvents.THUMBNAIL_RESOURCE_KEY, resource,
+				AiProjectEvents.THUMBNAIL_RECEIVER_KEY, receiver));
 	}
 
 	// -------------------------------------------------------------------- misc

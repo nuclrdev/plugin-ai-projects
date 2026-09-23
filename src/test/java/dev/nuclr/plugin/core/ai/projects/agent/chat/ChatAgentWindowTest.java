@@ -146,7 +146,25 @@ class ChatAgentWindowTest {
 	}
 
 	private ChatAgentWindow window(ChatBackend backend) throws Exception {
+		return window(backend, null);
+	}
+
+	/**
+	 * @param quickView answers whether a Quick View plugin can show a file, as the host would;
+	 *                  {@code null} keeps the default host's immediate no
+	 */
+	private ChatAgentWindow window(ChatBackend backend,
+			java.util.function.BiConsumer<Path, java.util.function.Consumer<Boolean>> quickView) throws Exception {
 		return onEdt(() -> new ChatAgentWindow(new AgentWindowContext(store, agent, new AgentWindowHost() {
+			@Override
+			public void quickViewSupports(Path file, java.util.function.Consumer<Boolean> answer) {
+				if (quickView == null) {
+					AgentWindowHost.super.quickViewSupports(file, answer);
+				} else {
+					quickView.accept(file, answer);
+				}
+			}
+
 			@Override
 			public void statusChanged(String agentId, AgentStatus status) {
 			}
@@ -455,6 +473,90 @@ class ChatAgentWindowTest {
 		assertEquals("explain " + Path.of("src", "Main.java") + " ", onEdt(() -> input.getText()));
 		assertTrue(onEdt(field(window, "attachmentStrip", AttachmentStrip.class)::isEmpty));
 		onEdt(window::close);
+	}
+
+	@Test
+	void aDroppedFileAQuickViewPluginCanShowIsAttachedWhereItIs() throws Exception {
+
+		var window = window(new ClaudeCodeBackend(),
+				(file, answer) -> SwingUtilities.invokeLater(() -> answer.accept(true)));
+		var input = onEdt(() -> composer(window.component()));
+		var strip = field(window, "attachmentStrip", AttachmentStrip.class);
+		var report = java.nio.file.Files.writeString(root.resolve("report.pdf"), "%PDF-1.7");
+
+		onEdt(() -> {
+			input.setText("summarise");
+			paste(input, filesOnly(report));
+		});
+		waitFor(() -> strip.count() == 1, window);
+
+		var attached = onEdt(strip::attachments).getFirst();
+		assertEquals(AgentEvent.Attachment.Kind.FILE, attached.kind());
+		assertEquals(report.toAbsolutePath().normalize().toString(), attached.path());
+		assertEquals("summarise", onEdt(() -> input.getText()), "an attached file is not also named in the box");
+
+		// The same file again is not attached twice, nor named.
+		onEdt(() -> paste(input, filesOnly(report)));
+		waitFor(() -> field(window, "preparing", Integer.class) == 0, window);
+		assertEquals(1, (int) onEdt(strip::count));
+		assertEquals("summarise", onEdt(() -> input.getText()));
+		onEdt(window::close);
+	}
+
+	@Test
+	void aDroppedFileNoQuickViewPluginCanShowIsNamedOnceTheHostSaysSo() throws Exception {
+
+		var window = window(new ClaudeCodeBackend(),
+				(file, answer) -> SwingUtilities.invokeLater(() -> answer.accept(false)));
+		var input = onEdt(() -> composer(window.component()));
+		var data = java.nio.file.Files.writeString(root.resolve("data.bin"), "x");
+
+		onEdt(() -> {
+			input.setText("look at");
+			paste(input, filesOnly(data));
+		});
+		waitFor(() -> input.getText().contains("data.bin"), window);
+
+		assertTrue(onEdt(field(window, "attachmentStrip", AttachmentStrip.class)::isEmpty));
+		assertTrue(onEdt(() -> input.getText()).startsWith("look at "), onEdt(() -> input.getText()));
+		onEdt(window::close);
+	}
+
+	@Test
+	void aDroppedFileIsNamedWhenTheHostNeverAnswers() throws Exception {
+
+		var window = window(new ClaudeCodeBackend(), (file, answer) -> {
+		});
+		var input = onEdt(() -> composer(window.component()));
+		var report = java.nio.file.Files.writeString(root.resolve("report.pdf"), "%PDF-1.7");
+
+		onEdt(() -> paste(input, filesOnly(report)));
+		assertEquals(1, (int) onEdt(() -> field(window, "preparing", Integer.class)), "waiting holds a place");
+
+		waitFor(() -> input.getText().contains("report.pdf"), window);
+		assertEquals(0, (int) onEdt(() -> field(window, "preparing", Integer.class)));
+		assertTrue(onEdt(field(window, "attachmentStrip", AttachmentStrip.class)::isEmpty));
+		onEdt(window::close);
+	}
+
+	/** A clipboard holding files and nothing else, as a file manager leaves it. */
+	private static java.awt.datatransfer.Transferable filesOnly(Path... files) {
+		return new java.awt.datatransfer.Transferable() {
+			@Override
+			public java.awt.datatransfer.DataFlavor[] getTransferDataFlavors() {
+				return new java.awt.datatransfer.DataFlavor[] { java.awt.datatransfer.DataFlavor.javaFileListFlavor };
+			}
+
+			@Override
+			public boolean isDataFlavorSupported(java.awt.datatransfer.DataFlavor flavor) {
+				return java.awt.datatransfer.DataFlavor.javaFileListFlavor.equals(flavor);
+			}
+
+			@Override
+			public Object getTransferData(java.awt.datatransfer.DataFlavor flavor) {
+				return java.util.Arrays.stream(files).map(Path::toFile).toList();
+			}
+		};
 	}
 
 	/** A clipboard holding a picture and nothing else, as a screenshot tool leaves it. */

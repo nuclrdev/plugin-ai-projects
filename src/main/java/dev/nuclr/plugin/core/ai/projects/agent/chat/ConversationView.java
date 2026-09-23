@@ -127,10 +127,23 @@ final class ConversationView extends JPanel {
 	private int fontScale;
 	/** Where copied code goes; {@code null} means the display's own, which is the only case that ships. */
 	private Clipboard clipboard;
+	/** Draws a sent file's thumbnail; by default nothing does, and the file keeps its glyph. */
+	private AttachmentStrip.Thumbnails thumbnails = (file, maxWidth, maxHeight, cancelled, answer) -> {
+	};
 
 	/**
 	 * @param permissionAnswer called with a request id and the option the user chose
 	 */
+	/**
+	 * Where sent files' thumbnails come from: the host, drawing them with the Quick View
+	 * plugins. Set before messages are shown; a block already on screen keeps its glyph.
+	 *
+	 * @param source draws a file's thumbnail
+	 */
+	void setThumbnails(AttachmentStrip.Thumbnails source) {
+		this.thumbnails = source;
+	}
+
 	ConversationView(BiConsumer<String, AgentEvent.PermissionOption> permissionAnswer) {
 		super(new BorderLayout());
 		this.permissionAnswer = permissionAnswer;
@@ -956,6 +969,8 @@ final class ConversationView extends JPanel {
 	/** How large a picture sent with a message is drawn in it; clicking it opens the whole picture. */
 	private static final int SENT_THUMBNAIL_WIDTH = 240;
 	private static final int SENT_THUMBNAIL_HEIGHT = 160;
+	/** A sent file's thumbnail sits in a chip, beside its name, so it is kept small. */
+	private static final int SENT_FILE_THUMBNAIL_SIZE = 56;
 
 	/** The most of a pasted text shown when it is opened in the conversation; the file holds the rest. */
 	private static final int SHOWN_PASTE_CHARS = 100_000;
@@ -1006,8 +1021,11 @@ final class ConversationView extends JPanel {
 			texts.setOpaque(false);
 			texts.setLayout(new BoxLayout(texts, BoxLayout.PAGE_AXIS));
 			for (var attachment : attachments) {
-				row.add(attachment.kind() == AgentEvent.Attachment.Kind.IMAGE ? picture(attachment)
-						: pasted(attachment, texts));
+				row.add(switch (attachment.kind()) {
+					case IMAGE -> picture(attachment);
+					case TEXT -> pasted(attachment, texts);
+					case FILE -> file(attachment);
+				});
 			}
 			var holder = new JPanel(new BorderLayout(0, 4));
 			holder.setOpaque(false);
@@ -1044,6 +1062,42 @@ final class ConversationView extends JPanel {
 			menu.add(menuItem("Open", Glyphs.LINK, () -> open(label, attachment)));
 			menu.add(menuItem("Copy to clipboard", Glyphs.COPY, () -> copyPicture(file)));
 			label.setComponentPopupMenu(menu);
+			return label;
+		}
+
+		/**
+		 * A file that was sent by its path: its name, type and size, opening when clicked, and
+		 * a thumbnail of what it holds once the host has drawn one.
+		 */
+		private JComponent file(AgentEvent.Attachment attachment) {
+			var label = new JLabel();
+			Glyphs.decorate(label, Glyphs.FILE,
+					Attachments.displayName(attachment) + "  ·  " + Attachments.fileDetail(attachment.file()));
+			label.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tint(0.25f), 1, true),
+					BorderFactory.createEmptyBorder(3, 6, 3, 6)));
+			label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			label.setToolTipText(attachment.path() + " - given to the agent by its path; click to open it");
+			captions.add(label);
+			label.addMouseListener(new MouseAdapter() {
+				@Override
+				public void mouseClicked(MouseEvent event) {
+					if (SwingUtilities.isLeftMouseButton(event)) {
+						open(label, attachment);
+					}
+				}
+			});
+			var menu = new javax.swing.JPopupMenu();
+			menu.add(menuItem("Open", Glyphs.LINK, () -> open(label, attachment)));
+			label.setComponentPopupMenu(menu);
+			thumbnails.request(attachment.file(), SENT_FILE_THUMBNAIL_SIZE, SENT_FILE_THUMBNAIL_SIZE,
+					new java.util.concurrent.atomic.AtomicBoolean(), image -> {
+						if (image != null) {
+							var icon = new ImageIcon(image);
+							label.setIcon(icon);
+							label.setDisabledIcon(icon);
+							label.revalidate();
+						}
+					});
 			return label;
 		}
 

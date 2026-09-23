@@ -256,5 +256,26 @@ class AttachmentsTest {
 		assertEquals("[2 images, 1 pasted text]", Attachments.summary("", List.of(image, image, text)));
 		assertEquals("[image] a", Attachments.plainLine(image));
 		assertEquals("[pasted text] b", Attachments.plainLine(text));
+		var file = new Attachment(Kind.FILE, "c.pdf", null, "c.pdf");
+		assertEquals("[1 pasted text, 2 files]", Attachments.summary("", List.of(text, file, file)));
+		assertEquals("[file] c.pdf", Attachments.plainLine(file));
+	}
+
+	@Test
+	void anAttachedFileIsKeptWhereItIsAndSentByItsPath() throws Exception {
+		var report = Files.writeString(runtime.resolve("report.pdf"), "%PDF-1.7");
+		var file = Attachments.file(report);
+
+		assertEquals(Kind.FILE, file.kind());
+		assertEquals(report.toAbsolutePath().normalize().toString(), file.path());
+		assertEquals("report.pdf", file.name());
+		assertEquals("PDF · 8 B", Attachments.fileDetail(report));
+		assertEquals("missing", Attachments.fileDetail(runtime.resolve("gone.pdf")));
+
+		var paste = Attachments.text(runtime, "a log\n", "Pasted text 1");
+		var wire = Attachments.wireText("what is in these?", List.of(paste, file));
+		assertTrue(wire.startsWith("Attached file - read it with your tools:\n- " + file.path() + "\n\n<pasted_text"), wire);
+		assertTrue(wire.endsWith("</pasted_text>\n\nwhat is in these?"), wire);
+		assertTrue(Attachments.images(List.of(paste, file)).isEmpty());
 	}
 }

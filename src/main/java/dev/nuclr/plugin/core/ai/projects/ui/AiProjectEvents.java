@@ -77,6 +77,38 @@ public final class AiProjectEvents {
 	/** {@link #WORKSPACE_STATE_CHANGED} payload: the announcing instance's uuid. */
 	public static final String WORKSPACE_PLUGIN_UUID_KEY = "plugin.uuid";
 
+	/**
+	 * Host action: draw a still thumbnail of a resource with whichever Quick View plugin
+	 * would preview it. The payload carries the {@code NuclrResource}, the box, an
+	 * {@code AtomicBoolean} cancellation flag and a {@code Consumer<BufferedImage>} under
+	 * the {@code THUMBNAIL_*} keys below. The host answers once, on a background thread,
+	 * with the picture or {@code null}; a host without the action never answers.
+	 */
+	public static final String QUICKVIEW_THUMBNAIL = "quickview.thumbnail.request";
+
+	/**
+	 * Host action: say whether any Quick View plugin can show a resource. The payload
+	 * carries the {@code NuclrResource} and a {@code Consumer<Boolean>} under
+	 * {@link #THUMBNAIL_RESOURCE_KEY} and {@link #THUMBNAIL_RECEIVER_KEY}. The host answers
+	 * once, on a background thread; a host without the action never answers.
+	 */
+	public static final String QUICKVIEW_SUPPORTS = "quickview.supports.request";
+
+	/** {@link #QUICKVIEW_THUMBNAIL} payload: the {@code NuclrResource} to draw. */
+	public static final String THUMBNAIL_RESOURCE_KEY = "resource";
+
+	/** {@link #QUICKVIEW_THUMBNAIL} payload: the widest the picture may be, as an {@code Integer}. */
+	public static final String THUMBNAIL_MAX_WIDTH_KEY = "maxWidth";
+
+	/** {@link #QUICKVIEW_THUMBNAIL} payload: the tallest the picture may be, as an {@code Integer}. */
+	public static final String THUMBNAIL_MAX_HEIGHT_KEY = "maxHeight";
+
+	/** {@link #QUICKVIEW_THUMBNAIL} payload: the {@code AtomicBoolean} set when the picture is no longer wanted. */
+	public static final String THUMBNAIL_CANCELLED_KEY = "cancelled";
+
+	/** {@link #QUICKVIEW_THUMBNAIL} payload: the {@code Consumer<BufferedImage>} given the answer. */
+	public static final String THUMBNAIL_RECEIVER_KEY = "receiver";
+
 	/** Panel action: open the profile manager. */
 	public static final String MANAGE_PROFILES = "ai.projects.profiles";
 
