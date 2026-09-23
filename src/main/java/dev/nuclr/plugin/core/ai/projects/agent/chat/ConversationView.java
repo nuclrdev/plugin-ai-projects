@@ -27,15 +27,19 @@ import java.util.function.BiConsumer;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultListModel;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JEditorPane;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextPane;
+import javax.swing.ListCellRenderer;
+import javax.swing.ListSelectionModel;
 import javax.swing.Scrollable;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
@@ -86,6 +90,9 @@ final class ConversationView extends JPanel {
 	/** How tall a picture is allowed to be before it is scaled down to fit a screenful. */
 	private static final int MAX_IMAGE_HEIGHT = 520;
 
+	/** How long a prompt stays lit after the index has taken the page to it. */
+	private static final int FLASH_MS = 900;
+
 	/** How long a copied block says so before going back to offering the copy. */
 	private static final int COPIED_SHOWN_MS = 1_400;
 
@@ -113,6 +120,11 @@ final class ConversationView extends JPanel {
 	/** The newest thing the user sent, which {@link #pin} stands in for once it scrolls away. */
 	private UserBlock lastPrompt;
 	private final PinnedPrompt pin = new PinnedPrompt();
+	/** Every prompt still on screen, oldest first, as the index lists them. */
+	private final DefaultListModel<UserBlock> prompts = new DefaultListModel<>();
+	private final PromptIndex index = new PromptIndex();
+	/** How many prompts this conversation has had, counting any dropped from the top, so each keeps its number. */
+	private int sent;
 	/** The folder the agent runs in, shown on the line that closes a turn; {@code null} until it is known. */
 	private String folder;
 	/** The model the profile asks for, used when the CLI has not said which it is using. */
@@ -161,8 +173,14 @@ final class ConversationView extends JPanel {
 		// A column header rather than a panel over the page: it takes its own row above the
 		// viewport, so it never covers a block or the scroll bar.
 		scroll.setColumnHeaderView(pin);
-		scroll.getViewport().addChangeListener(event -> updatePin());
+		scroll.getViewport().addChangeListener(event -> {
+			updatePin();
+			index.follow();
+		});
 		add(scroll, BorderLayout.CENTER);
+		// Beside the page rather than over it, and hidden until asked for.
+		index.setVisible(false);
+		add(index, BorderLayout.LINE_START);
 		updateTheme();
 	}
 
@@ -192,6 +210,8 @@ final class ConversationView extends JPanel {
 			case AgentEvent.UserMessage(var text, var attachments) -> {
 				lastPrompt = new UserBlock(text, attachments);
 				add(lastPrompt);
+				lastPrompt.number = ++sent;
+				prompts.addElement(lastPrompt);
 			}
 			case AgentEvent.ToolCall call -> {
 				var known = call.id() == null ? null : tools.get(call.id());
@@ -286,6 +306,8 @@ final class ConversationView extends JPanel {
 		permissions.clear();
 		last = null;
 		lastPrompt = null;
+		prompts.clear();
+		sent = 0;
 		column.revalidate();
 		column.repaint();
 		updatePin();
@@ -298,6 +320,7 @@ final class ConversationView extends JPanel {
 		column.getParent().setBackground(background);
 		scroll.getViewport().setBackground(background);
 		pin.theme();
+		index.theme();
 		for (var component : column.getComponents()) {
 			if (component instanceof Themed themed) {
 				themed.theme();
@@ -369,12 +392,17 @@ final class ConversationView extends JPanel {
 
 	/** Bring the last prompt back into view, as clicking the pinned one does. */
 	void scrollToPrompt() {
-		if (lastPrompt == null || lastPrompt.getParent() != column) {
+		scrollTo(lastPrompt);
+	}
+
+	/** Bring a prompt to the top of the page, where it can be read from its first line. */
+	private void scrollTo(UserBlock prompt) {
+		if (prompt == null || prompt.getParent() != column) {
 			return;
 		}
 		// The prompt at the top of the page, with the gap above it that the column leaves.
 		var viewport = scroll.getViewport();
-		var top = SwingUtilities.convertPoint(column, lastPrompt.getLocation(), viewport.getView()).y - 8;
+		var top = SwingUtilities.convertPoint(column, prompt.getLocation(), viewport.getView()).y - 8;
 		var furthest = Math.max(0, viewport.getView().getHeight() - viewport.getExtentSize().height);
 		viewport.setViewPosition(new java.awt.Point(0, Math.clamp(top, 0, furthest)));
 	}
@@ -419,6 +447,11 @@ final class ConversationView extends JPanel {
 			column.remove(0);
 		}
 		tools.values().removeIf(block -> block.getParent() == null);
+		for (var i = prompts.size() - 1; i >= 0; i--) {
+			if (prompts.get(i).getParent() == null) {
+				prompts.remove(i);
+			}
+		}
 		permissions.values().removeIf(block -> block.getParent() == null);
 		var marker = note(TRIMMED, false);
 		marker.setAlignmentX(LEFT_ALIGNMENT);
@@ -990,6 +1023,9 @@ final class ConversationView extends JPanel {
 		private final List<JLabel> captions = new ArrayList<>();
 		/** Pasted texts opened in place, re-fonted with the zoom. */
 		private final List<JTextArea> opened = new ArrayList<>();
+		/** Where it stands among the prompts of the conversation, from 1. */
+		private int number;
+		private final Timer flash = new Timer(FLASH_MS, event -> theme());
 
 		UserBlock(String message, List<AgentEvent.Attachment> attachments) {
 			super(new BorderLayout(6, 0));
@@ -1218,6 +1254,13 @@ final class ConversationView extends JPanel {
 		String message() {
 			return Attachments.summary(message, attachments);
 		}
+
+		/** Light up for a moment, so the eye finds the prompt the page has just jumped to. */
+		void flash() {
+			setBackground(blend(tint(0.08f), accent(), 0.35f));
+			flash.setRepeats(false);
+			flash.restart();
+		}
 	}
 
 	/**
@@ -1233,6 +1276,243 @@ final class ConversationView extends JPanel {
 	/** Whether the pinned prompt is pulsing, for tests. */
 	boolean promptPulsing() {
 		return pin.pulse.isRunning();
+	}
+
+	/**
+	 * Show or hide the index of prompts beside the page.
+	 *
+	 * @param shown whether it is shown
+	 */
+	void setIndexShown(boolean shown) {
+		if (index.isVisible() == shown) {
+			return;
+		}
+		index.setVisible(shown);
+		revalidate();
+		repaint();
+		if (shown) {
+			SwingUtilities.invokeLater(index::follow);
+		}
+	}
+
+	/** Whether the index of prompts is shown. */
+	boolean indexShown() {
+		return index.isVisible();
+	}
+
+	/** What the index lists, one line per prompt, for tests. */
+	List<String> indexEntries() {
+		var entries = new ArrayList<String>();
+		for (var i = 0; i < prompts.size(); i++) {
+			entries.add(prompts.get(i).number + ". " + oneLine(prompts.get(i).message()));
+		}
+		return entries;
+	}
+
+	/** Which prompt the index marks as the one being read, from 0, or -1 for none; for tests. */
+	int indexSelection() {
+		return index.list.getSelectedIndex();
+	}
+
+	/** A prompt's row in the index as the list draws it, for tests. */
+	java.awt.Component indexRow(int position) {
+		var list = index.list;
+		return list.getCellRenderer().getListCellRendererComponent(list, prompts.get(position), position, false, false);
+	}
+
+	/** Mark the prompt being read in the index, as scrolling the page does; for tests. */
+	void followInIndex() {
+		index.follow();
+	}
+
+	/**
+	 * Take the page to a prompt, as clicking it in the index does.
+	 *
+	 * @param position the prompt's place in the index, from 0
+	 */
+	void goToPrompt(int position) {
+		if (position < 0 || position >= prompts.size()) {
+			return;
+		}
+		var prompt = prompts.get(position);
+		scrollTo(prompt);
+		prompt.flash();
+	}
+
+	/** A message on one line: its line breaks and runs of spaces become single spaces. */
+	private static String oneLine(String message) {
+		return message.strip().replaceAll("\\s+", " ");
+	}
+
+	/**
+	 * Every prompt of the conversation, one line each, down the side of the page: a table
+	 * of contents for a session too long to scroll through by eye. Clicking one takes the
+	 * page to it; scrolling the page moves the mark to the prompt being read.
+	 */
+	private final class PromptIndex extends JPanel {
+
+		private static final long serialVersionUID = 1L;
+		private static final int WIDTH = 240;
+		/** More than a line holds at the index's width; the label cuts the rest with an ellipsis. */
+		private static final int SHOWN_CHARS = 200;
+
+		private final JLabel title = new JLabel();
+		private final JLabel empty = new JLabel("Nothing sent yet");
+		private final JList<UserBlock> list = new JList<>(prompts);
+		private final JScrollPane listScroll = new JScrollPane(list, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+				JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+		/** Set while the page moves the mark, so the mark moving does not move the page back. */
+		private boolean following;
+
+		PromptIndex() {
+			super(new BorderLayout());
+			title.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
+			empty.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+			empty.setVerticalAlignment(SwingConstants.TOP);
+			list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+			list.setCellRenderer(new Entry());
+			list.addListSelectionListener(event -> {
+				if (!following && !event.getValueIsAdjusting()) {
+					goToPrompt(list.getSelectedIndex());
+				}
+			});
+			// A click on the prompt already marked changes no selection, and should still go there.
+			list.addMouseListener(new MouseAdapter() {
+				@Override
+				public void mouseClicked(MouseEvent event) {
+					var at = list.locationToIndex(event.getPoint());
+					if (at >= 0 && at == list.getSelectedIndex() && list.getCellBounds(at, at).contains(event.getPoint())) {
+						goToPrompt(at);
+					}
+				}
+			});
+			prompts.addListDataListener(new javax.swing.event.ListDataListener() {
+				@Override
+				public void intervalAdded(javax.swing.event.ListDataEvent event) {
+					count();
+				}
+
+				@Override
+				public void intervalRemoved(javax.swing.event.ListDataEvent event) {
+					count();
+				}
+
+				@Override
+				public void contentsChanged(javax.swing.event.ListDataEvent event) {
+					count();
+				}
+			});
+			listScroll.setBorder(BorderFactory.createEmptyBorder());
+			listScroll.getVerticalScrollBar().setUnitIncrement(16);
+			add(title, BorderLayout.NORTH);
+			add(empty, BorderLayout.CENTER);
+			count();
+			theme();
+		}
+
+		@Override
+		public Dimension getPreferredSize() {
+			return new Dimension(WIDTH + fontScale * 8, super.getPreferredSize().height);
+		}
+
+		/** Say how many prompts there are, and put the list or the empty line in the middle. */
+		private void count() {
+			title.setText(prompts.isEmpty() ? "Prompts" : "Prompts (" + prompts.size() + ")");
+			JComponent shown = prompts.isEmpty() ? empty : listScroll;
+			if (shown.getParent() != this) {
+				remove(prompts.isEmpty() ? listScroll : empty);
+				add(shown, BorderLayout.CENTER);
+				revalidate();
+				repaint();
+			}
+		}
+
+		/** Mark the prompt whose part of the conversation is at the top of the page. */
+		void follow() {
+			if (!isVisible()) {
+				return;
+			}
+			var viewport = scroll.getViewport();
+			var top = viewport.getViewPosition().y + 16;
+			var current = -1;
+			for (var i = 0; i < prompts.size(); i++) {
+				var prompt = prompts.get(i);
+				if (prompt.getParent() != column) {
+					continue;
+				}
+				if (SwingUtilities.convertPoint(column, prompt.getLocation(), viewport.getView()).y > top) {
+					break;
+				}
+				current = i;
+			}
+			if (current == list.getSelectedIndex()) {
+				return;
+			}
+			following = true;
+			try {
+				if (current < 0) {
+					list.clearSelection();
+				} else {
+					list.setSelectedIndex(current);
+					list.ensureIndexIsVisible(current);
+				}
+			} finally {
+				following = false;
+			}
+		}
+
+		void theme() {
+			var shade = tint(0.04f);
+			setBackground(shade);
+			setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, tint(0.18f)));
+			list.setBackground(shade);
+			listScroll.getViewport().setBackground(shade);
+			var base = labelFont();
+			title.setFont(base == null ? null : base.deriveFont(Font.BOLD));
+			title.setForeground(accent());
+			empty.setFont(base);
+			empty.setForeground(muted());
+			list.setSelectionBackground(blend(shade, accent(), 0.30f));
+			list.setSelectionForeground(foreground());
+			// A new font changes every row's height, which the list measures again only when its renderer changes.
+			list.setCellRenderer(new Entry());
+			revalidate();
+			repaint();
+		}
+
+		/** One prompt in the index: its number, muted, and its first words. */
+		private final class Entry extends JPanel implements ListCellRenderer<UserBlock> {
+
+			private static final long serialVersionUID = 1L;
+			private final JLabel number = new JLabel();
+			private final JLabel text = new JLabel();
+
+			Entry() {
+				super(new BorderLayout(6, 0));
+				setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 8));
+				// The user's words, shown as typed: a prompt that opens with <html> is not markup.
+				text.putClientProperty("html.disable", Boolean.TRUE);
+				add(number, BorderLayout.WEST);
+				add(text, BorderLayout.CENTER);
+			}
+
+			@Override
+			public java.awt.Component getListCellRendererComponent(JList<? extends UserBlock> source, UserBlock prompt,
+					int position, boolean selected, boolean focused) {
+				var line = oneLine(prompt.message());
+				text.setText(line.length() > SHOWN_CHARS ? line.substring(0, SHOWN_CHARS) : line);
+				number.setText(Integer.toString(prompt.number));
+				text.setFont(textFont());
+				number.setFont(labelFont());
+				text.setForeground(selected ? source.getSelectionForeground() : foreground());
+				number.setForeground(selected ? accent() : muted());
+				setBackground(selected ? source.getSelectionBackground() : source.getBackground());
+				var tip = prompt.message().strip();
+				setToolTipText("<html>" + MiniMarkdown.escape(tip.length() > 600 ? tip.substring(0, 600) + "..." : tip)
+						.replace("\n", "<br>") + "</html>");
+				return this;
+			}
+		}
 	}
 
 	/**
@@ -1268,6 +1548,8 @@ final class ConversationView extends JPanel {
 			super(new BorderLayout(8, 0));
 			tag.setIcon(Glyphs.icon(Glyphs.UP));
 			tag.setIconTextGap(6);
+			// The user's words, shown as typed: a prompt that opens with <html> is not markup.
+			label.putClientProperty("html.disable", Boolean.TRUE);
 			add(tag, BorderLayout.WEST);
 			add(label, BorderLayout.CENTER);
 			setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));

@@ -89,6 +89,13 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final ConversationView view = new ConversationView(this::answerPermission);
 	private final JLabel statusLabel = new JLabel();
 	private final JButton newButton = Glyphs.decorate(new JButton(), Glyphs.NEW, "New conversation");
+	private final javax.swing.JToggleButton indexButton = Glyphs.decorate(new javax.swing.JToggleButton(),
+			Glyphs.SIDEBAR, "Prompts");
+	/**
+	 * Whether the last window the user toggled it in showed the index of prompts, so the
+	 * next window opens the way they last wanted it.
+	 */
+	private static volatile boolean indexWanted;
 	private final PlaceholderTextArea input = new PlaceholderTextArea(3, 40);
 	/** The pictures and long pastes the next message carries, above the box. */
 	private final AttachmentStrip attachmentStrip = new AttachmentStrip(this::thumbnail, this::insertAsText, this::hint);
@@ -209,7 +216,15 @@ public final class ChatAgentWindow implements AgentWindow {
 		newButton.addActionListener(event -> newConversation());
 		var toolbar = new JPanel(new BorderLayout(8, 0));
 		toolbar.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+		indexButton.setToolTipText("Show or hide every prompt of this conversation, to jump back to any of them");
+		indexButton.setSelected(indexWanted);
+		view.setIndexShown(indexWanted);
+		indexButton.addActionListener(event -> {
+			indexWanted = indexButton.isSelected();
+			view.setIndexShown(indexWanted);
+		});
 		var buttons = new JPanel(new FlowLayout(FlowLayout.TRAILING, 4, 0));
+		buttons.add(indexButton);
 		buttons.add(newButton);
 		toolbar.add(statusLabel, BorderLayout.CENTER);
 		toolbar.add(buttons, BorderLayout.EAST);

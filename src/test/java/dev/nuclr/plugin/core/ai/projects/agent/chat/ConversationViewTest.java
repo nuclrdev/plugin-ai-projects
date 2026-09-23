@@ -459,6 +459,82 @@ class ConversationViewTest {
 	}
 
 	@Test
+	void theIndexListsEveryPromptAndTakesThePageToTheOneChosen() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		onEdt(() -> {
+			view.setSize(600, 200);
+			view.setIndexShown(true);
+			view.accept(new AgentEvent.UserMessage("Fix the build\nplease"), true);
+			for (var index = 0; index < 30; index++) {
+				view.accept(new AgentEvent.Notice("Working on step " + index, false), true);
+			}
+			view.accept(new AgentEvent.UserMessage("Now write the tests"), true);
+			for (var index = 0; index < 30; index++) {
+				view.accept(new AgentEvent.Notice("Testing " + index, false), true);
+			}
+			layOut(view);
+		});
+		onEdt(() -> assertEquals(java.util.List.of("1. Fix the build please", "2. Now write the tests"),
+				view.indexEntries()));
+
+		onEdt(() -> {
+			view.goToPrompt(0);
+			layOut(view);
+			view.followInIndex();
+		});
+		onEdt(() -> {
+			var viewport = ((JScrollPane) view.getComponent(0)).getViewport();
+			assertTrue(viewport.getViewPosition().y < 20, "not at the first prompt: " + viewport.getViewPosition());
+			assertEquals(0, view.indexSelection());
+		});
+
+		onEdt(() -> {
+			view.goToPrompt(1);
+			layOut(view);
+			view.followInIndex();
+		});
+		onEdt(() -> assertEquals(1, view.indexSelection(), "the mark did not follow the page"));
+
+		onEdt(view::clear);
+		onEdt(() -> assertTrue(view.indexEntries().isEmpty()));
+	}
+
+	@Test
+	void aPromptThatLooksLikeHtmlIsShownAsTypedInTheIndexAndThePin() throws Exception {
+
+		var typed = "<html><b>bold</b><img src=\"http://example.invalid/x.png\">";
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		onEdt(() -> {
+			view.setSize(400, 200);
+			view.setIndexShown(true);
+			view.accept(new AgentEvent.UserMessage(typed), true);
+			for (var index = 0; index < 40; index++) {
+				view.accept(new AgentEvent.Notice("Working on step " + index, false), true);
+			}
+			layOut(view);
+			var viewport = ((JScrollPane) view.getComponent(0)).getViewport();
+			viewport.setViewPosition(new java.awt.Point(0, viewport.getView().getHeight() - viewport.getHeight()));
+			view.updatePin();
+		});
+
+		onEdt(() -> {
+			var pin = (Container) ((JScrollPane) view.getComponent(0)).getColumnHeader().getView();
+			var row = (Container) view.indexRow(0);
+			for (var where : java.util.List.of(pin, row)) {
+				var shown = labels(where).stream().filter(label -> typed.equals(label.getText())).findFirst()
+						.orElseThrow(() -> new AssertionError("the prompt is not shown as typed in " + where));
+				assertEquals(null, shown.getClientProperty(javax.swing.plaf.basic.BasicHTML.propertyKey),
+						"rendered as HTML in " + where.getClass().getSimpleName());
+			}
+		});
+	}
+
+	@Test
 	void thePinnedPromptPulsesOnlyWhileShownAndTheAgentIsWorking() throws Exception {
 
 		var view = new ConversationView((requestId, option) -> {
