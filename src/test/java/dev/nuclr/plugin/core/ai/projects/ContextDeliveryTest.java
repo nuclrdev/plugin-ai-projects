@@ -66,6 +66,19 @@ class ContextDeliveryTest {
 	}
 
 	@Test
+	void codexThroughACmdShimIsPointedAtTheBriefingWithoutQuotes() {
+
+		// cmd.exe splits a quoted TOML string at its spaces; unquoted, Codex takes the raw string.
+		var plan = ContextDelivery.plan("codex", Path.of("C:/npm/codex.cmd"), FILE, TEXT, Map.of());
+
+		var value = plan.arguments().get(1);
+		assertEquals("-c", plan.arguments().getFirst());
+		assertTrue(value.startsWith("developer_instructions=Read " + FILE + " now"), value);
+		assertFalse(value.contains("\""), "a quote reached cmd.exe: " + value);
+		assertTrue(plan.description().contains("pointer"), plan.description());
+	}
+
+	@Test
 	void openCodeIsGivenTheBriefingAsAnInstructionsFile() {
 
 		var plan = ContextDelivery.plan("opencode", Path.of("/npm/opencode.cmd"), FILE, TEXT, Map.of());

@@ -85,8 +85,11 @@ public record ContextDelivery(List<String> arguments, Map<String, String> enviro
 					List.of("--append-system-prompt", briefingFile.toString()), Map.of(),
 					"Briefing delivered with --append-system-prompt " + briefingFile);
 			// Not the [PROMPT]: Codex takes only one, and the startup arguments may already hold it.
+			// The pointer goes unquoted: it is there because the value passes through cmd.exe, which
+			// splits a quoted TOML string at its spaces. Unquoted it is not TOML, and Codex takes
+			// a value that is not as the raw string.
 			case "codex" -> new ContextDelivery(
-					List.of("-c", "developer_instructions=" + tomlString(inline ? briefingText : pointer)),
+					List.of("-c", "developer_instructions=" + (inline ? tomlString(briefingText) : pointer)),
 					Map.of(),
 					"Briefing delivered as Codex developer instructions"
 							+ (inline ? "" : " (as a pointer to " + briefingFile + ")"));
