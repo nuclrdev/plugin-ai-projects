@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.function.Supplier;
 
 import dev.nuclr.plugin.core.ai.projects.harness.AgentEnvironment;
 import dev.nuclr.plugin.core.ai.projects.model.AgentDefinition;
@@ -29,6 +31,7 @@ public final class AgentWindowContext {
 	private final String runtimeStamp;
 	private final ProfilePlaces profiles;
 	private final ProfileSecrets secrets;
+	private final Supplier<Locale> locale;
 
 	/**
 	 * Build a context for one agent, with the project's own profiles and no library.
@@ -56,6 +59,23 @@ public final class AgentWindowContext {
 	 */
 	public AgentWindowContext(ProjectStore store, AgentDefinition agent, AgentWindowHost host, String runtimeStamp,
 			ProfilePlaces profiles, ProfileSecrets secrets) {
+		this(store, agent, host, runtimeStamp, profiles, secrets, Locale::getDefault);
+	}
+
+	/**
+	 * Build a context for one agent, in the locale Commander's UI is in.
+	 *
+	 * @param store        the open project store
+	 * @param agent        the agent being given a window
+	 * @param host         where the window reports status and attention
+	 * @param runtimeStamp identifies this Commander run
+	 * @param profiles     where profiles are found: the project's and the user's library
+	 * @param secrets      the secrets profiles refer to
+	 * @param locale       the locale the host's UI is in now; asked each time, since the user can change it
+	 */
+	public AgentWindowContext(ProjectStore store, AgentDefinition agent, AgentWindowHost host, String runtimeStamp,
+			ProfilePlaces profiles, ProfileSecrets secrets, Supplier<Locale> locale) {
+		this.locale = locale;
 		this.store = store;
 		this.agent = agent;
 		this.host = host;
@@ -97,6 +117,12 @@ public final class AgentWindowContext {
 	/** Where files for this agent's launch are written. */
 	public Path runtimeDirectory() {
 		return store.paths().runtimeDirectory(agent.getId());
+	}
+
+	/** The locale Commander's UI is in now, for numbers and dates the window shows. */
+	public Locale locale() {
+		var current = locale == null ? null : locale.get();
+		return current != null ? current : Locale.getDefault();
 	}
 
 	/** The owning project definition. */

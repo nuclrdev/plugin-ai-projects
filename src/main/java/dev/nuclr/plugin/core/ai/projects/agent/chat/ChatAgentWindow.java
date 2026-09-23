@@ -89,6 +89,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final ConversationView view = new ConversationView(this::answerPermission);
 	private final JLabel statusLabel = new JLabel();
 	private final JButton newButton = Glyphs.decorate(new JButton(), Glyphs.NEW, "New conversation");
+	private final JButton findButton = Glyphs.decorate(new JButton(), Glyphs.ZOOM, "Find");
 	private final javax.swing.JToggleButton indexButton = Glyphs.decorate(new javax.swing.JToggleButton(),
 			Glyphs.SIDEBAR, "Prompts");
 	/**
@@ -198,6 +199,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	ChatAgentWindow(AgentWindowContext context, ChatBackend backend, Function<String, Optional<Path>> executableResolver) {
 		this.context = context;
 		view.setThumbnails(this::thumbnail);
+		view.setNumberLocale(context::locale);
 		this.backend = backend;
 		this.executableResolver = executableResolver;
 		buildLayout();
@@ -223,7 +225,10 @@ public final class ChatAgentWindow implements AgentWindow {
 			indexWanted = indexButton.isSelected();
 			view.setIndexShown(indexWanted);
 		});
+		findButton.setToolTipText("Find in the conversation (Ctrl+F)");
+		findButton.addActionListener(event -> view.openFind());
 		var buttons = new JPanel(new FlowLayout(FlowLayout.TRAILING, 4, 0));
+		buttons.add(findButton);
 		buttons.add(indexButton);
 		buttons.add(newButton);
 		toolbar.add(statusLabel, BorderLayout.CENTER);
@@ -323,6 +328,18 @@ public final class ChatAgentWindow implements AgentWindow {
 		root.add(toolbar, BorderLayout.NORTH);
 		root.add(view, BorderLayout.CENTER);
 		root.add(composer, BorderLayout.SOUTH);
+
+		// Wherever the focus is in the window - the composer included, which has no use of its own for the key.
+		root.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+				.put(KeyStroke.getKeyStroke(KeyEvent.VK_F, Dialogs.menuShortcutMask()), "nuclr-find");
+		root.getActionMap().put("nuclr-find", new AbstractAction() {
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public void actionPerformed(ActionEvent event) {
+				view.openFind();
+			}
+		});
 	}
 
 	/**

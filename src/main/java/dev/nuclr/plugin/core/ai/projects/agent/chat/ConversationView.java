@@ -15,6 +15,7 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
@@ -38,6 +39,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextPane;
+import javax.swing.KeyStroke;
 import javax.swing.ListCellRenderer;
 import javax.swing.ListSelectionModel;
 import javax.swing.Scrollable;
@@ -123,6 +125,8 @@ final class ConversationView extends JPanel {
 	/** Every prompt still on screen, oldest first, as the index lists them. */
 	private final DefaultListModel<UserBlock> prompts = new DefaultListModel<>();
 	private final PromptIndex index = new PromptIndex();
+	/** Find in the conversation, over the page and hidden until asked for. */
+	private final FindBar find;
 	/** How many prompts this conversation has had, counting any dropped from the top, so each keeps its number. */
 	private int sent;
 	/** The folder the agent runs in, shown on the line that closes a turn; {@code null} until it is known. */
@@ -156,6 +160,15 @@ final class ConversationView extends JPanel {
 		this.thumbnails = source;
 	}
 
+	/**
+	 * The locale numbers are written in, as Commander's UI is set.
+	 *
+	 * @param locale asked each time a number is shown, since the user can change it
+	 */
+	void setNumberLocale(java.util.function.Supplier<Locale> locale) {
+		find.setNumberLocale(locale);
+	}
+
 	ConversationView(BiConsumer<String, AgentEvent.PermissionOption> permissionAnswer) {
 		super(new BorderLayout());
 		this.permissionAnswer = permissionAnswer;
@@ -181,6 +194,32 @@ final class ConversationView extends JPanel {
 		// Beside the page rather than over it, and hidden until asked for.
 		index.setVisible(false);
 		add(index, BorderLayout.LINE_START);
+		find = new FindBar(new FindBar.Page() {
+			@Override
+			public java.awt.Container content() {
+				return column;
+			}
+
+			@Override
+			public void reveal(javax.swing.text.JTextComponent where) {
+				unfold(where);
+			}
+
+			@Override
+			public void show(javax.swing.text.JTextComponent where, Rectangle area) {
+				showInPage(where, area);
+			}
+
+			@Override
+			public int viewTop() {
+				var viewport = scroll.getViewport();
+				return SwingUtilities.convertPoint(viewport.getView(), 0, viewport.getViewPosition().y, column).y;
+			}
+		});
+		add(find, BorderLayout.PAGE_START);
+		findKey(KeyStroke.getKeyStroke(KeyEvent.VK_F3, 0), "nuclr-find-next", find::next);
+		findKey(KeyStroke.getKeyStroke(KeyEvent.VK_F3, KeyEvent.SHIFT_DOWN_MASK), "nuclr-find-previous", find::previous);
+		findKey(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "nuclr-find-close", find::close);
 		updateTheme();
 	}
 
@@ -279,6 +318,7 @@ final class ConversationView extends JPanel {
 			scrollToEnd();
 		}
 		SwingUtilities.invokeLater(this::updatePin);
+		find.contentChanged();
 	}
 
 	/**
@@ -311,6 +351,7 @@ final class ConversationView extends JPanel {
 		column.revalidate();
 		column.repaint();
 		updatePin();
+		find.contentChanged();
 	}
 
 	/** Re-read colours and fonts from the look and feel. */
@@ -321,6 +362,7 @@ final class ConversationView extends JPanel {
 		scroll.getViewport().setBackground(background);
 		pin.theme();
 		index.theme();
+		find.theme(labelFont());
 		for (var component : column.getComponents()) {
 			if (component instanceof Themed themed) {
 				themed.theme();
@@ -351,6 +393,73 @@ final class ConversationView extends JPanel {
 			fontScale = 0;
 			updateTheme();
 		}
+	}
+
+	/**
+	 * Open the find bar, looking for what is selected in the conversation if a few words are.
+	 */
+	void openFind() {
+		String seed = null;
+		var focused = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+		if (focused instanceof javax.swing.text.JTextComponent area && SwingUtilities.isDescendingFrom(area, column)) {
+			var selected = area.getSelectedText();
+			if (selected != null && !selected.isBlank() && selected.indexOf('\n') < 0 && selected.length() <= 200) {
+				seed = selected;
+			}
+		}
+		find.open(seed);
+	}
+
+	/** The find bar, for the window's shortcut and for tests. */
+	FindBar find() {
+		return find;
+	}
+
+	/** A key that works anywhere in the view while the find bar is open, and passes through while it is not. */
+	private void findKey(KeyStroke stroke, String name, Runnable action) {
+		getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(stroke, name);
+		getActionMap().put(name, new javax.swing.AbstractAction() {
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public boolean isEnabled() {
+				return find.isVisible();
+			}
+
+			@Override
+			public void actionPerformed(java.awt.event.ActionEvent event) {
+				action.run();
+			}
+		});
+	}
+
+	/** Open the folded block a text component is in, so a match in it can be seen. */
+	private void unfold(java.awt.Component where) {
+		var changed = false;
+		for (var at = where; at != null && at != column; at = at.getParent()) {
+			if (at instanceof Foldable foldable) {
+				changed |= foldable.unfold();
+			}
+		}
+		if (changed) {
+			column.revalidate();
+			// Laid out now rather than later, so the match has a place on the page to scroll to.
+			scroll.validate();
+		}
+	}
+
+	/** Bring part of a text component to a third of the way down the page, where the eye finds it. */
+	private void showInPage(java.awt.Component where, Rectangle area) {
+		var viewport = scroll.getViewport();
+		var at = SwingUtilities.convertRectangle(where, area, viewport.getView());
+		var extent = viewport.getExtentSize();
+		var visible = new Rectangle(viewport.getViewPosition(), extent);
+		if (visible.contains(at)) {
+			return;
+		}
+		var furthest = Math.max(0, viewport.getView().getHeight() - extent.height);
+		var top = Math.clamp(at.y - extent.height / 3, 0, furthest);
+		viewport.setViewPosition(new java.awt.Point(0, top));
 	}
 
 	/** Scroll to the newest block. */
@@ -653,6 +762,17 @@ final class ConversationView extends JPanel {
 	/** A block that draws with look-and-feel colours and must re-read them on a theme change. */
 	private interface Themed {
 		void theme();
+	}
+
+	/** A block that keeps part of its text folded away until clicked. */
+	private interface Foldable {
+
+		/**
+		 * Show what is folded.
+		 *
+		 * @return whether anything changed
+		 */
+		boolean unfold();
 	}
 
 	/** The column of blocks: always as wide as the viewport, so text wraps instead of scrolling sideways. */
@@ -1171,6 +1291,7 @@ final class ConversationView extends JPanel {
 					}
 					column.revalidate();
 					column.repaint();
+					find.contentChanged();
 				}
 			});
 			var menu = new javax.swing.JPopupMenu();
@@ -1727,6 +1848,7 @@ final class ConversationView extends JPanel {
 			pane.setText("<html><body>" + MiniMarkdown.toHtml(markdown.toString(), this::codeBlock)
 					+ "</body></html>");
 			revalidate();
+			find.contentChanged();
 		}
 
 		/**
@@ -1809,7 +1931,7 @@ final class ConversationView extends JPanel {
 	}
 
 	/** The agent's reasoning: folded to one line, opened by a click. */
-	private final class ThoughtBlock extends JPanel implements Themed {
+	private final class ThoughtBlock extends JPanel implements Themed, Foldable {
 
 		private static final long serialVersionUID = 1L;
 		private final StringBuilder thought = new StringBuilder();
@@ -1845,6 +1967,18 @@ final class ConversationView extends JPanel {
 			updateHeader();
 		}
 
+		@Override
+		public boolean unfold() {
+			if (open) {
+				return false;
+			}
+			open = true;
+			body.setVisible(true);
+			updateHeader();
+			revalidate();
+			return true;
+		}
+
 		private void updateHeader() {
 			var preview = thought.toString().strip().replace('\n', ' ');
 			if (preview.length() > 90) {
@@ -1870,7 +2004,7 @@ final class ConversationView extends JPanel {
 	 * One tool call: a header saying what it does and how it went - with the last line
 	 * it printed while it runs - and its input and output a click away.
 	 */
-	private final class ToolBlock extends JPanel implements Themed {
+	private final class ToolBlock extends JPanel implements Themed, Foldable {
 
 		private static final long serialVersionUID = 1L;
 		private AgentEvent.ToolCall call;
@@ -1924,6 +2058,18 @@ final class ConversationView extends JPanel {
 			revalidate();
 		}
 
+		@Override
+		public boolean unfold() {
+			if (open) {
+				return false;
+			}
+			open = true;
+			body.setVisible(body.getDocument().getLength() > 0);
+			updateHeader();
+			revalidate();
+			return true;
+		}
+
 		void finish(boolean error, String result) {
 			state = error ? "error" : "done";
 			if (result != null && !result.isBlank()) {
@@ -1948,6 +2094,7 @@ final class ConversationView extends JPanel {
 			}
 			body.setCaretPosition(0);
 			body.setVisible(open && document.getLength() > 0);
+			find.contentChanged();
 		}
 
 		/** One run as drawn: the block's font, the token's colour, and the shade of an added or removed line. */

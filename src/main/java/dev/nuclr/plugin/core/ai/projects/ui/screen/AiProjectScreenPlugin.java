@@ -220,7 +220,7 @@ public final class AiProjectScreenPlugin implements FullscreenNuclrPlugin, Nuclr
 		root.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.WAIT_CURSOR));
 		try {
 			this.desktop = new ProjectDesktop(store, registry, context.getEventBus(), this::closeFromDesktop,
-					context.getCredentialStore(), context.getSettings());
+					context.getCredentialStore(), context.getSettings(), context::getLocale);
 			root.removeAll();
 			root.add(desktop, BorderLayout.CENTER);
 		} catch (RuntimeException | LinkageError e) {

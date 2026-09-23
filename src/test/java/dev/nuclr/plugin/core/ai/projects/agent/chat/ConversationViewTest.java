@@ -737,4 +737,148 @@ class ConversationViewTest {
 
 		assertTrue(chip.getFont().getSize2D() > before, before + " then " + chip.getFont().getSize2D());
 	}
+
+	/** A conversation with a word in each kind of block: a prompt, a folded thought, a tool call and a reply. */
+	private static ConversationView searchable() throws Exception {
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		onEdt(() -> {
+			view.setSize(500, 300);
+			view.accept(new AgentEvent.UserMessage("Fix the Build"), true);
+			view.accept(new AgentEvent.ThoughtChunk("the build is failing"), true);
+			view.accept(new AgentEvent.ToolCall("c1", null, "Shell", "mvn package", ""), true);
+			view.accept(new AgentEvent.ToolResult("c1", false, "BUILD SUCCESS"), true);
+			view.accept(new AgentEvent.MessageChunk("The **build** passes now."), true);
+			layOut(view);
+		});
+		return view;
+	}
+
+	@Test
+	void findLooksInEveryKindOfBlockFoldedOrNot() throws Exception {
+
+		var view = searchable();
+		onEdt(() -> {
+			view.openFind();
+			view.find().field().setText("build");
+		});
+		onEdt(() -> {
+			var find = view.find();
+			assertTrue(find.isVisible());
+			var kinds = new java.util.HashSet<Class<?>>();
+			find.matches().forEach(match -> kinds.add(match.area().getClass()));
+			assertTrue(kinds.contains(JTextArea.class), "not in the prompt or the thought: " + kinds);
+			assertTrue(kinds.contains(javax.swing.JEditorPane.class), "not in the reply: " + kinds);
+			assertTrue(kinds.contains(javax.swing.JTextPane.class), "not in the tool call: " + kinds);
+			assertEquals(4, find.matches().size(), find.matches().toString());
+			assertEquals("1 of 4", find.countText());
+		});
+
+		onEdt(() -> view.find().matchCaseButton().doClick());
+		onEdt(() -> {
+			var find = view.find();
+			// "build" in the thought and the reply; not "Build" in the prompt or "BUILD" in the tool's output.
+			assertEquals(2, find.matches().size(), "match case still finds other cases");
+			find.matches().forEach(match -> assertFalse(match.area() instanceof javax.swing.JTextPane, "found BUILD"));
+		});
+
+		onEdt(() -> view.find().field().setText("no such words"));
+		onEdt(() -> {
+			assertTrue(view.find().matches().isEmpty());
+			assertEquals("No results", view.find().countText());
+		});
+	}
+
+	@Test
+	void steppingOntoAFoldedThoughtOpensIt() throws Exception {
+
+		var view = searchable();
+		onEdt(() -> {
+			view.openFind();
+			view.find().field().setText("failing");
+		});
+		onEdt(() -> {
+			var find = view.find();
+			assertEquals(1, find.matches().size());
+			assertTrue(find.matches().get(0).area().isVisible(), "the thought is still folded");
+			assertEquals("1 of 1", find.countText());
+		});
+	}
+
+	@Test
+	void theArrowsStepRoundTheMatchesAndCloseTakesTheShadingAway() throws Exception {
+
+		var view = searchable();
+		onEdt(() -> {
+			view.openFind();
+			view.find().field().setText("build");
+		});
+		var first = new int[1];
+		onEdt(() -> first[0] = view.find().current());
+		onEdt(() -> {
+			var find = view.find();
+			find.previous();
+			assertEquals(Math.floorMod(first[0] - 1, 4), find.current());
+			for (var i = 0; i < 4; i++) {
+				find.next();
+			}
+			assertEquals(Math.floorMod(first[0] - 1, 4), find.current(), "did not come round to the same match");
+		});
+
+		var area = new javax.swing.text.JTextComponent[1];
+		onEdt(() -> {
+			area[0] = view.find().matches().get(0).area();
+			assertTrue(area[0].getHighlighter().getHighlights().length > 0, "the match is not shaded");
+			view.find().close();
+		});
+		onEdt(() -> {
+			assertFalse(view.find().isVisible());
+			assertEquals(0, area[0].getHighlighter().getHighlights().length, "shading left behind");
+		});
+	}
+
+	@Test
+	void whatArrivesWhileTheBarIsOpenIsFoundWithoutLosingThePlace() throws Exception {
+
+		var view = searchable();
+		onEdt(() -> {
+			view.openFind();
+			view.find().field().setText("fix");
+		});
+		onEdt(() -> assertEquals(1, view.find().matches().size()));
+
+		onEdt(() -> {
+			view.accept(new AgentEvent.UserMessage("fix the tests too"), true);
+			view.find().flush();
+		});
+		onEdt(() -> {
+			assertEquals(2, view.find().matches().size(), "the new prompt was not searched");
+			assertEquals(0, view.find().current(), "the place was lost");
+			assertEquals("1 of 2", view.find().countText());
+		});
+	}
+
+	@Test
+	void theCountIsWrittenInCommandersLocale() throws Exception {
+
+		var view = new ConversationView((requestId, option) -> {
+			// Nothing answers a permission in this test.
+		});
+		onEdt(() -> {
+			view.setNumberLocale(() -> java.util.Locale.GERMANY);
+			view.setSize(500, 300);
+			view.accept(new AgentEvent.UserMessage("x ".repeat(1_500)), true);
+			layOut(view);
+			view.openFind();
+			view.find().field().setText("x");
+		});
+		onEdt(() -> assertEquals("1 of 1.500", view.find().countText()));
+
+		onEdt(() -> {
+			view.setNumberLocale(() -> java.util.Locale.US);
+			view.find().next();
+		});
+		onEdt(() -> assertEquals("2 of 1,500", view.find().countText(), "a changed locale was not followed"));
+	}
 }

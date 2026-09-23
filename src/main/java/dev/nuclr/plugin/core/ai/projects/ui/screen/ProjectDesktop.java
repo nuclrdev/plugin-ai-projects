@@ -113,6 +113,8 @@ public final class ProjectDesktop extends JPanel
 	private final JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEADING, 0, 0));
 	private final Runnable onCloseRequested;
 	private final dev.nuclr.platform.NuclrCredentialStore credentials;
+	/** The locale Commander's UI is in, read each time it is needed since the user can change it. */
+	private final java.util.function.Supplier<java.util.Locale> locale;
 	/** The user's library of profiles. */
 	private final ProfileStore library = ProfileStore.inCommanderHome(ProjectPaths.defaultCommanderHome());
 	/** The project's own profiles, kept with it. */
@@ -164,9 +166,28 @@ public final class ProjectDesktop extends JPanel
 	public ProjectDesktop(ProjectStore store, AgentWindowRegistry registry, NuclrEventBus eventBus,
 			Runnable onCloseRequested, dev.nuclr.platform.NuclrCredentialStore credentials,
 			dev.nuclr.platform.NuclrSettings settings) {
+		this(store, registry, eventBus, onCloseRequested, credentials, settings, java.util.Locale::getDefault);
+	}
+
+	/**
+	 * Build the desktop with the locale Commander's UI is in, so numbers the windows show
+	 * read the way the user reads them.
+	 *
+	 * @param store            the open project
+	 * @param registry         the available window kinds
+	 * @param eventBus         the host event bus, for activity reports and navigation
+	 * @param onCloseRequested run when the user asks to close the project; may be {@code null}
+	 * @param credentials      the host's credential store, or {@code null} when there is none
+	 * @param settings         the host settings store, or {@code null} to keep choices in memory
+	 * @param locale           the locale the host's UI is in now
+	 */
+	public ProjectDesktop(ProjectStore store, AgentWindowRegistry registry, NuclrEventBus eventBus,
+			Runnable onCloseRequested, dev.nuclr.platform.NuclrCredentialStore credentials,
+			dev.nuclr.platform.NuclrSettings settings, java.util.function.Supplier<java.util.Locale> locale) {
 
 		super(new BorderLayout());
 		this.credentials = credentials;
+		this.locale = locale;
 		this.store = store;
 		this.projectProfiles = new ProfileStore(store.paths().profilesDirectory());
 		this.registry = registry;
@@ -527,7 +548,7 @@ public final class ProjectDesktop extends JPanel
 	private AgentFrame openFrame(AgentDefinition agent, WindowState state) {
 
 		var context = new AgentWindowContext(store, agent, this, RuntimeStamp.CURRENT, profilePlaces(),
-				new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(credentials));
+				new dev.nuclr.plugin.core.ai.projects.profile.ProfileSecrets(credentials), locale);
 		var window = registry.createWindow(context);
 		var implementation = registry.find(agent.getWindowKind()).map(AgentWindowProvider::displayName).orElse(null);
 		var frame = new AgentFrame(agent, window, implementation, this);
