@@ -71,7 +71,8 @@ class CustomCommandTest {
 				+ WindowsCommandLine.join(List.of(javaExecutable, "-cp", classes, Echo.class.getName()));
 		if (!WINDOWS) {
 			Assumptions.assumeTrue(javaExecutable.indexOf('\'') < 0 && classes.indexOf('\'') < 0);
-			command = "true && '" + javaExecutable + "' -cp '" + classes + "' " + Echo.class.getName();
+			// Quoted: the nested class's name contains "$Echo", which the shell would expand.
+			command = "true && '" + javaExecutable + "' -cp '" + classes + "' '" + Echo.class.getName() + "'";
 		}
 
 		var process = new ProcessBuilder(WindowsCommandLine.forProcessBuilder(CustomCommand.wrap(command, ARGUMENTS)))
