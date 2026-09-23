@@ -68,6 +68,9 @@ public final class AgentFrame extends JInternalFrame {
 		/** Open the agent's working directory in the system file manager. */
 		void openWorkingDirectory(String agentId);
 
+		/** Show what the agent was given when it was last started: its profile's context, and how it reached the CLI. */
+		void showContext(String agentId);
+
 		/** Change the agent's name, kind, working directory and overrides. */
 		void editAgent(String agentId);
 
@@ -189,6 +192,9 @@ public final class AgentFrame extends JInternalFrame {
 		bar.add(restart);
 		bar.add(button(Glyphs.FOLDER, "Folder", "Open the agent's working directory",
 				() -> actions.openWorkingDirectory(agentId)));
+		bar.add(button(Glyphs.CONTEXT, "Context",
+				"What this agent was given when it started: instructions, skills, knowledge, and how they reached it",
+				() -> actions.showContext(agentId)));
 		// "More" opens the same menu as a right-click, so nothing is reachable only by
 		// a gesture the user has to guess at. Held by reference rather than fished out
 		// of the bar by position, which breaks the moment anything is added after it.
@@ -254,6 +260,7 @@ public final class AgentFrame extends JInternalFrame {
 		menu.add(item(Glyphs.FOLDER, "Open working directory",
 				() -> actions.openWorkingDirectory(agentId)));
 		menu.addSeparator();
+		menu.add(item(Glyphs.CONTEXT, "Show context...", () -> actions.showContext(agentId)));
 		menu.add(item(Glyphs.COPY, "Copy all output", () -> actions.copyOutput(agentId)));
 		menu.add(item(Glyphs.TRANSCRIPT, "Open transcript file",
 				() -> actions.openTranscript(agentId)));

@@ -1,6 +1,7 @@
 package dev.nuclr.plugin.core.ai.projects.agent.chat;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -26,6 +27,7 @@ import dev.nuclr.plugin.core.ai.projects.profile.Profile;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileRecord;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileStore;
 import dev.nuclr.plugin.core.ai.projects.profile.RecordKind;
+import dev.nuclr.plugin.core.ai.projects.runtime.LaunchSummary;
 import dev.nuclr.plugin.core.ai.projects.runtime.RuntimeStamp;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectCreator;
 import dev.nuclr.plugin.core.ai.projects.store.ProjectStore;
@@ -82,6 +84,43 @@ class ProfileContextLaunchTest {
 		assertTrue(arguments.containsAll(ClaudeCodeSession.PROTOCOL_ARGUMENTS), arguments.toString());
 		var value = valueAfter(arguments, "--append-system-prompt");
 		assertBriefingIn(value);
+	}
+
+	@Test
+	void theLaunchIsRecordedForTheContextView() throws Exception {
+
+		launch("claude-code", "claude", new ClaudeCodeBackend());
+
+		var summary = store.session("a1").getLaunch();
+		assertNotNull(summary, "the launch was not recorded with the session");
+		assertEquals("Context test", summary.getProfileName());
+		assertEquals("Claude Code", summary.getCli());
+		assertTrue(summary.getBriefingDelivery().startsWith("Briefing delivered with --append-system-prompt"),
+				summary.getBriefingDelivery());
+		var briefing = store.paths().briefingFile("a1");
+		assertEquals(briefing.toString(), summary.getBriefingFile());
+		assertEquals(LaunchSummary.digest(Files.readString(briefing)), summary.getBriefingDigest());
+		assertTrue(summary.getCommandLine().contains("--append-system-prompt"), summary.getCommandLine().toString());
+		assertBriefingNotRecorded(summary);
+		assertEquals(List.of(RECORD_VARIABLE), summary.getEnvironmentNames());
+		assertTrue(summary.getNotApplied().isEmpty(), summary.getNotApplied().toString());
+		assertEquals(root.resolve("project").toString(), summary.getWorkingDirectory());
+		assertNotNull(summary.getProfileDigest());
+		assertNotNull(summary.getLaunchedAt());
+	}
+
+	@Test
+	void aCodexLaunchIsRecordedWithoutItsDeveloperInstructions() throws Exception {
+
+		launch("codex", "codex", new CodexBackend());
+
+		assertBriefingNotRecorded(store.session("a1").getLaunch());
+	}
+
+	/** However short the briefing, it stays in its file. */
+	private static void assertBriefingNotRecorded(LaunchSummary summary) {
+		var commandLine = summary.getCommandLine();
+		assertTrue(commandLine.stream().noneMatch(argument -> argument.contains(RULE)), commandLine.toString());
 	}
 
 	@Test
@@ -176,7 +215,13 @@ class ProfileContextLaunchTest {
 		});
 		try {
 			var deadline = System.currentTimeMillis() + 30_000;
-			while (!Files.exists(record)) {
+			// Started, and attached: the window records the launch once the process is up.
+			var attached = new boolean[1];
+			while (!Files.exists(record) || !attached[0]) {
+				SwingUtilities.invokeAndWait(() -> attached[0] = store.session("a1").getLaunch() != null);
+				if (Files.exists(record) && attached[0]) {
+					break;
+				}
 				if (System.currentTimeMillis() > deadline) {
 					var said = new String[1];
 					SwingUtilities.invokeAndWait(() -> said[0] = window[0].status() + " / " + window[0].sessionSummary()

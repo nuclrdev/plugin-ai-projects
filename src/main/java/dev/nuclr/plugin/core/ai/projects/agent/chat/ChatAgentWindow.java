@@ -582,6 +582,7 @@ public final class ChatAgentWindow implements AgentWindow {
 
 		var record = context.session();
 		record.setCommandLine(List.copyOf(launch.command()));
+		record.setLaunch(launch.summaryFor(workingDirectory, AccessMode.byId(record.getAccess()).orElse(null)));
 		record.setWorkingDirectory(workingDirectory.toString());
 		record.setPid(started.pid());
 		record.setStartedAt(Instant.now());
@@ -1161,7 +1162,7 @@ public final class ChatAgentWindow implements AgentWindow {
 		shown.add(customCommand);
 		shown.addAll(launch.command().subList(1, launch.command().size()));
 		return new AgentLaunch(shown, CustomCommand.wrap(customCommand, arguments), launch.environment(),
-				launch.notice(), launch.name(), launch.model(), launch.effort());
+				launch.notice(), launch.name(), launch.model(), launch.effort(), launch.summary());
 	}
 
 	private AgentLaunch withChosen(AgentLaunch launch, String model, String effort) {
@@ -1174,7 +1175,7 @@ public final class ChatAgentWindow implements AgentWindow {
 				LaunchOverrides.apply(launch.launched(), connector, model, effort), launch.environment(),
 				launch.notice(), launch.name(),
 				model == null || model.isBlank() ? launch.model() : model,
-				effort == null || effort.isBlank() ? launch.effort() : effort);
+				effort == null || effort.isBlank() ? launch.effort() : effort, launch.summary());
 	}
 
 	private void newConversation() {

@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,9 @@ import dev.nuclr.plugin.core.ai.projects.connector.GitSources;
 import dev.nuclr.plugin.core.ai.projects.connector.LaunchPlan;
 import dev.nuclr.plugin.core.ai.projects.profile.Profile;
 import dev.nuclr.plugin.core.ai.projects.profile.ProfileRef;
+import dev.nuclr.plugin.core.ai.projects.provider.AccessMode;
+import dev.nuclr.plugin.core.ai.projects.runtime.LaunchSummary;
+import dev.nuclr.plugin.core.ai.projects.store.Json;
 
 /**
  * One prepared launch, whatever kind of window it is for: a terminal runs it in a
@@ -32,9 +36,42 @@ import dev.nuclr.plugin.core.ai.projects.profile.ProfileRef;
  *                    and the CLI uses its own default
  * @param effort      the reasoning effort the profile asks for, in the CLI's own
  *                    vocabulary, or {@code null} for the model's default
+ * @param summary     what the profile gave this launch, for the Context view; {@code null}
+ *                    for a launch without a profile. Completed by {@link #summaryFor}.
  */
 public record AgentLaunch(List<String> command, List<String> launched, Map<String, String> environment,
-		String notice, String name, String model, String effort) {
+		String notice, String name, String model, String effort, LaunchSummary summary) {
+
+	/** A launch without a profile, which has nothing of one to summarise. */
+	public AgentLaunch(List<String> command, List<String> launched, Map<String, String> environment,
+			String notice, String name, String model, String effort) {
+		this(command, launched, environment, notice, name, model, effort, null);
+	}
+
+	/**
+	 * What this launch was given, complete, to keep with the session once the process is up.
+	 *
+	 * @param workingDirectory where it runs
+	 * @param chosenAccess     an access mode chosen in the conversation, which beats the
+	 *                         profile's, or {@code null}
+	 * @return the summary; for a launch without a profile, one that says so
+	 */
+	public LaunchSummary summaryFor(Path workingDirectory, AccessMode chosenAccess) {
+		var complete = summary == null ? new LaunchSummary() : summary.copy();
+		complete.setLaunchedAt(Instant.now());
+		complete.setCli(name);
+		if (summary == null) {
+			complete.setCommandLine(LaunchSummary.shortened(launched));
+		}
+		complete.setWorkingDirectory(workingDirectory == null ? null : workingDirectory.toString());
+		complete.setModel(model);
+		complete.setEffort(effort);
+		if (chosenAccess != null) {
+			complete.setAccess(chosenAccess.label());
+			complete.setAccessChosenHere(true);
+		}
+		return complete;
+	}
 
 	/** Thrown while preparing a launch off the event thread, with a message for the user. */
 	public static final class Refused extends Exception {
@@ -143,7 +180,59 @@ public record AgentLaunch(List<String> command, List<String> launched, Map<Strin
 		}
 		return new AgentLaunch(command, launched, environment, profileNotice(plan, delivery),
 				plan.provider().displayName(), blankToNull(profile.getHarness().getModel()),
-				blankToNull(profile.getHarness().getEffort()));
+				blankToNull(profile.getHarness().getEffort()), summary(ref, profile, plan, delivery, briefingFile, launched));
+	}
+
+	/** What the profile gave a launch; completed with the command once the window has run it. */
+	private static LaunchSummary summary(ProfileRef ref, Profile profile, LaunchPlan plan, ContextDelivery delivery,
+			Path briefingFile, List<String> launched) {
+		var summary = new LaunchSummary();
+		summary.setCommandLine(LaunchSummary.shortened(launched, briefingArguments(launched, delivery, plan.briefing())));
+		summary.setProfileName(profile.displayName());
+		summary.setProfileRef(ref.toString());
+		summary.setProfileDigest(digest(profile));
+		var mode = AccessMode.byId(profile.getHarness().getAccessMode()).orElse(null);
+		summary.setAccess(mode != null ? mode.label()
+				: plan.provider().connector().defaultAccessMode().label() + " (the default)");
+		if (!plan.briefing().isEmpty()) {
+			summary.setBriefingFile(briefingFile.toString());
+			summary.setBriefingDigest(LaunchSummary.digest(plan.briefing()));
+			summary.setBriefingDelivery(delivery.delivered() ? delivery.description() : null);
+		}
+		summary.setNotApplied(new ArrayList<>(plan.notices()));
+		summary.setEnvironmentNames(new ArrayList<>(plan.environment().keySet()));
+		summary.setSecretNames(new ArrayList<>(plan.secrets().stream().map(binding -> binding.variable()).toList()));
+		return summary;
+	}
+
+	/**
+	 * Where the briefing sits in a command line, whatever its length: among the arguments
+	 * the delivery appended, those that carry its text rather than a pointer to its file.
+	 */
+	static java.util.Set<Integer> briefingArguments(List<String> launched, ContextDelivery delivery,
+			String briefing) {
+		var positions = new java.util.HashSet<Integer>();
+		if (briefing == null || briefing.isEmpty()) {
+			return positions;
+		}
+		var quoted = ContextDelivery.tomlString(briefing);
+		for (var i = launched.size() - delivery.arguments().size(); i < launched.size(); i++) {
+			var argument = launched.get(i);
+			if (argument.contains(briefing) || argument.contains(quoted)) {
+				positions.add(i);
+			}
+		}
+		return positions;
+	}
+
+	/**
+	 * A digest of a profile as saved, for telling whether it has changed since a launch.
+	 *
+	 * @param profile the profile
+	 * @return its digest
+	 */
+	public static String digest(Profile profile) {
+		return LaunchSummary.digest(Json.toJson(profile));
 	}
 
 	/**

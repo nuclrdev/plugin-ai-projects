@@ -442,8 +442,11 @@ public final class TerminalAgentWindow implements AgentWindow {
 			SwingUtilities.invokeLater(() -> handleStartFailure("Could not start the agent: " + e.getMessage()));
 			return;
 		}
-		SwingUtilities.invokeLater(
-				() -> attach(started, launch.command(), workingDirectory.toString(), launch.notice(), launch.name()));
+		SwingUtilities.invokeLater(() -> {
+			// Saved with the session by attach, which records the rest of the launch.
+			context.session().setLaunch(launch.summaryFor(workingDirectory, null));
+			attach(started, launch.command(), workingDirectory.toString(), launch.notice(), launch.name());
+		});
 	}
 
 	private void attach(PtyProcess started, List<String> command, String workingDirectory, String launchNotice,

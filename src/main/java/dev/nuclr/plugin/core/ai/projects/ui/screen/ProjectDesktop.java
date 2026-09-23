@@ -616,6 +616,56 @@ public final class ProjectDesktop extends JPanel
 	}
 
 	@Override
+	public void showContext(String agentId) {
+		var agent = store.project().agent(agentId).orElse(null);
+		if (agent == null) {
+			return;
+		}
+		var places = profilePlaces();
+		new AgentContextDialog(SwingUtilities.getWindowAncestor(this), agent.displayName(),
+				// Read afresh each time: a restart may have written a new launch.
+				() -> contextView(store.session(agentId).getLaunch(), places),
+				file -> {
+					if (!openWithDesktop(java.nio.file.Path.of(file))) {
+						Dialogs.message(this, "Open briefing file", "The briefing is at\n\n" + file);
+					}
+				}).setVisible(true);
+	}
+
+	/**
+	 * What an agent was given, set against its profile as it is now. Off the event thread:
+	 * it reads the briefing file and the profile.
+	 */
+	static AgentContextView contextView(dev.nuclr.plugin.core.ai.projects.runtime.LaunchSummary launch,
+			dev.nuclr.plugin.core.ai.projects.profile.ProfilePlaces places) {
+		if (launch == null) {
+			return AgentContextView.of(null, null, AgentContextView.ProfileNow.UNKNOWN);
+		}
+		String briefing = null;
+		if (launch.getBriefingFile() != null) {
+			try {
+				briefing = Files.readString(java.nio.file.Path.of(launch.getBriefingFile()));
+			} catch (IOException | RuntimeException e) {
+				briefing = null;
+			}
+		}
+		var now = AgentContextView.ProfileNow.UNKNOWN;
+		var ref = dev.nuclr.plugin.core.ai.projects.profile.ProfileRef.parse(launch.getProfileRef()).orElse(null);
+		if (ref != null && launch.getProfileDigest() != null) {
+			try {
+				now = dev.nuclr.plugin.core.ai.projects.agent.AgentLaunch.digest(places.require(ref))
+						.equals(launch.getProfileDigest()) ? AgentContextView.ProfileNow.SAME
+								: AgentContextView.ProfileNow.CHANGED;
+			} catch (java.nio.file.NoSuchFileException e) {
+				now = AgentContextView.ProfileNow.GONE;
+			} catch (IOException | RuntimeException e) {
+				now = AgentContextView.ProfileNow.UNKNOWN;
+			}
+		}
+		return AgentContextView.of(launch, briefing, now);
+	}
+
+	@Override
 	public void copyOutput(String agentId) {
 		var frame = frames.get(agentId);
 		if (frame == null) {

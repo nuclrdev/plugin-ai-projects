@@ -82,6 +82,12 @@ public class SessionRecord {
 	 */
 	private String access;
 
+	/**
+	 * What the last launch was given - its profile, its briefing, what was not applied -
+	 * for the agent window's Context view. {@code null} until an agent is started.
+	 */
+	private LaunchSummary launch;
+
 	/** Creates an empty record. */
 	public SessionRecord() {}
 
