@@ -199,4 +199,137 @@ class ComposerTransferTest {
 		assertEquals(" world", clipboard.getData(DataFlavor.stringFlavor));
 		assertEquals("hello", input.getText());
 	}
+
+	@Test
+	void thirtyNineLinesGoIntoTheBoxAndFortyAreAttached() {
+		var almost = "l\n".repeat(Attachments.LONG_PASTE_LINES - 1);
+
+		assertTrue(paste(new StringSelection(almost)));
+		assertEquals(almost, input.getText());
+		assertTrue(longTexts.isEmpty());
+
+		input.setText("");
+		var enough = "l\n".repeat(Attachments.LONG_PASTE_LINES);
+		assertTrue(paste(new StringSelection(enough)));
+		assertEquals("", input.getText());
+		assertEquals(List.of(enough), longTexts);
+	}
+
+	@Test
+	void oneVeryLongLineIsAttachedToo() {
+		var line = "x".repeat(Attachments.LONG_PASTE_CHARS);
+
+		assertTrue(paste(new StringSelection(line)));
+
+		assertEquals("", input.getText());
+		assertEquals(List.of(line), longTexts);
+	}
+
+	@Test
+	void aLongPasteIsJudgedWithItsLineBreaksAlreadyMadePlain() {
+		// Notepad's CRLF would count double against the length if it were judged raw.
+		var log = "line\r\n".repeat(Attachments.LONG_PASTE_LINES);
+
+		assertTrue(paste(new StringSelection(log)));
+
+		assertEquals(List.of("line\n".repeat(Attachments.LONG_PASTE_LINES)), longTexts);
+	}
+
+	@Test
+	void oldStyleCarriageReturnsBecomeLineBreaks() {
+		assertTrue(paste(new StringSelection("one\rtwo\r\nthree")));
+
+		assertEquals("one\ntwo\nthree", input.getText());
+	}
+
+	@Test
+	void aPasteReplacesWhatIsSelected() {
+		input.setText("replace THIS here");
+		input.select(8, 12);
+
+		assertTrue(paste(new StringSelection("that")));
+
+		assertEquals("replace that here", input.getText());
+	}
+
+	@Test
+	void anEmptyPasteChangesNothing() {
+		input.setText("kept");
+
+		assertFalse(paste(new StringSelection("")));
+
+		assertEquals("kept", input.getText());
+		assertTrue(longTexts.isEmpty());
+	}
+
+	@Test
+	void severalFilesArriveTogetherInTheirOrderAndAnythingElseInTheListIsIgnored() {
+		var first = new File("C:/work/a.png");
+		var second = new File("C:/work/b.txt");
+
+		assertTrue(paste(new Offer(DataFlavor.javaFileListFlavor, List.of(first, "not a file", second))));
+
+		assertEquals(List.of(first, second), files);
+	}
+
+	@Test
+	void aFileManagersUriWithASpaceIsDecodedIntoTheFile() throws Exception {
+		var uris = new DataFlavor("text/uri-list;class=java.lang.String");
+		var file = new File(System.getProperty("java.io.tmpdir"), "my shot.png").getAbsoluteFile();
+		assertTrue(file.toURI().toString().contains("%20"), "the URI does not encode the space");
+
+		assertTrue(paste(new Offer(uris, file.toURI() + "\n")));
+
+		assertEquals(List.of(file), files);
+	}
+
+	@Test
+	void aUriListWithNoLocalFilesIsNotTakenAsFiles() throws Exception {
+		var uris = new DataFlavor("text/uri-list;class=java.lang.String");
+
+		// Nothing to hand over, and no text either: the paste is refused, not half-done.
+		assertFalse(paste(new Offer(uris, "https://example.com/a.png\n")));
+
+		assertTrue(files.isEmpty());
+		assertEquals("", input.getText());
+	}
+
+	@Test
+	void aBoxThatIsDisabledTakesNothing() {
+		input.setEnabled(false);
+
+		assertFalse(paste(new StringSelection("hello")));
+		assertFalse(transfer.canImport(input, new DataFlavor[] { DataFlavor.imageFlavor }));
+	}
+
+	@Test
+	void textIsOnlyEverCopiedOutOfTheBoxAndNeverMovedOutOfAReadOnlyOne() {
+		assertEquals(TransferHandler.COPY_OR_MOVE, transfer.getSourceActions(input));
+		input.setEditable(false);
+		assertEquals(TransferHandler.COPY, transfer.getSourceActions(input));
+		// The panels round the box accept drops but give nothing away.
+		assertEquals(TransferHandler.NONE, transfer.getSourceActions(new javax.swing.JPanel()));
+	}
+
+	@Test
+	void nothingIsCopiedWhenNothingIsSelected() throws Exception {
+		var clipboard = new Clipboard("test");
+		clipboard.setContents(new StringSelection("before"), null);
+		input.setText("hello");
+		input.select(2, 2);
+
+		transfer.exportToClipboard(input, clipboard, TransferHandler.COPY);
+
+		assertEquals("before", clipboard.getData(DataFlavor.stringFlavor));
+	}
+
+	@Test
+	void theFlavorsThatCountAreRecognisedWhereverTheyAreInTheList() throws Exception {
+		assertTrue(ComposerTransfer.importable(new DataFlavor[] { DataFlavor.allHtmlFlavor, DataFlavor.stringFlavor }));
+		assertTrue(ComposerTransfer.importable(
+				new DataFlavor[] { new DataFlavor("text/uri-list;class=java.lang.String") }));
+		assertFalse(ComposerTransfer.importable(new DataFlavor[0]));
+		assertTrue(ComposerTransfer.hasPlainText(new Offer(plainText(), "x")));
+		assertFalse(ComposerTransfer.hasPlainText(new Offer(DataFlavor.imageFlavor, new BufferedImage(1, 1, 1))));
+	}
 }

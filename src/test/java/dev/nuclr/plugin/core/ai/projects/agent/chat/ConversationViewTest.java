@@ -487,4 +487,178 @@ class ConversationViewTest {
 		onEdt(() -> view.setWorking(false));
 		onEdt(() -> assertFalse(view.promptPulsing(), "still pulsing after the turn ended"));
 	}
+
+	// ------------------------------------------------------------------ what was sent with a prompt
+
+	@org.junit.jupiter.api.io.TempDir
+	java.nio.file.Path runtime;
+
+	private AgentEvent.Attachment sentPicture(int width, int height) throws java.io.IOException {
+		return Attachments.image(runtime, new java.awt.image.BufferedImage(width, height,
+				java.awt.image.BufferedImage.TYPE_INT_RGB), "Pasted image 1");
+	}
+
+	/** Every label under a component, in order. */
+	private static java.util.List<JLabel> labels(Container container) {
+		var found = new java.util.ArrayList<JLabel>();
+		for (var child : container.getComponents()) {
+			if (child instanceof JLabel label) {
+				found.add(label);
+			}
+			if (child instanceof Container nested) {
+				found.addAll(labels(nested));
+			}
+		}
+		return found;
+	}
+
+	/** Every text area under a component, in order. */
+	private static java.util.List<JTextArea> textAreas(Container container) {
+		var found = new java.util.ArrayList<JTextArea>();
+		for (var child : container.getComponents()) {
+			if (child instanceof JTextArea area) {
+				found.add(area);
+			}
+			if (child instanceof Container nested) {
+				found.addAll(textAreas(nested));
+			}
+		}
+		return found;
+	}
+
+	private static void leftClick(JLabel label) {
+		var click = new java.awt.event.MouseEvent(label, java.awt.event.MouseEvent.MOUSE_CLICKED,
+				System.currentTimeMillis(), java.awt.event.InputEvent.BUTTON1_DOWN_MASK, 3, 3, 1, false,
+				java.awt.event.MouseEvent.BUTTON1);
+		for (var listener : label.getMouseListeners()) {
+			listener.mouseClicked(click);
+		}
+	}
+
+	@Test
+	void aSentPictureIsAThumbnailThatFitsItsBox() throws Exception {
+		var view = new ConversationView((requestId, option) -> {
+		});
+		var picture = sentPicture(1200, 400);
+
+		onEdt(() -> view.accept(new AgentEvent.UserMessage("look", java.util.List.of(picture)), true));
+
+		var thumbnail = labels(blocks(view)).stream().filter(label -> label.getIcon() instanceof javax.swing.ImageIcon)
+				.findFirst().orElseThrow(() -> new AssertionError("no thumbnail"));
+		assertEquals(240, thumbnail.getIcon().getIconWidth());
+		assertEquals(80, thumbnail.getIcon().getIconHeight());
+		assertTrue(thumbnail.getToolTipText().contains("1200x400"), thumbnail.getToolTipText());
+		var menu = thumbnail.getComponentPopupMenu();
+		assertNotNull(menu, "no menu on the thumbnail");
+		assertEquals("Copy to clipboard", ((javax.swing.JMenuItem) menu.getComponent(1)).getText());
+	}
+
+	@Test
+	void aSentPictureWhoseFileHasGoneSaysSoInsteadOfVanishing() throws Exception {
+		var view = new ConversationView((requestId, option) -> {
+		});
+		var picture = sentPicture(20, 20);
+		java.nio.file.Files.delete(picture.file());
+
+		onEdt(() -> view.accept(new AgentEvent.UserMessage("look", java.util.List.of(picture)), true));
+
+		assertTrue(labels(blocks(view)).stream().anyMatch(label -> "Pasted image 1 (the file is gone)".equals(label.getText())));
+	}
+
+	@Test
+	void aSentPasteIsShownInPlaceWhenClickedAndHiddenAgain() throws Exception {
+		var view = new ConversationView((requestId, option) -> {
+		});
+		var paste = Attachments.text(runtime, "ERROR boom\nat Foo.java:1\n", "Pasted text 1");
+
+		onEdt(() -> view.accept(new AgentEvent.UserMessage("why?", java.util.List.of(paste)), true));
+
+		var chip = labels(blocks(view)).stream().filter(label -> label.getText().startsWith("Pasted text 1"))
+				.findFirst().orElseThrow(() -> new AssertionError("no chip for the paste"));
+		assertTrue(chip.getText().contains("2 lines"), chip.getText());
+		assertEquals(1, textAreas(blocks(view)).size(), "only the words, until the paste is opened");
+
+		onEdt(() -> leftClick(chip));
+		var shown = textAreas(blocks(view));
+		assertEquals(2, shown.size());
+		assertEquals("ERROR boom\nat Foo.java:1", shown.get(1).getText());
+		assertEquals(java.awt.Font.MONOSPACED, shown.get(1).getFont().getFamily());
+
+		onEdt(() -> leftClick(chip));
+		assertEquals(1, textAreas(blocks(view)).size(), "clicked again, the paste stayed open");
+	}
+
+	@Test
+	void copyingAPromptCopiesItAsTheAgentGotIt() throws Exception {
+		var view = new ConversationView((requestId, option) -> {
+		});
+		var clipboard = clipboardFor(view);
+		var paste = Attachments.text(runtime, "a log\n", "Pasted text 1");
+
+		var picture = sentPicture(10, 10);
+
+		onEdt(() -> view.accept(new AgentEvent.UserMessage("why?", java.util.List.of(picture, paste)), true));
+
+		var block = (Container) blocks(view).getComponent(0);
+		var copy = (JButton) ((Container) block.getComponent(1)).getComponent(0);
+		onEdt(copy::doClick);
+		assertEquals("<pasted_text name=\"Pasted text 1\">\na log\n</pasted_text>\n\nwhy?",
+				clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
+	}
+
+	@Test
+	void aPromptOfPicturesAloneCopiesAsWhatItCarried() throws Exception {
+		var view = new ConversationView((requestId, option) -> {
+		});
+		var clipboard = clipboardFor(view);
+
+		var picture = sentPicture(10, 10);
+
+		onEdt(() -> view.accept(new AgentEvent.UserMessage("", java.util.List.of(picture)), true));
+
+		var block = (Container) blocks(view).getComponent(0);
+		var copy = (JButton) ((Container) block.getComponent(1)).getComponent(0);
+		onEdt(copy::doClick);
+		assertEquals("[1 image]", clipboard.getData(java.awt.datatransfer.DataFlavor.stringFlavor));
+	}
+
+	@Test
+	void thePinnedBarNamesWhatAPromptWithoutWordsCarried() throws Exception {
+		var view = new ConversationView((requestId, option) -> {
+		});
+		var first = sentPicture(10, 10);
+		var second = Attachments.image(runtime, new java.awt.image.BufferedImage(11, 10,
+				java.awt.image.BufferedImage.TYPE_INT_RGB), "Pasted image 2");
+		onEdt(() -> {
+			view.setSize(400, 200);
+			view.accept(new AgentEvent.UserMessage("", java.util.List.of(first, second)), true);
+			for (var index = 0; index < 40; index++) {
+				view.accept(new AgentEvent.Notice("Working on step " + index, false), true);
+			}
+			layOut(view);
+			var viewport = ((JScrollPane) view.getComponent(0)).getViewport();
+			viewport.setViewPosition(new java.awt.Point(0, viewport.getView().getHeight() - viewport.getHeight()));
+			view.updatePin();
+		});
+
+		onEdt(() -> assertTrue(view.promptPinned()));
+		var pin = (Container) ((JScrollPane) view.getComponent(0)).getColumnHeader().getView();
+		assertTrue(labels(pin).stream().anyMatch(label -> "[2 images]".equals(label.getText())),
+				labels(pin).stream().map(JLabel::getText).toList().toString());
+	}
+
+	@Test
+	void theCaptionsOfWhatWasSentGrowWithTheZoom() throws Exception {
+		var view = new ConversationView((requestId, option) -> {
+		});
+		var paste = Attachments.text(runtime, "a log\n", "Pasted text 1");
+		onEdt(() -> view.accept(new AgentEvent.UserMessage("why?", java.util.List.of(paste)), true));
+		var chip = labels(blocks(view)).stream().filter(label -> label.getText().startsWith("Pasted text 1"))
+				.findFirst().orElseThrow();
+		var before = chip.getFont().getSize2D();
+
+		onEdt(() -> view.zoom(3));
+
+		assertTrue(chip.getFont().getSize2D() > before, before + " then " + chip.getFont().getSize2D());
+	}
 }
