@@ -72,7 +72,18 @@ class ChatAgentWindowTest {
 						java.nio.file.Files.writeString(record, line + "\n", StandardCharsets.UTF_8,
 								java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
 					}
-					turn(in, sessionId, line.contains("draw"));
+					if (line.contains("vanish")) {
+						// Cut off where the reply looks like the start of a suggestion.
+						say("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + sessionId + "\"}");
+						say("{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"v1\"}}}");
+						say("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":"
+								+ "{\"type\":\"text_delta\",\"text\":\"Bye <nuclr-\"}}}");
+						System.exit(0);
+					} else if (line.contains("suggest")) {
+						suggestingTurn(sessionId);
+					} else {
+						turn(in, sessionId, line.contains("draw"));
+					}
 				}
 			}
 		}
@@ -102,6 +113,19 @@ class ChatAgentWindowTest {
 				say("{\"type\":\"assistant\",\"message\":{\"id\":\"m2\",\"content\":[{\"type\":\"image\","
 						+ "\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"" + PIXEL + "\"}}]}}");
 			}
+			say("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"total_cost_usd\":0.01,\"duration_ms\":5}");
+		}
+
+		/** A reply that ends with a suggested next message, its tag cut across two pieces. */
+		private static void suggestingTurn(String sessionId) {
+			say("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + sessionId + "\",\"model\":\"fake\"}");
+			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"s1\"}}}");
+			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\","
+					+ "\"text\":\"Done.\\n\\n<nuclr-\"}}}");
+			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\","
+					+ "\"text\":\"next>Commit it</nuclr-next>\"}}}");
+			say("{\"type\":\"assistant\",\"message\":{\"id\":\"s1\",\"content\":[{\"type\":\"text\","
+					+ "\"text\":\"Done.\\n\\n<nuclr-next>Commit it</nuclr-next>\"}]}}");
 			say("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"total_cost_usd\":0.01,\"duration_ms\":5}");
 		}
 
@@ -214,6 +238,63 @@ class ChatAgentWindowTest {
 		onEdt(() -> button(reopened.component(), "Deny").doClick());
 		waitFor(() -> reopened.outputForCopy().contains("[failed] denied"));
 		assertEquals("resumed-fake-1", store.session("a1").getConversationId());
+		onEdt(reopened::close);
+	}
+
+	@Test
+	void theNextMessageTheAgentSuggestsIsOfferedAndTabTakesIt() throws Exception {
+
+		var window = window();
+		onEdt(() -> window.sendInstruction("suggest something"));
+		waitFor(() -> window.outputForCopy().endsWith("---"), window);
+
+		var text = onEdt(window::outputForCopy);
+		assertTrue(text.contains("Done."), text);
+		assertFalse(text.contains("nuclr-next") || text.contains("Commit it"), "the tag never reaches the page: " + text);
+		assertTrue(java.nio.file.Files.readString(store.paths().briefingFile("a1")).contains(SuggestedPrompt.OPEN),
+				"the agent was told to suggest");
+		var input = onEdt(() -> composer(window.component()));
+		assertEquals("Commit it   (Tab)", onEdt(() -> placeholder(input)));
+		// Through the popup's binding, as the key goes: with no list up it falls through to the suggestion.
+		onEdt(() -> press(input, "nuclr.commands.complete"));
+		assertEquals("Commit it", onEdt(() -> input.getText()));
+		onEdt(() -> input.setText(""));
+		assertTrue(onEdt(() -> placeholder(input)).startsWith("Message"),
+				"taken, it is not offered again");
+
+		onEdt(window::stop);
+		waitFor(() -> window.status() == AgentStatus.STOPPED);
+		onEdt(window::close);
+
+		// A rebuilt window offers the suggestion the user had not answered.
+		var reopened = window();
+		var again = onEdt(() -> composer(reopened.component()));
+		assertEquals("Commit it   (Tab)", onEdt(() -> placeholder(again)));
+
+		// A new conversation withdraws it, for good: the next window does not offer it either.
+		var newConversation = ChatAgentWindow.class.getDeclaredMethod("newConversation");
+		newConversation.setAccessible(true);
+		onEdt(() -> newConversation.invoke(reopened));
+		assertTrue(onEdt(() -> placeholder(again)).startsWith("Message"));
+		onEdt(reopened::close);
+		var afresh = window();
+		var box = onEdt(() -> composer(afresh.component()));
+		assertTrue(onEdt(() -> placeholder(box)).startsWith("Message"));
+		onEdt(afresh::close);
+	}
+
+	@Test
+	void aReplyCutOffInWhatLookedLikeASuggestionKeepsItsWords() throws Exception {
+
+		var window = window();
+		onEdt(() -> window.sendInstruction("vanish"));
+		waitFor(() -> !window.status().isLive(), window);
+
+		var text = onEdt(window::outputForCopy);
+		assertTrue(text.contains("Bye <nuclr-"), text);
+		onEdt(window::close);
+		var reopened = window();
+		assertTrue(onEdt(reopened::outputForCopy).contains("Bye <nuclr-"), "kept in the transcript too");
 		onEdt(reopened::close);
 	}
 
@@ -620,6 +701,11 @@ class ChatAgentWindowTest {
 			button(window.component(), "Send").doClick();
 			return null;
 		});
+	}
+
+	/** The grey text the empty composer shows. */
+	private static String placeholder(javax.swing.JTextArea composer) {
+		return ((PlaceholderTextArea) composer).placeholder();
 	}
 
 	private static javax.swing.JTextArea composer(Component component) {

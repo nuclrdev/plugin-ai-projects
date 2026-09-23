@@ -127,6 +127,21 @@ public record AgentLaunch(List<String> command, List<String> launched, Map<Strin
 			Map<String, String> commanderVariables, Map<String, String> baseEnvironment, Path briefingFile,
 			Path runtimeDirectory, String home, GitSources git, Function<String, Optional<Path>> resolver,
 			Adapter adapter) throws Refused {
+		return fromProfile(context, ref, workingDirectory, commanderVariables, baseEnvironment, briefingFile,
+				runtimeDirectory, home, git, resolver, adapter, "");
+	}
+
+	/**
+	 * Prepare a launch from a profile, with a section of the window's own after the
+	 * profile's briefing - what a conversation window needs the agent to know about it.
+	 *
+	 * @param windowBriefing Markdown added to the briefing, or empty for none
+	 * @see #fromProfile(AgentWindowContext, ProfileRef, Path, Map, Map, Path, Path, String, GitSources, Function, Adapter)
+	 */
+	public static AgentLaunch fromProfile(AgentWindowContext context, ProfileRef ref, Path workingDirectory,
+			Map<String, String> commanderVariables, Map<String, String> baseEnvironment, Path briefingFile,
+			Path runtimeDirectory, String home, GitSources git, Function<String, Optional<Path>> resolver,
+			Adapter adapter, String windowBriefing) throws Refused {
 
 		final Profile profile;
 		try {
@@ -166,7 +181,8 @@ public record AgentLaunch(List<String> command, List<String> launched, Map<Strin
 		var launched = new ArrayList<>(command);
 		launched.set(0, resolved.get().toString());
 
-		var delivery = deliverBriefing(plan.briefing(), briefingFile, executable, resolved.get(), launched, environment);
+		var briefing = joined(plan.briefing(), windowBriefing);
+		var delivery = deliverBriefing(briefing, briefingFile, executable, resolved.get(), launched, environment);
 
 		try {
 			plan.writeFiles();
@@ -180,23 +196,61 @@ public record AgentLaunch(List<String> command, List<String> launched, Map<Strin
 		}
 		return new AgentLaunch(command, launched, environment, profileNotice(plan, delivery),
 				plan.provider().displayName(), blankToNull(profile.getHarness().getModel()),
-				blankToNull(profile.getHarness().getEffort()), summary(ref, profile, plan, delivery, briefingFile, launched));
+				blankToNull(profile.getHarness().getEffort()),
+				summary(ref, profile, plan, briefing, delivery, briefingFile, launched));
+	}
+
+	/**
+	 * Hand a launch without a profile the window's own briefing, where its CLI can take one.
+	 * Off the event thread.
+	 *
+	 * @param windowBriefing     what the window needs the agent to know; empty for nothing
+	 * @param briefingFile       where it is written
+	 * @param executable         the executable as configured, e.g. {@code claude}
+	 * @param resolvedExecutable where it was found
+	 * @param launched           the command line, which the delivery is appended to
+	 * @param environment        the process environment, which the delivery may add to
+	 * @return what the launch was given, for the Context view; {@code null} when nothing was
+	 *         delivered, so the view says the CLI was given nothing
+	 * @throws Refused when the briefing cannot be written
+	 */
+	public static LaunchSummary deliverWithoutProfile(String windowBriefing, Path briefingFile, String executable,
+			Path resolvedExecutable, List<String> launched, Map<String, String> environment) throws Refused {
+		var delivery = deliverBriefing(windowBriefing, briefingFile, executable, resolvedExecutable, launched,
+				environment);
+		if (!delivery.delivered()) {
+			return null;
+		}
+		var summary = new LaunchSummary();
+		summary.setCommandLine(LaunchSummary.shortened(launched, briefingArguments(launched, delivery, windowBriefing)));
+		summary.setBriefingFile(briefingFile.toString());
+		summary.setBriefingDigest(LaunchSummary.digest(windowBriefing));
+		summary.setBriefingDelivery(delivery.description());
+		return summary;
+	}
+
+	/** A profile's briefing and a window's, as one; either may be empty. */
+	private static String joined(String profileBriefing, String windowBriefing) {
+		if (windowBriefing == null || windowBriefing.isBlank()) {
+			return profileBriefing;
+		}
+		return profileBriefing.isBlank() ? windowBriefing : profileBriefing.stripTrailing() + "\n\n" + windowBriefing;
 	}
 
 	/** What the profile gave a launch; completed with the command once the window has run it. */
-	private static LaunchSummary summary(ProfileRef ref, Profile profile, LaunchPlan plan, ContextDelivery delivery,
-			Path briefingFile, List<String> launched) {
+	private static LaunchSummary summary(ProfileRef ref, Profile profile, LaunchPlan plan, String briefing,
+			ContextDelivery delivery, Path briefingFile, List<String> launched) {
 		var summary = new LaunchSummary();
-		summary.setCommandLine(LaunchSummary.shortened(launched, briefingArguments(launched, delivery, plan.briefing())));
+		summary.setCommandLine(LaunchSummary.shortened(launched, briefingArguments(launched, delivery, briefing)));
 		summary.setProfileName(profile.displayName());
 		summary.setProfileRef(ref.toString());
 		summary.setProfileDigest(digest(profile));
 		var mode = AccessMode.byId(profile.getHarness().getAccessMode()).orElse(null);
 		summary.setAccess(mode != null ? mode.label()
 				: plan.provider().connector().defaultAccessMode().label() + " (the default)");
-		if (!plan.briefing().isEmpty()) {
+		if (!briefing.isEmpty()) {
 			summary.setBriefingFile(briefingFile.toString());
-			summary.setBriefingDigest(LaunchSummary.digest(plan.briefing()));
+			summary.setBriefingDigest(LaunchSummary.digest(briefing));
 			summary.setBriefingDelivery(delivery.delivered() ? delivery.description() : null);
 		}
 		summary.setNotApplied(new ArrayList<>(plan.notices()));
@@ -253,6 +307,14 @@ public record AgentLaunch(List<String> command, List<String> launched, Map<Strin
 					+ ". Not starting an agent without its instructions.");
 		}
 		var delivery = ContextDelivery.plan(executable, resolvedExecutable, briefingFile, briefingText, environment);
+		try {
+			for (var file : delivery.files().entrySet()) {
+				Files.writeString(file.getKey(), file.getValue(), StandardCharsets.UTF_8);
+			}
+		} catch (IOException | RuntimeException e) {
+			throw new Refused("Could not write what hands the agent its briefing: " + e.getMessage()
+					+ ". Not starting an agent without its instructions.");
+		}
 		launched.addAll(delivery.arguments());
 		environment.putAll(delivery.environment());
 		return delivery;

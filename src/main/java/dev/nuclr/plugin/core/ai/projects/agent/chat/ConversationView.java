@@ -239,6 +239,9 @@ final class ConversationView extends JPanel {
 			// conversation: the window keeps it, and the page says nothing about it.
 			case AgentEvent.CommandsAvailable ignored -> {
 			}
+			// Offered in the composer, like the commands.
+			case AgentEvent.Suggestion ignored -> {
+			}
 			case AgentEvent.Image picture -> {
 				// Only the stored shape can be shown. The window writes an inline one to disk
 				// and hands it back, so one arriving here with only its bytes was never stored
@@ -1819,7 +1822,7 @@ final class ConversationView extends JPanel {
 		var tools = new java.util.HashSet<String>();
 		for (var event : events) {
 			// Progress is not history, and a call named again is the same call.
-			if (event instanceof AgentEvent.ToolOutput
+			if (event instanceof AgentEvent.ToolOutput || event instanceof AgentEvent.Suggestion
 					|| event instanceof AgentEvent.ToolCall call && call.id() != null && !tools.add(call.id())) {
 				continue;
 			}
@@ -1847,6 +1850,9 @@ final class ConversationView extends JPanel {
 				case AgentEvent.PermissionResolved resolved -> text.append(resolved.allowed() ? "[allowed" : "[denied")
 						.append(resolved.label() == null ? "" : ": " + resolved.label()).append(']');
 				case AgentEvent.ToolOutput progress -> {
+					// skipped above
+				}
+				case AgentEvent.Suggestion suggestion -> {
 					// skipped above
 				}
 				case AgentEvent.TurnEnded turn -> text.append(turn.error() ? "--- turn failed: " + turn.message() : "---");

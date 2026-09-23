@@ -23,8 +23,22 @@ class ContextDeliveryTest {
 
 		var plan = ContextDelivery.plan("claude", Path.of("/bin/claude.exe"), FILE, TEXT, Map.of());
 
-		assertEquals(List.of("--append-system-prompt", TEXT), plan.arguments());
+		var settings = FILE.resolveSibling("a1.briefing.md.claude-settings.json");
+		assertEquals(List.of("--append-system-prompt", TEXT, "--settings", settings.toString()), plan.arguments());
 		assertTrue(plan.delivered());
+	}
+
+	@Test
+	void claudeIsGivenTheBriefingAgainByAHookWhenItResumes() {
+
+		// Claude Code drops --append-system-prompt on --resume; a SessionStart hook prints the file instead.
+		var file = Path.of("C:\\work\\it's here\\a1.briefing.md");
+		var plan = ContextDelivery.plan("claude", Path.of("/bin/claude.exe"), file, TEXT, Map.of());
+
+		var settings = plan.files().get(Path.of(plan.arguments().get(3)));
+		assertEquals("{\"hooks\":{\"SessionStart\":[{\"matcher\":\"resume\",\"hooks\":[{\"type\":\"command\","
+				+ "\"command\":\"cat 'C:/work/it'\\\\''s here/a1.briefing.md'\"}]}]}}\n", settings);
+		assertTrue(plan.description().contains("SessionStart hook"), plan.description());
 	}
 
 	@Test

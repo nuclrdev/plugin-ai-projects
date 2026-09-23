@@ -144,7 +144,8 @@ final class AgentContextView {
 	}
 
 	private static Entry briefingEntry(LaunchSummary launch, String briefing) {
-		if (launch.getProfileName() == null) {
+		// A chat window briefs even an agent without a profile, on how to use the window.
+		if (launch.getProfileName() == null && launch.getBriefingFile() == null) {
 			return new Entry("Briefing", "Started without a profile, so Nuclr gave " + launch.getCli()
 					+ " nothing of its own. It works from its own settings and the files it reads itself -"
 					+ " CLAUDE.md, AGENTS.md and the like.", false);

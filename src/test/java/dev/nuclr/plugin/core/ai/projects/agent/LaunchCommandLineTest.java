@@ -35,7 +35,8 @@ class LaunchCommandLineTest {
 		var recorded = recorded("claude");
 
 		assertEquals(List.of("C:/bin/claude.exe", "--verbose", "--append-system-prompt",
-				"<" + BRIEFING.length() + " characters - the briefing, passed inline>"), recorded);
+				"<" + BRIEFING.length() + " characters - the briefing, passed inline>", "--settings",
+				FILE.resolveSibling("a1.briefing.md.claude-settings.json").toString()), recorded);
 	}
 
 	@Test

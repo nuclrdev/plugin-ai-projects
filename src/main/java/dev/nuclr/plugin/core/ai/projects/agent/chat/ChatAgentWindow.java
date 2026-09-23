@@ -89,7 +89,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final ConversationView view = new ConversationView(this::answerPermission);
 	private final JLabel statusLabel = new JLabel();
 	private final JButton newButton = Glyphs.decorate(new JButton(), Glyphs.NEW, "New conversation");
-	private final JTextArea input = new JTextArea(3, 40);
+	private final PlaceholderTextArea input = new PlaceholderTextArea(3, 40);
 	/** The pictures and long pastes the next message carries, above the box. */
 	private final AttachmentStrip attachmentStrip = new AttachmentStrip(this::thumbnail, this::insertAsText, this::hint);
 	/** A line under the box saying what just happened to a paste or a drop. */
@@ -104,6 +104,10 @@ public final class ChatAgentWindow implements AgentWindow {
 	private final List<AgentEvent> history = new ArrayList<>();
 	private final List<AgentEvent> unsaved = new ArrayList<>();
 	private final PromptRecall recall = new PromptRecall(this::sentPrompts);
+	/** Reads the suggested next message out of the agent's reply as it streams. */
+	private final SuggestedPrompt suggestions = new SuggestedPrompt();
+	/** The message offered in the empty box, which Tab takes; {@code null} when none is. */
+	private String suggestion;
 	private final Timer saveTimer;
 
 	private AgentStatus status = AgentStatus.STOPPED;
@@ -132,6 +136,10 @@ public final class ChatAgentWindow implements AgentWindow {
 	/** How many pictures and pastes this window has named, so each gets a name of its own. */
 	private int pastedImages;
 	private int pastedTexts;
+
+	/** What the empty box says when no next message is suggested. */
+	private static final String PLACEHOLDER =
+			"Message the agent - Enter sends, Shift+Enter for a new line; paste or drop pictures and files";
 
 	/** How long a hint under the box stays. */
 	private static final int HINT_MS = 6_000;
@@ -208,8 +216,7 @@ public final class ChatAgentWindow implements AgentWindow {
 
 		input.setLineWrap(true);
 		input.setWrapStyleWord(true);
-		input.putClientProperty("JTextField.placeholderText",
-				"Message the agent - Enter sends, Shift+Enter for a new line; paste or drop pictures and files");
+		input.setPlaceholder(PLACEHOLDER);
 		TextContextMenu.install(input);
 		addComposerMenuItems();
 		input.getInputMap().put(PASTE_PLAIN, "nuclr-paste-plain");
@@ -234,8 +241,9 @@ public final class ChatAgentWindow implements AgentWindow {
 		});
 		recallOnArrow(KeyEvent.VK_UP, "nuclr-recall-older", true);
 		recallOnArrow(KeyEvent.VK_DOWN, "nuclr-recall-newer", false);
+		acceptSuggestionOnTab();
 		buildCommands();
-		// After the Enter and arrow bindings above: the popup falls through to them when no list is up.
+		// After the Enter, arrow and Tab bindings above: the popup falls through to them when no list is up.
 		commandPopup = new CommandPopup(input, this::availableCommands, command -> command.run().accept(""));
 		input.addFocusListener(new java.awt.event.FocusAdapter() {
 			@Override
@@ -339,6 +347,79 @@ public final class ChatAgentWindow implements AgentWindow {
 		});
 	}
 
+	/**
+	 * Bind Tab to take the suggested message into the empty box, falling back to what Tab
+	 * did before - a tab character - when there is none or the box is not empty.
+	 */
+	private void acceptSuggestionOnTab() {
+		var stroke = KeyStroke.getKeyStroke(KeyEvent.VK_TAB, 0);
+		var inputMap = input.getInputMap(JComponent.WHEN_FOCUSED);
+		var previousId = inputMap.get(stroke);
+		var previous = previousId == null ? null : input.getActionMap().get(previousId);
+		inputMap.put(stroke, "nuclr-accept-suggestion");
+		input.getActionMap().put("nuclr-accept-suggestion", new AbstractAction() {
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public void actionPerformed(ActionEvent event) {
+				var offered = suggestion;
+				if (offered != null && input.getDocument().getLength() == 0) {
+					input.setText(offered);
+					input.setCaretPosition(offered.length());
+				} else if (previous != null) {
+					previous.actionPerformed(event);
+				}
+			}
+		});
+		// Once the user types, the box is theirs: the suggestion does not come back when it empties.
+		input.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+			@Override
+			public void insertUpdate(javax.swing.event.DocumentEvent event) {
+				withdrawSuggestion();
+			}
+
+			@Override
+			public void removeUpdate(javax.swing.event.DocumentEvent event) {
+			}
+
+			@Override
+			public void changedUpdate(javax.swing.event.DocumentEvent event) {
+			}
+		});
+	}
+
+	/** Offer a next message in the empty box, greyed, for Tab to take. */
+	private void offerSuggestion(String text) {
+		suggestion = text;
+		input.setPlaceholder(text + "   (Tab)");
+	}
+
+	/** Stop offering a next message. */
+	private void withdrawSuggestion() {
+		if (suggestion == null) {
+			return;
+		}
+		suggestion = null;
+		input.setPlaceholder(PLACEHOLDER);
+	}
+
+	/** The suggestion made since the user last sent anything, or {@code null}. */
+	private String lastSuggestion() {
+		for (var i = history.size() - 1; i >= 0; i--) {
+			switch (history.get(i)) {
+				case AgentEvent.Suggestion(var text) -> {
+					return text == null || text.isBlank() ? null : text;
+				}
+				case AgentEvent.UserMessage ignored -> {
+					return null;
+				}
+				default -> {
+				}
+			}
+		}
+		return null;
+	}
+
 	/** What the user has sent in this conversation, oldest first - the stored part included. */
 	private List<String> sentPrompts() {
 		var sent = new ArrayList<String>();
@@ -389,6 +470,10 @@ public final class ChatAgentWindow implements AgentWindow {
 			}
 		}
 		view.scrollToEnd();
+		// The agent's last suggestion, when the user has not answered it yet.
+		if (lastSuggestion() instanceof String offered) {
+			offerSuggestion(offered);
+		}
 	}
 
 	/** A record left live by an earlier Commander run cannot be: its process died with that run. */
@@ -467,8 +552,8 @@ public final class ChatAgentWindow implements AgentWindow {
 														+ plan.provider().displayName() + ".");
 									}
 									return backend.command(withAccess(plan.commandLine(), chosenAccess), resumeId);
-								})
-						: withoutProfile(environment, resumeId, resolver, chosenAccess);
+								}, SuggestedPrompt.BRIEFING)
+						: withoutProfile(environment, briefingFile, resumeId, resolver, chosenAccess);
 			} catch (AgentLaunch.Refused e) {
 				SwingUtilities.invokeLater(() -> startFailed(e.getMessage()));
 				return;
@@ -495,7 +580,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	}
 
 	/** The CLI on PATH, with its own settings. Off the event thread. */
-	private AgentLaunch withoutProfile(Map<String, String> environment, String resumeId,
+	private AgentLaunch withoutProfile(Map<String, String> environment, Path briefingFile, String resumeId,
 			java.util.function.Function<String, Optional<Path>> resolver, AccessMode access) throws AgentLaunch.Refused {
 		var command = backend.command(withAccess(backend.defaultCommand(), access), resumeId);
 		var executable = command.getFirst();
@@ -512,11 +597,14 @@ public final class ChatAgentWindow implements AgentWindow {
 		}
 		var launched = new ArrayList<>(command);
 		launched.set(0, resolved.get().toString());
+		// Nothing of a profile's, but what the window itself needs the agent to know.
+		var summary = AgentLaunch.deliverWithoutProfile(SuggestedPrompt.BRIEFING, briefingFile, executable,
+				resolved.get(), launched, environment);
 		var name = backend.provider() == null ? backend.displayName() : backend.provider().displayName();
 		return new AgentLaunch(command, launched, environment, backend.provider() == null ? ""
 				: "Started without a profile: " + name + " uses its own settings"
 						+ (access == null ? "" : ", with " + access.label() + " access chosen here"),
-				name, null, null);
+				name, null, null, summary);
 	}
 
 	/**
@@ -576,6 +664,7 @@ public final class ChatAgentWindow implements AgentWindow {
 		}
 		session = started;
 		turnActive = false;
+		suggestions.reset();
 		// What this session runs as, until it says otherwise itself.
 		view.forgetSessionFacts();
 		view.setLaunchFacts(workingDirectory, launch.model(), launch.effort());
@@ -658,7 +747,27 @@ public final class ChatAgentWindow implements AgentWindow {
 		if (closed || session == null || session != source) {
 			return;
 		}
-		record(event);
+		if (event instanceof AgentEvent.MessageChunk(var text)) {
+			// The suggested next message is taken out of the reply before it is shown or kept.
+			var visible = suggestions.feed(text);
+			if (!visible.isEmpty()) {
+				record(new AgentEvent.MessageChunk(visible));
+			}
+		} else {
+			if (!(event instanceof AgentEvent.ThoughtChunk || event instanceof AgentEvent.ToolOutput)) {
+				// The reply's words are over; what looked like the start of a suggestion was not one.
+				var held = suggestions.flush();
+				if (!held.isEmpty()) {
+					record(new AgentEvent.MessageChunk(held));
+				}
+			}
+			if (event instanceof AgentEvent.TurnEnded turn && suggestions.take() instanceof String next
+					&& !turn.error()) {
+				record(new AgentEvent.Suggestion(next));
+				offerSuggestion(next);
+			}
+			record(event);
+		}
 		switch (event) {
 			case AgentEvent.CommandsAvailable available -> adopt(available);
 			case AgentEvent.SessionStarted started -> {
@@ -708,6 +817,11 @@ public final class ChatAgentWindow implements AgentWindow {
 		session = null;
 		turnActive = false;
 		view.expirePermissions();
+		// A reply cut off where it looked like the start of a suggestion keeps its words.
+		var held = suggestions.flush();
+		if (!held.isEmpty()) {
+			record(new AgentEvent.MessageChunk(held));
+		}
 
 		// A resume that fails does so before the session starts: the conversation is gone
 		// from Claude Code's side. Start afresh, with whatever was already typed, rather
@@ -1182,6 +1296,9 @@ public final class ChatAgentWindow implements AgentWindow {
 		context.session().setConversationId(null);
 		context.host().sessionUpdated(context.agentId());
 		record(new AgentEvent.Notice("New conversation.", false));
+		// Kept, so a rebuilt window does not offer the old conversation's suggestion.
+		record(AgentEvent.Suggestion.NONE);
+		withdrawSuggestion();
 		save();
 		if (status.isLive()) {
 			restart();
@@ -1714,6 +1831,8 @@ public final class ChatAgentWindow implements AgentWindow {
 			record(new AgentEvent.UserMessage(message.text(), message.attachments()));
 			view.scrollToEnd();
 		}
+		withdrawSuggestion();
+		suggestions.take();
 		turnActive = true;
 		clearAttention();
 		setStatus(AgentStatus.RUNNING);
@@ -1900,6 +2019,7 @@ public final class ChatAgentWindow implements AgentWindow {
 	public void clearTranscript() {
 		unsaved.clear();
 		history.clear();
+		withdrawSuggestion();
 		context.transcripts().delete(context.agentId());
 		view.clear();
 	}
@@ -1918,6 +2038,10 @@ public final class ChatAgentWindow implements AgentWindow {
 		session = null;
 		if (running != null) {
 			running.close();
+		}
+		var held = suggestions.flush();
+		if (!held.isEmpty()) {
+			coalesce(unsaved, new AgentEvent.MessageChunk(held));
 		}
 		if (wasLive) {
 			unsaved.add(new AgentEvent.Notice("Session stopped because the window closed.", false));

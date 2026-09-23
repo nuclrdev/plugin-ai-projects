@@ -11,7 +11,8 @@ import java.util.Map;
  * <p>There is no portable way to hand a CLI its instructions, so each agent
  * gets the mechanism its own {@code --help} documents:
  * <ul>
- *   <li><b>Claude Code</b> - {@code --append-system-prompt <text>};</li>
+ *   <li><b>Claude Code</b> - {@code --append-system-prompt <text>}, and again from a
+ *       {@code SessionStart} hook on resume, where Claude Code drops that flag;</li>
  *   <li><b>Pi</b> - {@code --append-system-prompt <file>}, which it reads itself;</li>
  *   <li><b>Codex</b> - {@code -c developer_instructions="..."}, which Codex sends
  *       as a developer message, leaving its single {@code [PROMPT]} to the user;</li>
@@ -34,8 +35,10 @@ import java.util.Map;
  * @param arguments   appended to the command line
  * @param environment added to the process environment
  * @param description one line for the transcript saying how the briefing was delivered
+ * @param files       written before the launch, content by path: what the arguments name
  */
-public record ContextDelivery(List<String> arguments, Map<String, String> environment, String description) {
+public record ContextDelivery(List<String> arguments, Map<String, String> environment, String description,
+		Map<Path, String> files) {
 
 	/** Nothing delivered. */
 	public static final ContextDelivery NONE = new ContextDelivery(List.of(), Map.of(), "");
@@ -50,6 +53,12 @@ public record ContextDelivery(List<String> arguments, Map<String, String> enviro
 	public ContextDelivery {
 		arguments = List.copyOf(arguments);
 		environment = Map.copyOf(environment);
+		files = Map.copyOf(files);
+	}
+
+	/** A delivery with no files of its own. */
+	public ContextDelivery(List<String> arguments, Map<String, String> environment, String description) {
+		this(arguments, environment, description, Map.of());
 	}
 
 	/** Whether this plan hands the briefing to the agent at all. */
@@ -78,9 +87,17 @@ public record ContextDelivery(List<String> arguments, Map<String, String> enviro
 				+ " instructions, skills and context from Nuclr Commander.";
 
 		return switch (cliName(executable)) {
-			case "claude" -> new ContextDelivery(
-					List.of("--append-system-prompt", inline ? briefingText : pointer), Map.of(),
-					"Briefing delivered with --append-system-prompt" + (inline ? "" : " (as a pointer to " + briefingFile + ")"));
+			// Claude Code ignores every system-prompt flag when it resumes a conversation (2.1.280),
+			// so a hook prints the briefing into the resumed session's context instead.
+			case "claude" -> {
+				var settings = claudeSettingsFile(briefingFile);
+				yield new ContextDelivery(
+						List.of("--append-system-prompt", inline ? briefingText : pointer, "--settings", settings.toString()),
+						Map.of(),
+						"Briefing delivered with --append-system-prompt" + (inline ? "" : " (as a pointer to " + briefingFile + ")")
+								+ ", and on resume by a SessionStart hook",
+						Map.of(settings, claudeResumeHook(briefingFile)));
+			}
 			case "pi" -> new ContextDelivery(
 					List.of("--append-system-prompt", briefingFile.toString()), Map.of(),
 					"Briefing delivered with --append-system-prompt " + briefingFile);
@@ -101,6 +118,23 @@ public record ContextDelivery(List<String> arguments, Map<String, String> enviro
 							"Briefing delivered as an OpenCode instructions file via " + OPENCODE_CONFIG_CONTENT);
 			default -> NONE;
 		};
+	}
+
+	/** Where the Claude Code settings holding the resume hook are written: beside the briefing. */
+	static Path claudeSettingsFile(Path briefingFile) {
+		return briefingFile.resolveSibling(briefingFile.getFileName() + ".claude-settings.json");
+	}
+
+	/**
+	 * Claude Code settings with a {@code SessionStart} hook, for resumes only, that prints the
+	 * briefing - which Claude Code adds to the session's context. A fresh session has it as
+	 * its system prompt already. Hook commands run in a POSIX shell, Git Bash on Windows, so
+	 * the path is single-quoted, with forward slashes.
+	 */
+	static String claudeResumeHook(Path briefingFile) {
+		var path = briefingFile.toString().replace('\\', '/').replace("'", "'\\''");
+		return "{\"hooks\":{\"SessionStart\":[{\"matcher\":\"resume\",\"hooks\":[{\"type\":\"command\",\"command\":\""
+				+ json("cat '" + path + "'") + "\"}]}]}}\n";
 	}
 
 	/** The command's bare name: no directory, no platform extension, lower case. */

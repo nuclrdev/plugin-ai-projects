@@ -32,6 +32,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 		@JsonSubTypes.Type(value = AgentEvent.TurnEnded.class, name = "turnEnded"),
 		@JsonSubTypes.Type(value = AgentEvent.Notice.class, name = "notice"),
 		@JsonSubTypes.Type(value = AgentEvent.CommandsAvailable.class, name = "commands"),
+		@JsonSubTypes.Type(value = AgentEvent.Suggestion.class, name = "suggestion"),
 		@JsonSubTypes.Type(value = AgentEvent.Image.class, name = "image") })
 public sealed interface AgentEvent {
 
@@ -278,6 +279,21 @@ public sealed interface AgentEvent {
 	 * @param description one line about it, or {@code null} when the agent gave none
 	 */
 	record Command(String name, String description) {
+	}
+
+	/**
+	 * The message the agent expects the user to send next, offered in the empty composer.
+	 *
+	 * <p>Not something the agent said on the page: it is taken out of the end of its reply
+	 * by {@link SuggestedPrompt}, and kept so a rebuilt window can offer it again.
+	 *
+	 * @param text the message, one line; empty withdraws an earlier suggestion, as a new
+	 *             conversation does
+	 */
+	record Suggestion(String text) implements AgentEvent {
+
+		/** No suggestion: what came before is no longer offered. */
+		public static final Suggestion NONE = new Suggestion("");
 	}
 
 	/**
