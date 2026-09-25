@@ -392,6 +392,8 @@ final class CodexSession extends JsonLineSession {
 			case "webSearch" -> call(new AgentEvent.ToolCall(id, null, "WebSearch", item.path("query").asString(""), ""));
 			case "collabAgentToolCall" -> call(new AgentEvent.ToolCall(id, null, "Agent",
 					firstLine(item.path("prompt").asString("")), item.path("prompt").asString("")));
+			case "imageGeneration" -> call(new AgentEvent.ToolCall(id, null, "ImageGeneration",
+					firstLine(item.path("revisedPrompt").asString("")), ""));
 			default -> {
 				// user messages echo what the window already shows; the rest are not drawn yet
 			}
@@ -427,10 +429,34 @@ final class CodexSession extends JsonLineSession {
 			case "dynamicToolCall" -> emit(new AgentEvent.ToolResult(id, !item.path("success").asBoolean(true),
 					ClaudeStreamTranslator.contentText(item.path("contentItems"))));
 			case "webSearch", "collabAgentToolCall" -> emit(new AgentEvent.ToolResult(id, failed, ""));
+			case "imageGeneration" -> imageGenerated(id, item, failed);
 			default -> {
 				// nothing to finish
 			}
 		}
+	}
+
+	/**
+	 * A picture Codex made. It arrives as base64 in {@code result}, which the window stores
+	 * in the runtime folder; Codex's own copy at {@code savedPath} is used only when there
+	 * are no bytes, since that folder is Codex's to clear.
+	 */
+	private void imageGenerated(String id, JsonNode item, boolean failed) {
+		var failure = item.path("failure");
+		var data = item.path("result").asString("");
+		var saved = text(item, "savedPath");
+		if (failed || failure.isObject() || data.isBlank() && saved == null) {
+			var reason = "usageLimitExceeded".equals(failure.path("type").asString(""))
+					? "Image generation limit reached"
+					: failure.isObject() ? failure.path("type").asString("failed")
+					: failed ? item.path("status").asString("failed") : "No image came back";
+			emit(new AgentEvent.ToolResult(id, true, reason));
+			return;
+		}
+		emit(new AgentEvent.ToolResult(id, false, ""));
+		emit(data.isBlank()
+				? new AgentEvent.Image(saved, null, null, Path.of(saved).getFileName().toString())
+				: new AgentEvent.Image(null, data, "image/png", null));
 	}
 
 	private void call(AgentEvent.ToolCall call) {

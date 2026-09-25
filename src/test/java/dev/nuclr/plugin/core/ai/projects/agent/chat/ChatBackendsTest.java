@@ -151,6 +151,31 @@ class ChatBackendsTest {
 	}
 
 	@Test
+	void aCodexGeneratedImageBecomesAnImage() throws IOException {
+		var session = new CodexSession(List.of("codex"), Map.of(), Path.of("."), null, events::add, code -> {
+		});
+		// Shapes taken from Codex 0.156's app server.
+		session.handle(json("""
+				{"method":"item/started","params":{"item":{"type":"imageGeneration","id":"ig1","status":"in_progress",
+				 "result":""}}}"""));
+		session.handle(json("""
+				{"method":"item/completed","params":{"item":{"type":"imageGeneration","id":"ig1","status":"completed",
+				 "revisedPrompt":"A world map","result":"iVBORw0KGgo=","savedPath":null}}}"""));
+		session.handle(json("""
+				{"method":"item/started","params":{"item":{"type":"imageGeneration","id":"ig2","status":"in_progress",
+				 "result":""}}}"""));
+		session.handle(json("""
+				{"method":"item/completed","params":{"item":{"type":"imageGeneration","id":"ig2","status":"failed",
+				 "result":"","failure":{"type":"usageLimitExceeded","limitId":"images"}}}}"""));
+
+		assertEquals(List.of(new AgentEvent.ToolCall("ig1", null, "ImageGeneration", "", ""),
+				new AgentEvent.ToolResult("ig1", false, ""),
+				new AgentEvent.Image(null, "iVBORw0KGgo=", "image/png", null),
+				new AgentEvent.ToolCall("ig2", null, "ImageGeneration", "", ""),
+				new AgentEvent.ToolResult("ig2", true, "Image generation limit reached")), events);
+	}
+
+	@Test
 	void aCodexApprovalOffersCodexsFourDecisions() throws IOException {
 		var session = new CodexSession(List.of("codex"), Map.of(), Path.of("."), null, events::add, code -> {
 		});
