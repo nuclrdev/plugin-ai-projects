@@ -33,7 +33,8 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 		@JsonSubTypes.Type(value = AgentEvent.Notice.class, name = "notice"),
 		@JsonSubTypes.Type(value = AgentEvent.CommandsAvailable.class, name = "commands"),
 		@JsonSubTypes.Type(value = AgentEvent.Suggestion.class, name = "suggestion"),
-		@JsonSubTypes.Type(value = AgentEvent.Image.class, name = "image") })
+		@JsonSubTypes.Type(value = AgentEvent.Image.class, name = "image"),
+		@JsonSubTypes.Type(value = AgentEvent.GeneratedFile.class, name = "generatedFile") })
 public sealed interface AgentEvent {
 
 	/**
@@ -174,6 +175,20 @@ public sealed interface AgentEvent {
 		/** Whether this is the unstored shape, still carrying its bytes. */
 		public boolean isInline() {
 			return path == null && data != null && !data.isBlank();
+		}
+	}
+
+	/**
+	 * A file the agent made during a turn and named in its reply, shown as a card with a
+	 * picture of what it holds. Not from the CLI: the window finds these when the turn ends.
+	 *
+	 * @param path the file, absolute
+	 */
+	record GeneratedFile(String path) implements AgentEvent {
+
+		/** The file. */
+		public java.nio.file.Path file() {
+			return java.nio.file.Path.of(path);
 		}
 	}
 

@@ -311,6 +311,7 @@ final class ConversationView extends JPanel {
 					add(new ImageBlock(Path.of(picture.path()), picture.name()));
 				}
 			}
+			case AgentEvent.GeneratedFile generated -> add(new FileCard(generated.file()));
 		}
 		column.revalidate();
 		column.repaint();
@@ -803,6 +804,166 @@ final class ConversationView extends JPanel {
 		@Override
 		public boolean getScrollableTracksViewportHeight() {
 			return getParent() != null && getParent().getHeight() > getPreferredSize().height;
+		}
+	}
+
+	/** The largest picture a generated file's card asks the Quick View plugins for. */
+	static final int CARD_PICTURE_WIDTH = 320;
+	static final int CARD_PICTURE_HEIGHT = 240;
+
+	/**
+	 * A file the agent made: its name, type and size, a picture of what it holds - drawn
+	 * by whichever Quick View plugin would preview it - and what can be done with it.
+	 *
+	 * <p>A picture, not a live viewer: it is drawn once, off the event thread, and costs the
+	 * conversation nothing to scroll past. A file no plugin can draw keeps its line alone.
+	 */
+	final class FileCard extends JPanel implements Themed {
+
+		private static final long serialVersionUID = 1L;
+		private final Path file;
+		private final JLabel header = new JLabel();
+		private final JLabel picture = new JLabel();
+		private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.TRAILING, 4, 0));
+		private final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+		private String note = "";
+
+		FileCard(Path file) {
+			super(new BorderLayout());
+			this.file = file;
+			setOpaque(false);
+			var exists = Files.isRegularFile(file);
+			for (var button : new JButton[] {
+					button(Glyphs.LINK, "Open", "Open in the application this system uses for it", this::open, exists),
+					button(Glyphs.ROOT, "Show", "Show it in the file manager", this::reveal, exists),
+					button(Glyphs.COPY, "Copy path", "Copy the file's path", this::copyPath, true) }) {
+				actions.add(button);
+			}
+			actions.setOpaque(false);
+
+			var top = new JPanel(new BorderLayout());
+			top.setOpaque(false);
+			top.add(header, BorderLayout.CENTER);
+			top.add(actions, BorderLayout.EAST);
+			header.setToolTipText(file.toString());
+			picture.setHorizontalAlignment(SwingConstants.LEADING);
+			picture.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
+			picture.setToolTipText("Click to open " + file.getFileName());
+			picture.setVisible(false);
+			picture.addMouseListener(new MouseAdapter() {
+				@Override
+				public void mouseClicked(MouseEvent event) {
+					if (SwingUtilities.isLeftMouseButton(event)) {
+						open();
+					}
+				}
+			});
+			add(top, BorderLayout.NORTH);
+			add(picture, BorderLayout.CENTER);
+
+			var menu = new javax.swing.JPopupMenu();
+			if (exists) {
+				menu.add(menuItem("Open", Glyphs.LINK, this::open));
+				menu.add(menuItem("Show in folder", Glyphs.ROOT, this::reveal));
+			}
+			menu.add(menuItem("Copy path", Glyphs.COPY, this::copyPath));
+			setComponentPopupMenu(menu);
+			top.setInheritsPopupMenu(true);
+			header.setInheritsPopupMenu(true);
+			picture.setInheritsPopupMenu(true);
+
+			if (exists) {
+				thumbnails.request(file, CARD_PICTURE_WIDTH, CARD_PICTURE_HEIGHT, cancelled, image -> {
+					if (image != null && !cancelled.get()) {
+						picture.setIcon(new ImageIcon(image));
+						picture.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+						picture.setVisible(true);
+						revalidate();
+						repaint();
+					}
+				});
+			} else {
+				note = "no longer there";
+			}
+			theme();
+		}
+
+		private static JButton button(String glyph, String label, String tip, Runnable action, boolean enabled) {
+			var button = Glyphs.decorate(new JButton(), glyph, label);
+			button.setToolTipText(tip);
+			button.addActionListener(event -> action.run());
+			button.putClientProperty("JButton.buttonType", "toolBarButton");
+			button.setFocusable(false);
+			button.setEnabled(enabled);
+			return button;
+		}
+
+		private static javax.swing.JMenuItem menuItem(String label, String glyph, Runnable action) {
+			var entry = Glyphs.decorate(new javax.swing.JMenuItem(), glyph, label);
+			entry.addActionListener(event -> action.run());
+			return entry;
+		}
+
+		private void open() {
+			var problem = Attachments.open(file);
+			say(problem == null ? "" : problem);
+		}
+
+		private void reveal() {
+			try {
+				Reveal.show(file);
+			} catch (RuntimeException e) {
+				say("could not show it: " + e.getMessage());
+			}
+		}
+
+		private void copyPath() {
+			try {
+				var target = clipboard != null ? clipboard : getToolkit().getSystemClipboard();
+				target.setContents(new java.awt.datatransfer.StringSelection(file.toString()), null);
+				say("path copied");
+			} catch (IllegalStateException | java.awt.HeadlessException e) {
+				say("could not copy it");
+			}
+		}
+
+		private void say(String said) {
+			note = said;
+			updateHeader();
+		}
+
+		/** Whether a picture of the file is shown, for the tests. */
+		boolean hasPicture() {
+			return picture.isVisible() && picture.getIcon() != null;
+		}
+
+		/** What the header says now, for the tests. */
+		String headerText() {
+			return header.getText();
+		}
+
+		private void updateHeader() {
+			var text = file.getFileName() + "  ·  " + Attachments.fileDetail(file) + (note.isEmpty() ? "" : "  - " + note);
+			Glyphs.decorate(header, Glyphs.FILE, text);
+		}
+
+		@Override
+		public void removeNotify() {
+			// Trimmed from the top of a long conversation: its picture is no longer wanted.
+			cancelled.set(true);
+			super.removeNotify();
+		}
+
+		@Override
+		public void theme() {
+			header.setForeground(muted());
+			var font = labelFont();
+			if (font != null) {
+				header.setFont(font);
+			}
+			setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tint(0.25f), 1, true),
+					BorderFactory.createEmptyBorder(4, 8, 6, 8)));
+			updateHeader();
 		}
 	}
 
@@ -1812,6 +1973,12 @@ final class ConversationView extends JPanel {
 					copy(description.substring(COPY_LINK.length()));
 					return;
 				}
+				if (description != null && description.startsWith(MiniMarkdown.FILE_LINK_SCHEME)) {
+					var file = GeneratedFiles.linkedFile(description.substring(MiniMarkdown.FILE_LINK_SCHEME.length()));
+					var problem = file == null ? "not a path on this machine" : Attachments.open(file);
+					pane.setToolTipText(problem == null ? null : "Could not open the link: " + problem);
+					return;
+				}
 				if (event.getURL() != null) {
 					try {
 						Desktop.getDesktop().browse(event.getURL().toURI());
@@ -2292,6 +2459,7 @@ final class ConversationView extends JPanel {
 				case AgentEvent.Notice notice -> text.append("[nuclr] ").append(notice.text());
 				case AgentEvent.Image picture -> text.append("[image] ")
 						.append(picture.name() == null ? picture.path() : picture.name());
+				case AgentEvent.GeneratedFile generated -> text.append("[file] ").append(generated.path());
 			}
 			previous = event.getClass();
 		}

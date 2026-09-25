@@ -37,6 +37,19 @@ class MiniMarkdownTest {
 	}
 
 	@Test
+	void linksToLocalFilesAreLinksTheWindowOpens() {
+		assertEquals("<p><a href=\"nuclr-file:C:\\out\\sydney_harbour_bridge.obj\">OBJ model</a></p>",
+				MiniMarkdown.toHtml("[OBJ model](C:\\out\\sydney_harbour_bridge.obj)"));
+		assertEquals("<p><a href=\"nuclr-file:/tmp/My Files/a.stl\">STL</a></p>",
+				MiniMarkdown.toHtml("[STL](/tmp/My Files/a.stl)"));
+		assertEquals("<p>Download it here: <a href=\"nuclr-file:C:\\nuclr\\sources\\output\\pdf\\sydney_harbour_bridge_sample.pdf\">"
+				+ "sydney_harbour_bridge_sample.pdf</a></p>", MiniMarkdown.toHtml("Download it here: :codex-file-citation"
+						+ "{path=\"C:\\nuclr\\sources\\output\\pdf\\sydney_harbour_bridge_sample.pdf\" purpose=\"output\"}"));
+		// A relative target is not guessed at.
+		assertEquals("<p>[x](out/a.stl)</p>", MiniMarkdown.toHtml("[x](out/a.stl)"));
+	}
+
+	@Test
 	void snakeCaseIsNotItalic() {
 		assertEquals("<p>some_file_name</p>", MiniMarkdown.toHtml("some_file_name"));
 	}

@@ -151,6 +151,21 @@ class ChatBackendsTest {
 	}
 
 	@Test
+	void aCodexPatchThatOnlyAddsFilesIsAWrite() throws IOException {
+		var session = new CodexSession(List.of("codex"), Map.of(), Path.of("."), null, events::add, code -> {
+		});
+		session.handle(json("""
+				{"method":"item/started","params":{"item":{"type":"fileChange","id":"f1","status":"inProgress",
+				 "changes":[{"path":"a.md","kind":{"type":"add"},"diff":"+a"}]}}}"""));
+		session.handle(json("""
+				{"method":"item/started","params":{"item":{"type":"fileChange","id":"f2","status":"inProgress",
+				 "changes":[{"path":"b.md","kind":{"type":"add"},"diff":"+b"},
+				 {"path":"c.md","kind":{"type":"update","move_path":null},"diff":"-c\\n+C"}]}}}"""));
+
+		assertEquals(List.of("Write", "Edit"), events.stream().map(event -> ((AgentEvent.ToolCall) event).name()).toList());
+	}
+
+	@Test
 	void aCodexGeneratedImageBecomesAnImage() throws IOException {
 		var session = new CodexSession(List.of("codex"), Map.of(), Path.of("."), null, events::add, code -> {
 		});

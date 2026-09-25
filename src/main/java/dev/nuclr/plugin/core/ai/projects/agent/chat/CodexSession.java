@@ -375,13 +375,16 @@ final class CodexSession extends JsonLineSession {
 			case "fileChange" -> {
 				var paths = new ArrayList<String>();
 				var diff = new StringBuilder();
+				// A change that only adds files is a write, and a new file may get a card; an edit's diff is enough.
+				var onlyAdds = !item.path("changes").isEmpty();
 				for (var change : item.path("changes")) {
+					onlyAdds &= "add".equals(change.path("kind").path("type").asString(""));
 					paths.add(change.path("path").asString(""));
 					diff.append(change.path("path").asString("")).append('\n').append(change.path("diff").asString(""))
 							.append('\n');
 				}
 				fileChanges.put(id, diff.toString().strip());
-				call(new AgentEvent.ToolCall(id, null, "Edit", String.join(", ", paths),
+				call(new AgentEvent.ToolCall(id, null, onlyAdds ? "Write" : "Edit", String.join(", ", paths),
 						ClaudeStreamTranslator.limit(diff.toString().strip(), LIVE_OUTPUT_LIMIT)));
 			}
 			case "mcpToolCall" -> call(new AgentEvent.ToolCall(id, null,

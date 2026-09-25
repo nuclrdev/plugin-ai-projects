@@ -79,6 +79,8 @@ class ChatAgentWindowTest {
 						say("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":"
 								+ "{\"type\":\"text_delta\",\"text\":\"Bye <nuclr-\"}}}");
 						System.exit(0);
+					} else if (line.contains("model")) {
+						modelTurn(sessionId);
 					} else if (line.contains("suggest")) {
 						suggestingTurn(sessionId);
 					} else {
@@ -113,6 +115,26 @@ class ChatAgentWindowTest {
 				say("{\"type\":\"assistant\",\"message\":{\"id\":\"m2\",\"content\":[{\"type\":\"image\","
 						+ "\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"" + PIXEL + "\"}}]}}");
 			}
+			say("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"total_cost_usd\":0.01,\"duration_ms\":5}");
+		}
+
+		/**
+		 * A turn that writes a model with a script, patches a file with its edit tool, and
+		 * names both in its reply beside a file it did not touch - in the folder it runs in.
+		 */
+		private static void modelTurn(String sessionId) throws IOException {
+			var here = java.nio.file.Path.of("").toAbsolutePath();
+			java.nio.file.Files.writeString(here.resolve("bridge.stl"), "solid bridge\nendsolid bridge\n");
+			java.nio.file.Files.writeString(here.resolve("edited.txt"), "changed");
+			var edited = here.resolve("edited.txt").toString().replace("\\", "\\\\");
+			say("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + sessionId + "\",\"model\":\"fake\"}");
+			say("{\"type\":\"assistant\",\"message\":{\"id\":\"e1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t9\","
+					+ "\"name\":\"Edit\",\"input\":{\"file_path\":\"" + edited + "\"}}]}}");
+			say("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\","
+					+ "\"tool_use_id\":\"t9\",\"is_error\":false,\"content\":\"ok\"}]}}");
+			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"b1\"}}}");
+			say("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\","
+					+ "\"text\":\"Made [the model](bridge.stl), changed `edited.txt`, left `old.txt`.\"}}}");
 			say("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"total_cost_usd\":0.01,\"duration_ms\":5}");
 		}
 
@@ -326,6 +348,33 @@ class ChatAgentWindowTest {
 		// And a rebuilt window draws it from that file.
 		var reopened = window();
 		assertTrue(onEdt(reopened::outputForCopy).contains("[image]"), onEdt(reopened::outputForCopy));
+		onEdt(reopened::close);
+	}
+
+	@Test
+	void aFileTheTurnMadeAndNamesGetsACardAndOthersDoNot() throws Exception {
+
+		var project = root.resolve("project");
+		var old = java.nio.file.Files.writeString(project.resolve("old.txt"), "from before");
+		java.nio.file.Files.setLastModifiedTime(old,
+				java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(java.time.Duration.ofHours(1))));
+
+		var window = window();
+		onEdt(() -> window.sendInstruction("make a model"));
+		waitFor(() -> window.outputForCopy().endsWith("---"), window);
+
+		var text = onEdt(window::outputForCopy);
+		var bridge = project.resolve("bridge.stl").toAbsolutePath().normalize();
+		assertTrue(text.contains("[file] " + bridge), text);
+		// Patched with the edit tool, whose diff is already shown; and not written in this turn.
+		assertFalse(text.contains("[file] " + project.resolve("edited.txt")), text);
+		assertFalse(text.contains("[file] " + project.resolve("old.txt")), text);
+		assertEquals(1, text.split("\\[file] ", -1).length - 1, text);
+		onEdt(window::close);
+
+		// Kept, so a rebuilt window shows the card again without working anything out.
+		var reopened = window();
+		assertTrue(onEdt(reopened::outputForCopy).contains("[file] " + bridge), onEdt(reopened::outputForCopy));
 		onEdt(reopened::close);
 	}
 

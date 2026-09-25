@@ -31,6 +31,17 @@ final class MiniMarkdown {
 	private static final Pattern ITALIC = Pattern.compile("(?<![*\\w])\\*(?!\\s)(.+?)(?<!\\s)\\*(?!\\*)|(?<!\\w)_(?!\\s)(.+?)(?<!\\s)_(?!\\w)");
 	private static final Pattern LINK = Pattern.compile("\\[([^\\]]+)]\\((https?://[^)\\s]+)\\)");
 
+	/**
+	 * A link to a file on this machine - {@code (C:\out\bridge.obj)}, {@code (/tmp/a.stl)} or
+	 * {@code (file:///...)} - which is how agents point at what they made. Spaces are allowed,
+	 * since Windows paths often have them and a title after the path is rare.
+	 */
+	private static final Pattern FILE_LINK =
+			Pattern.compile("\\[([^\\]]+)]\\(((?:[A-Za-z]:[\\\\/]|/|file:)[^)\\r\\n]+)\\)");
+
+	/** What a file link's href starts with, so the window opens the file rather than browsing to it. */
+	static final String FILE_LINK_SCHEME = "nuclr-file:";
+
 	private MiniMarkdown() {
 	}
 
@@ -56,7 +67,7 @@ final class MiniMarkdown {
 	 * @return the fragment
 	 */
 	static String toHtml(String markdown, BiFunction<String, String, String> code) {
-		var lines = markdown.replace("\r\n", "\n").split("\n", -1);
+		var lines = GeneratedFiles.citationsAsLinks(markdown).replace("\r\n", "\n").split("\n", -1);
 		var html = new StringBuilder();
 		var paragraph = new ArrayList<String>();
 		var index = 0;
@@ -191,6 +202,8 @@ final class MiniMarkdown {
 	private static String emphasis(String escaped) {
 		var linked = LINK.matcher(escaped).replaceAll(match -> Matcher.quoteReplacement(
 				"<a href=\"" + match.group(2) + "\">" + match.group(1) + "</a>"));
+		linked = FILE_LINK.matcher(linked).replaceAll(match -> Matcher.quoteReplacement(
+				"<a href=\"" + FILE_LINK_SCHEME + match.group(2).strip() + "\">" + match.group(1) + "</a>"));
 		var bold = BOLD.matcher(linked).replaceAll(match -> Matcher.quoteReplacement(
 				"<b>" + (match.group(1) != null ? match.group(1) : match.group(2)) + "</b>"));
 		return ITALIC.matcher(bold).replaceAll(match -> Matcher.quoteReplacement(

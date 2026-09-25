@@ -23,6 +23,43 @@ import org.junit.jupiter.api.Test;
  */
 class ConversationViewTest {
 
+	@Test
+	void aGeneratedFileIsACardWithThePictureAQuickViewerDrew(@org.junit.jupiter.api.io.TempDir java.nio.file.Path folder)
+			throws Exception {
+		var file = java.nio.file.Files.writeString(folder.resolve("bridge.stl"), "solid bridge");
+		var asked = new java.util.ArrayList<String>();
+		var view = new ConversationView((requestId, option) -> {
+		});
+		view.setThumbnails((path, maxWidth, maxHeight, cancelled, answer) -> {
+			asked.add(path.getFileName() + " " + maxWidth + "x" + maxHeight);
+			answer.accept(new java.awt.image.BufferedImage(60, 40, java.awt.image.BufferedImage.TYPE_INT_ARGB));
+		});
+		onEdt(() -> view.accept(new AgentEvent.GeneratedFile(file.toString()), true));
+
+		var card = (ConversationView.FileCard) blocks(view).getComponent(blocks(view).getComponentCount() - 1);
+		assertEquals(java.util.List.of("bridge.stl " + ConversationView.CARD_PICTURE_WIDTH + "x" + ConversationView.CARD_PICTURE_HEIGHT),
+				asked);
+		assertTrue(card.hasPicture());
+		assertTrue(card.headerText().contains("bridge.stl  ·  STL · "), card.headerText());
+		var plain = ConversationView.plainText(java.util.List.of(new AgentEvent.GeneratedFile(file.toString())));
+		assertTrue(plain.contains("[file] " + file), plain);
+	}
+
+	@Test
+	void aGeneratedFileThatIsGoneSaysSoAndDrawsNothing(@org.junit.jupiter.api.io.TempDir java.nio.file.Path folder)
+			throws Exception {
+		var view = new ConversationView((requestId, option) -> {
+		});
+		view.setThumbnails((path, maxWidth, maxHeight, cancelled, answer) -> {
+			throw new AssertionError("a missing file was drawn");
+		});
+		onEdt(() -> view.accept(new AgentEvent.GeneratedFile(folder.resolve("gone.stl").toString()), true));
+
+		var card = (ConversationView.FileCard) blocks(view).getComponent(blocks(view).getComponentCount() - 1);
+		assertFalse(card.hasPicture());
+		assertTrue(card.headerText().contains("no longer there"), card.headerText());
+	}
+
 	/**
 	 * The column the blocks are added to: the view holds a scroll pane, whose view is a
 	 * holder, whose only child is the column.

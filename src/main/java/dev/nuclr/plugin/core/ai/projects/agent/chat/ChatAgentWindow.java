@@ -124,6 +124,12 @@ public final class ChatAgentWindow implements AgentWindow {
 	private AgentSession launching;
 	private final List<Runnable> early = new ArrayList<>();
 	private boolean turnActive;
+	/** When the turn under way began, or {@code null} between turns; files written since then may get cards. */
+	private Instant turnStarted;
+	/** The turn's reply so far, read for the files it names when the turn ends. */
+	private final StringBuilder turnReply = new StringBuilder();
+	/** Files the turn already shows in another form - pictures, edited files' diffs - and so gets no card for. */
+	private final List<Path> turnShown = new ArrayList<>();
 	private boolean sessionNotStarted;
 	/** Prompts sent before the session said it started; a failed resume sends them again. */
 	private Outgoing unconfirmed;
@@ -792,6 +798,9 @@ public final class ChatAgentWindow implements AgentWindow {
 				if (!held.isEmpty()) {
 					record(new AgentEvent.MessageChunk(held));
 				}
+			}
+			if (event instanceof AgentEvent.TurnEnded) {
+				recordGeneratedFiles();
 			}
 			if (event instanceof AgentEvent.TurnEnded turn && suggestions.take() instanceof String next
 					&& !turn.error()) {
@@ -1866,6 +1875,9 @@ public final class ChatAgentWindow implements AgentWindow {
 		withdrawSuggestion();
 		suggestions.take();
 		turnActive = true;
+		turnStarted = Instant.now();
+		turnReply.setLength(0);
+		turnShown.clear();
 		clearAttention();
 		setStatus(AgentStatus.RUNNING);
 		updateControls();
@@ -1912,6 +1924,9 @@ public final class ChatAgentWindow implements AgentWindow {
 		}
 		coalesce(history, shown);
 		coalesce(unsaved, shown);
+		if (turnStarted != null) {
+			noteForTurn(shown);
+		}
 		if (shown instanceof AgentEvent.ToolResult result) {
 			// A tool that made a picture and only said where it put it.
 			for (var file : ImageMentions.in(result.output(), imageRoots())) {
@@ -1950,6 +1965,42 @@ public final class ChatAgentWindow implements AgentWindow {
 		roots.add(context.workingDirectory());
 		roots.add(context.runtimeDirectory());
 		return roots;
+	}
+
+	/** The edit tools, by the names the backends give them: a file they change shows as a diff, not a card. */
+	private static final java.util.Set<String> EDIT_TOOLS = java.util.Set.of("edit", "multiedit", "notebookedit");
+
+	/** Keep what the turn's cards are worked out from: the reply's words, and what is shown already. */
+	private void noteForTurn(AgentEvent event) {
+		switch (event) {
+			case AgentEvent.MessageChunk(var text) -> turnReply.append(text);
+			case AgentEvent.Image picture when picture.path() != null -> turnShown.add(Path.of(picture.path()));
+			case AgentEvent.ToolCall call when EDIT_TOOLS.contains(call.name().toLowerCase(java.util.Locale.ROOT)) -> {
+				// Codex names every file of a patch in the one title, separated by commas.
+				for (var named : call.title().split(", ")) {
+					var file = GeneratedFiles.linkedFile(named);
+					if (file != null) {
+						turnShown.add(file.isAbsolute() ? file : context.workingDirectory().resolve(file));
+					}
+				}
+			}
+			default -> {
+			}
+		}
+	}
+
+	/** Cards for the files the turn made and its reply names, ahead of the line that ends the turn. */
+	private void recordGeneratedFiles() {
+		var since = turnStarted;
+		turnStarted = null;
+		if (since == null) {
+			return;
+		}
+		for (var file : GeneratedFiles.in(turnReply.toString(), context.workingDirectory(), since, turnShown)) {
+			record(new AgentEvent.GeneratedFile(file.toString()));
+		}
+		turnReply.setLength(0);
+		turnShown.clear();
 	}
 
 	/** Consecutive chunks are one message; kept as one they cost one line on disk rather than hundreds. */
